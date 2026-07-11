@@ -185,6 +185,10 @@ public:
     void  SetWaterDrawnLast(bool bEnable);
     bool  IsWaterDrawnLast();
 
+    void  SetWorldSeaBedOuterBoundary(float fBoundary);
+    void  ResetWorldSeaBedOuterBoundary();
+    float GetWorldSeaBedOuterBoundary() const;
+
     bool IsPointOutsideOfGameArea(const CVector& vecPos);
     bool TestLineAgainstWater(const CVector& vecStart, const CVector& vecEnd, CVector* vecCollision);
 

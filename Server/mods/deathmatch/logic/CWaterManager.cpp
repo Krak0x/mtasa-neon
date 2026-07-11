@@ -22,6 +22,7 @@ CWaterManager::CWaterManager()
     m_WorldWaterLevelInfo.fNonSeaLevel = 0;
     m_WorldWaterLevelInfo.fOutsideLevel = 0;
     m_fGlobalWaveHeight = 0.0f;
+    m_fWorldSeaBedOuterBoundary = -1.0f;
 }
 
 CWaterManager::~CWaterManager()

@@ -26,4 +26,7 @@ public:
     LUA_DECLARE(GetWaterColor);
     LUA_DECLARE(SetWaterColor);
     LUA_DECLARE(ResetWaterColor);
+    LUA_DECLARE(SetWorldSeaBedOuterBoundary);
+    LUA_DECLARE(ResetWorldSeaBedOuterBoundary);
+    LUA_DECLARE(GetWorldSeaBedOuterBoundary);
 };

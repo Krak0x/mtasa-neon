@@ -74,6 +74,37 @@ namespace
     short g_blocksToBeRenderedOutsideWorldY[OUTSIDE_WORLD_BLOCKS_CAPACITY]{};
     std::uint8_t* g_waterMovedCode{};
     bool          g_extendedWaterMapInstalled{};
+    float         g_worldSeaBedOuterBoundary{-1.0f};
+
+    using RenderSeaBedSegment_t = void(__cdecl*)(int, int, float, float, float, float);
+
+    bool ShouldRenderWorldSeaBedBlock(int blockX, int blockY)
+    {
+        if (g_worldSeaBedOuterBoundary < 0.0f)
+            return true;
+
+        // The procedural seabed keeps GTA's original 500-unit block coordinate
+        // system even though custom water now uses Neon's extended 40x40 index.
+        constexpr float vanillaWaterHalfSize = VANILLA_WATER_BLOCKS_HALF * EXTENDED_WATER_BLOCK_SIZE;
+        const float     minX = blockX * EXTENDED_WATER_BLOCK_SIZE - vanillaWaterHalfSize;
+        const float     maxX = minX + EXTENDED_WATER_BLOCK_SIZE;
+        const float     minY = blockY * EXTENDED_WATER_BLOCK_SIZE - vanillaWaterHalfSize;
+        const float     maxY = minY + EXTENDED_WATER_BLOCK_SIZE;
+        return minX < g_worldSeaBedOuterBoundary && maxX > -g_worldSeaBedOuterBoundary && minY < g_worldSeaBedOuterBoundary &&
+               maxY > -g_worldSeaBedOuterBoundary;
+    }
+
+    void __cdecl RenderFilteredSeaBedSegment(int blockX, int blockY, float minU, float maxU, float minV, float maxV)
+    {
+        if (ShouldRenderWorldSeaBedBlock(blockX, blockY))
+            reinterpret_cast<RenderSeaBedSegment_t>(0x6E6870)(blockX, blockY, minU, maxU, minV, maxV);
+    }
+
+    void __cdecl RenderFilteredDetailedSeaBedSegment(int blockX, int blockY, float minU, float maxU, float minV, float maxV)
+    {
+        if (ShouldRenderWorldSeaBedBlock(blockX, blockY))
+            reinterpret_cast<RenderSeaBedSegment_t>(0x6E6A10)(blockX, blockY, minU, maxU, minV, maxV);
+    }
 
     struct SWaterMapManifestEntry
     {
@@ -374,6 +405,14 @@ namespace
         HookInstall(0x6E6318, reinterpret_cast<DWORD>(&PatchWaterTestLineBlock), 6);
         HookInstall(0x6E6CA0, reinterpret_cast<DWORD>(&ExtendedWaterBlockHit), 5);
         HookInstall(0x6E8580, reinterpret_cast<DWORD>(&ExtendedGetWaterLevelNoWaves), 5);
+
+        // These are the only four native RenderWater call sites that generate
+        // the non-entity `seabd32` floor. Filtering them leaves the separate
+        // infinite-ocean water pass and all water physics untouched.
+        HookInstallCall(0x6EF80F, reinterpret_cast<DWORD>(&RenderFilteredDetailedSeaBedSegment));
+        HookInstallCall(0x6EF822, reinterpret_cast<DWORD>(&RenderFilteredSeaBedSegment));
+        HookInstallCall(0x6EF848, reinterpret_cast<DWORD>(&RenderFilteredDetailedSeaBedSegment));
+        HookInstallCall(0x6EF861, reinterpret_cast<DWORD>(&RenderFilteredSeaBedSegment));
 
         g_extendedWaterMapInstalled = true;
         return true;
@@ -1370,4 +1409,19 @@ void CWaterManagerSA::SetWaterDrawnLast(bool bEnable)
 bool CWaterManagerSA::IsWaterDrawnLast()
 {
     return m_bWaterDrawnLast;
+}
+
+void CWaterManagerSA::SetWorldSeaBedOuterBoundary(float fBoundary)
+{
+    g_worldSeaBedOuterBoundary = fBoundary;
+}
+
+void CWaterManagerSA::ResetWorldSeaBedOuterBoundary()
+{
+    g_worldSeaBedOuterBoundary = -1.0f;
+}
+
+float CWaterManagerSA::GetWorldSeaBedOuterBoundary() const
+{
+    return g_worldSeaBedOuterBoundary;
 }

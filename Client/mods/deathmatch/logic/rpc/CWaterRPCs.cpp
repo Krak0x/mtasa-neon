@@ -21,6 +21,7 @@ void CWaterRPCs::LoadFunctions()
     AddHandler(SET_WATER_VERTEX_POSITION, SetWaterVertexPosition, "SetWaterVertexPosition");
     AddHandler(SET_WATER_COLOR, SetWaterColor, "SetWaterColor");
     AddHandler(RESET_WATER_COLOR, ResetWaterColor, "ResetWaterColor");
+    AddHandler(SET_WORLD_SEABED_OUTER_BOUNDARY, SetWorldSeaBedOuterBoundary, "SetWorldSeaBedOuterBoundary");
 }
 
 void CWaterRPCs::SetWorldWaterLevel(NetBitStreamInterface& bitStream)
@@ -99,4 +100,16 @@ void CWaterRPCs::SetWaterColor(NetBitStreamInterface& bitStream)
 void CWaterRPCs::ResetWaterColor(NetBitStreamInterface& bitStream)
 {
     CStaticFunctionDefinitions::ResetWaterColor();
+}
+
+void CWaterRPCs::SetWorldSeaBedOuterBoundary(NetBitStreamInterface& bitStream)
+{
+    float fBoundary;
+    if (!bitStream.Read(fBoundary))
+        return;
+
+    if (fBoundary < 0.0f)
+        g_pGame->GetWaterManager()->ResetWorldSeaBedOuterBoundary();
+    else
+        g_pGame->GetWaterManager()->SetWorldSeaBedOuterBoundary(fBoundary);
 }

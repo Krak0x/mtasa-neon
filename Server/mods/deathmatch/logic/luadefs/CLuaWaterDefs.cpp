@@ -26,6 +26,9 @@ void CLuaWaterDefs::LoadFunctions()
         {"getWaterColor", GetWaterColor},
         {"setWaterColor", SetWaterColor},
         {"resetWaterColor", ResetWaterColor},
+        {"setWorldSeaBedOuterBoundary", SetWorldSeaBedOuterBoundary},
+        {"resetWorldSeaBedOuterBoundary", ResetWorldSeaBedOuterBoundary},
+        {"getWorldSeaBedOuterBoundary", GetWorldSeaBedOuterBoundary},
     };
 
     // Add functions
@@ -280,5 +283,43 @@ int CLuaWaterDefs::ResetWaterColor(lua_State* luaVM)
     bool bSuccess = CStaticFunctionDefinitions::ResetWaterColor();
 
     lua_pushboolean(luaVM, bSuccess);
+    return 1;
+}
+
+int CLuaWaterDefs::SetWorldSeaBedOuterBoundary(lua_State* luaVM)
+{
+    float            fBoundary;
+    CScriptArgReader argStream(luaVM);
+    argStream.ReadNumber(fBoundary);
+
+    if (!argStream.HasErrors() && (fBoundary < 3000.0f || fBoundary > 10000.0f))
+        argStream.SetCustomError("World seabed outer boundary must be between 3000 and 10000");
+
+    if (!argStream.HasErrors() && CStaticFunctionDefinitions::SetWorldSeaBedOuterBoundary(fBoundary))
+    {
+        lua_pushboolean(luaVM, true);
+        return 1;
+    }
+
+    if (argStream.HasErrors())
+        m_pScriptDebugging->LogCustom(luaVM, argStream.GetFullErrorMessage());
+
+    lua_pushboolean(luaVM, false);
+    return 1;
+}
+
+int CLuaWaterDefs::ResetWorldSeaBedOuterBoundary(lua_State* luaVM)
+{
+    lua_pushboolean(luaVM, CStaticFunctionDefinitions::ResetWorldSeaBedOuterBoundary());
+    return 1;
+}
+
+int CLuaWaterDefs::GetWorldSeaBedOuterBoundary(lua_State* luaVM)
+{
+    const float fBoundary = CStaticFunctionDefinitions::GetWorldSeaBedOuterBoundary();
+    if (fBoundary < 0.0f)
+        lua_pushboolean(luaVM, false);
+    else
+        lua_pushnumber(luaVM, fBoundary);
     return 1;
 }

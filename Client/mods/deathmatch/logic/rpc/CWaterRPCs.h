@@ -25,4 +25,5 @@ public:
     DECLARE_ELEMENT_RPC(SetWaterVertexPosition);
     DECLARE_RPC(SetWaterColor);
     DECLARE_RPC(ResetWaterColor);
+    DECLARE_RPC(SetWorldSeaBedOuterBoundary);
 };

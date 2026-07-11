@@ -578,6 +578,9 @@ public:
     static bool    GetWaterColor(unsigned char& ucRed, unsigned char& ucGreen, unsigned char& ucBlue, unsigned char& ucAlpha);
     static bool    SetWaterColor(unsigned char ucRed, unsigned char ucGreen, unsigned char ucBlue, unsigned char ucAlpha);
     static bool    ResetWaterColor();
+    static bool    SetWorldSeaBedOuterBoundary(float fBoundary);
+    static bool    ResetWorldSeaBedOuterBoundary();
+    static float   GetWorldSeaBedOuterBoundary();
 
     // Standard server functions
     static unsigned int GetMaxPlayers();

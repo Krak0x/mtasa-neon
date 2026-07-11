@@ -38,6 +38,10 @@ public:
     void                        SetElementWaterLevel(CWater* pWater, float fLevel);
     void                        SetAllElementWaterLevel(float fLevel);
 
+    float GetWorldSeaBedOuterBoundary() const { return m_fWorldSeaBedOuterBoundary; }
+    void  SetWorldSeaBedOuterBoundary(float fBoundary) { m_fWorldSeaBedOuterBoundary = fBoundary; }
+    void  ResetWorldSeaBedOuterBoundary() { m_fWorldSeaBedOuterBoundary = -1.0f; }
+
     std::list<CWater*>::const_iterator IterBegin() { return m_List.begin(); }
     std::list<CWater*>::const_iterator IterEnd() { return m_List.end(); }
 
@@ -49,4 +53,5 @@ protected:
 
     SWorldWaterLevelInfo m_WorldWaterLevelInfo;
     float                m_fGlobalWaveHeight;
+    float                m_fWorldSeaBedOuterBoundary;
 };

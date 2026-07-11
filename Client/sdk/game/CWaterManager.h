@@ -32,6 +32,10 @@ public:
     virtual void  SetWaterDrawnLast(bool bEnable) = 0;
     virtual bool  IsWaterDrawnLast() = 0;
 
+    virtual void  SetWorldSeaBedOuterBoundary(float fBoundary) = 0;
+    virtual void  ResetWorldSeaBedOuterBoundary() = 0;
+    virtual float GetWorldSeaBedOuterBoundary() const = 0;
+
     virtual bool TestLineAgainstWater(const CVector& vecStart, const CVector& vecEnd, CVector* vecCollision) = 0;
 
     virtual void UndoChanges(void* pChangeSource = NULL) = 0;

@@ -25,6 +25,7 @@
 #include "CPerfStatManager.h"
 #include "lua/CLuaFunctionParseHelpers.h"
 #include "packets/CEntityAddPacket.h"
+#include "packets/CLuaPacket.h"
 #include "packets/CPlayerSpawnPacket.h"
 #include "packets/CPickupHideShowPacket.h"
 #include "packets/CVehicleSpawnPacket.h"
@@ -541,6 +542,12 @@ void CMapManager::OnPlayerJoin(CPlayer& Player)
                                bOverrideSunSize, fSunSize, bOverrideSunColor, ucCoreR, ucCoreG, ucCoreB, ucCoronaR, ucCoronaG, ucCoronaB, bOverrideWindVelocity,
                                fWindVelX, fWindVelY, fWindVelZ, bOverrideFarClipDistance, fFarClip, bOverrideFogDistance, fFogDistance, fAircraftMaxHeight,
                                fAircraftMaxVelocity, bOverrideMoonSize, iMoonSize));
+
+    // Keep this Neon-specific renderer setting outside CMapInfoPacket so its
+    // established wire layout remains unchanged.
+    CBitStream seaBedBoundaryBitStream;
+    seaBedBoundaryBitStream.pBitStream->Write(g_pGame->GetWaterManager()->GetWorldSeaBedOuterBoundary());
+    Player.Send(CLuaPacket(SET_WORLD_SEABED_OUTER_BOUNDARY, *seaBedBoundaryBitStream.pBitStream));
 
     marker.Set("SendMapInfoPacket");
 

@@ -9723,6 +9723,35 @@ bool CStaticFunctionDefinitions::ResetWaterColor()
     return true;
 }
 
+bool CStaticFunctionDefinitions::SetWorldSeaBedOuterBoundary(float fBoundary)
+{
+    // GTA renders the procedural seabed in 500-unit water blocks. Store and
+    // report the effective block-aligned boundary so scripts see what clients
+    // actually render.
+    const float fAlignedBoundary = std::ceil(fBoundary / 500.0f) * 500.0f;
+    g_pGame->GetWaterManager()->SetWorldSeaBedOuterBoundary(fAlignedBoundary);
+
+    CBitStream BitStream;
+    BitStream.pBitStream->Write(fAlignedBoundary);
+    m_pPlayerManager->BroadcastOnlyJoined(CLuaPacket(SET_WORLD_SEABED_OUTER_BOUNDARY, *BitStream.pBitStream));
+    return true;
+}
+
+bool CStaticFunctionDefinitions::ResetWorldSeaBedOuterBoundary()
+{
+    g_pGame->GetWaterManager()->ResetWorldSeaBedOuterBoundary();
+
+    CBitStream BitStream;
+    BitStream.pBitStream->Write(-1.0f);
+    m_pPlayerManager->BroadcastOnlyJoined(CLuaPacket(SET_WORLD_SEABED_OUTER_BOUNDARY, *BitStream.pBitStream));
+    return true;
+}
+
+float CStaticFunctionDefinitions::GetWorldSeaBedOuterBoundary()
+{
+    return g_pGame->GetWaterManager()->GetWorldSeaBedOuterBoundary();
+}
+
 CColCircle* CStaticFunctionDefinitions::CreateColCircle(CResource* pResource, const CVector2D& vecPosition, float fRadius)
 {
     CColCircle* const pColShape = new CColCircle(m_pColManager, pResource->GetDynamicElementRoot(), vecPosition, fRadius);

@@ -293,5 +293,7 @@ enum eElementRPCFunctions
 
     SET_ELEMENT_ON_FIRE,
 
+    SET_WORLD_SEABED_OUTER_BOUNDARY,
+
     NUM_RPC_FUNCS  // Add above this line
 };
