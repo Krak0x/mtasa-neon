@@ -69,6 +69,25 @@ C:\dev\mtasa-vm-custom\Bin\mods\deathmatch\client.dll
 
 The current CUSTOM `netc.dll` works in the Parallels VM. Keep it paired with the current source ABI; do not replace it with the old MTA 1.6 module.
 
+### Launching the graphical client from macOS
+
+GUI applications must be started in the logged-in Windows desktop session. Always pass `--current-user` to `prlctl exec`; without it, `cmd.exe` or PowerShell can return success while no visible MTA process is created.
+
+Launch the custom client and connect directly to the local server with:
+
+```sh
+prlctl exec "Windows 11" --current-user powershell.exe -NoProfile -Command \
+  "Start-Process -FilePath 'C:\dev\mtasa-vm-custom\Bin\Multi Theft Auto.exe' -ArgumentList 'mtasa://127.0.0.1:22003' -WorkingDirectory 'C:\dev\mtasa-vm-custom\Bin'"
+```
+
+The equivalent `cmd.exe` form is:
+
+```sh
+prlctl exec "Windows 11" --current-user cmd.exe /c start "" \
+  "C:\dev\mtasa-vm-custom\Bin\Multi Theft Auto.exe" \
+  "mtasa://127.0.0.1:22003"
+```
+
 ## Server build and runtime paths
 
 Build the current Windows server with `Release|x64`. Building the solution as `Release|Win32` excludes the server launcher, core, and deathmatch projects. Important x64 outputs are:

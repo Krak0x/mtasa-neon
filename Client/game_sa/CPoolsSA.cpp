@@ -617,6 +617,14 @@ CEntity* CPoolsSA::GetEntity(DWORD* pGameInterface)
         {
             return pThePedEntity->pEntity;
         }
+
+        // Script-created buildings live in the dedicated resized building
+        // pool, not the object pool. Preserve their wrapper through the first
+        // LOS lookup so the later client-entity lookup can return the Lua
+        // building element instead of a successful hit with a nil element.
+        auto building = m_BuildingsPool.GetBuilding(reinterpret_cast<CBuildingSAInterface*>(pGameInterface));
+        if (building)
+            return building;
     }
     return NULL;
 }

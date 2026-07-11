@@ -10,7 +10,8 @@
 
 #include "StdInc.h"
 
-constexpr float  WORLD_DISTANCE_FROM_CENTER = 3000.0f;
+constexpr float  EXTENDED_WORLD_MIN_COORD = -10000.0f;
+constexpr float  EXTENDED_WORLD_MAX_ENTITY_COORD = 9999.0f;
 constexpr size_t PRESERVED_POOL_SIZE = 2000;
 constexpr size_t RESIZE_POOL_STEP = 5000;
 
@@ -79,8 +80,8 @@ bool CClientBuildingManager::IsValidModel(uint16_t modelId)
 
 bool CClientBuildingManager::IsValidPosition(const CVector& pos) noexcept
 {
-    return (pos.fX >= -WORLD_DISTANCE_FROM_CENTER && pos.fX <= WORLD_DISTANCE_FROM_CENTER && pos.fY >= -WORLD_DISTANCE_FROM_CENTER &&
-            pos.fY <= WORLD_DISTANCE_FROM_CENTER);
+    return (pos.fX >= EXTENDED_WORLD_MIN_COORD && pos.fX <= EXTENDED_WORLD_MAX_ENTITY_COORD && pos.fY >= EXTENDED_WORLD_MIN_COORD &&
+            pos.fY <= EXTENDED_WORLD_MAX_ENTITY_COORD);
 }
 
 void CClientBuildingManager::DestroyAllForABit()

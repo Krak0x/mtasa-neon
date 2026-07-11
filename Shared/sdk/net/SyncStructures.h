@@ -25,7 +25,14 @@
 
 // Used to make sure that any position values we receive are at least half sane
 #define SYNC_POSITION_LIMIT 100000.0f
-// Note: Using SFloatSync < 14, 10 > also limits the range from -8191 to 8192
+
+// Extended MTA World keeps sub-centimeter XY precision while allowing the
+// custom client and server to synchronize positions beyond the old +/-8192
+// wire boundary. This changes the packet format, so both ends must use Neon.
+constexpr unsigned int POSITION_SYNC_INTEGER_BITS = 15;
+constexpr unsigned int POSITION_SYNC_FRACTIONAL_BITS = 10;
+constexpr float        LOW_PRECISION_POSITION_BOUND = 10000.0f;
+constexpr float        LEGACY_LOW_PRECISION_POSITION_BOUND = 8192.0f;
 
 #pragma pack(push)
 #pragma pack(1)
@@ -213,6 +220,49 @@ struct SObjectHealthSync : public SFloatAsBitsSync<11>
 //               Position               //
 //                                      //
 //////////////////////////////////////////
+struct SPositionComponentSync : public ISyncStructure
+{
+    bool Read(NetBitStreamInterface& bitStream)
+    {
+        if (bitStream.Can(eBitStreamVersion::ExtendedWorldPositions))
+        {
+            SFloatSync<POSITION_SYNC_INTEGER_BITS, POSITION_SYNC_FRACTIONAL_BITS> value;
+            if (!bitStream.Read(&value))
+                return false;
+            data.fValue = value.data.fValue;
+        }
+        else
+        {
+            SFloatSync<14, POSITION_SYNC_FRACTIONAL_BITS> value;
+            if (!bitStream.Read(&value))
+                return false;
+            data.fValue = value.data.fValue;
+        }
+        return true;
+    }
+
+    void Write(NetBitStreamInterface& bitStream) const
+    {
+        if (bitStream.Can(eBitStreamVersion::ExtendedWorldPositions))
+        {
+            SFloatSync<POSITION_SYNC_INTEGER_BITS, POSITION_SYNC_FRACTIONAL_BITS> value;
+            value.data.fValue = data.fValue;
+            bitStream.Write(&value);
+        }
+        else
+        {
+            SFloatSync<14, POSITION_SYNC_FRACTIONAL_BITS> value;
+            value.data.fValue = data.fValue;
+            bitStream.Write(&value);
+        }
+    }
+
+    struct
+    {
+        float fValue;
+    } data;
+};
+
 struct SPositionSync : public ISyncStructure
 {
     SPositionSync(bool bUseFloats = false) : m_bUseFloats(bUseFloats) {}
@@ -227,7 +277,7 @@ struct SPositionSync : public ISyncStructure
         }
         else
         {
-            SFloatSync<14, 10> x, y;
+            SPositionComponentSync x, y;
 
             if (bitStream.Read(&x) && bitStream.Read(&y) && bitStream.Read(data.vecPosition.fZ))
             {
@@ -252,7 +302,7 @@ struct SPositionSync : public ISyncStructure
         }
         else
         {
-            SFloatSync<14, 10> x, y;
+            SPositionComponentSync x, y;
             x.data.fValue = data.vecPosition.fX;
             y.data.fValue = data.vecPosition.fY;
 
@@ -284,7 +334,7 @@ struct SPosition2DSync : public ISyncStructure
         }
         else
         {
-            SFloatSync<14, 10> x, y;
+            SPositionComponentSync x, y;
 
             if (bitStream.Read(&x) && bitStream.Read(&y))
             {
@@ -308,7 +358,7 @@ struct SPosition2DSync : public ISyncStructure
         }
         else
         {
-            SFloatSync<14, 10> x, y;
+            SPositionComponentSync x, y;
             x.data.fValue = data.vecPosition.fX;
             y.data.fValue = data.vecPosition.fY;
 
@@ -327,7 +377,7 @@ private:
 };
 
 // Low precision positions:
-// - Write X and Y components bound to [-8192, 8192], with a max error of 0.25 units.
+// - Write X and Y components bound to [-10000, 10000], with a max error of 0.31 units.
 // - Write Z bound to [-110, 1938], with a max error of 1 unit.
 struct SLowPrecisionPositionSync : public ISyncStructure
 {
@@ -339,20 +389,24 @@ struct SLowPrecisionPositionSync : public ISyncStructure
 
         if (!bitStream.Read(usX) || !bitStream.Read(usY) || !bitStream.ReadBits(reinterpret_cast<char*>(&usZ), 11))
             return false;
-        data.vecPosition.fX = 16384.0f * (usX / 65535.0f) - 8192.0f;
-        data.vecPosition.fY = 16384.0f * (usY / 65535.0f) - 8192.0f;
+        const float positionBound =
+            bitStream.Can(eBitStreamVersion::ExtendedWorldPositions) ? LOW_PRECISION_POSITION_BOUND : LEGACY_LOW_PRECISION_POSITION_BOUND;
+        data.vecPosition.fX = (positionBound * 2.0f) * (usX / 65535.0f) - positionBound;
+        data.vecPosition.fY = (positionBound * 2.0f) * (usY / 65535.0f) - positionBound;
         data.vecPosition.fZ = static_cast<float>(usZ) - 110.0f;
         return true;
     }
 
     void Write(NetBitStreamInterface& bitStream) const
     {
-        float fX = SharedUtil::Clamp(-8192.0f, data.vecPosition.fX, 8192.0f);
-        float fY = SharedUtil::Clamp(-8192.0f, data.vecPosition.fY, 8192.0f);
+        const float positionBound =
+            bitStream.Can(eBitStreamVersion::ExtendedWorldPositions) ? LOW_PRECISION_POSITION_BOUND : LEGACY_LOW_PRECISION_POSITION_BOUND;
+        float fX = SharedUtil::Clamp(-positionBound, data.vecPosition.fX, positionBound);
+        float fY = SharedUtil::Clamp(-positionBound, data.vecPosition.fY, positionBound);
         float fZ = SharedUtil::Clamp(-110.0f, data.vecPosition.fZ, 2048.0f - 110.0f);
 
-        unsigned short usX = static_cast<unsigned short>(((fX + 8192.0f) / 16384.0f) * 65535.0f);
-        unsigned short usY = static_cast<unsigned short>(((fY + 8192.0f) / 16384.0f) * 65535.0f);
+        unsigned short usX = static_cast<unsigned short>(((fX + positionBound) / (positionBound * 2.0f)) * 65535.0f);
+        unsigned short usY = static_cast<unsigned short>(((fY + positionBound) / (positionBound * 2.0f)) * 65535.0f);
         unsigned short usZ = static_cast<unsigned short>(fZ + 110.0f);
 
         bitStream.Write(usX);

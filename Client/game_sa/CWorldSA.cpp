@@ -16,6 +16,7 @@
 #include "CGameSA.h"
 #include "CPoolsSA.h"
 #include "CWorldSA.h"
+#include "CWorldSectorLimits.h"
 #include "CColModelSA.h"
 #include "gamesa_renderware.h"
 #include "CCollisionSA.h"
@@ -28,6 +29,41 @@ extern CGameSA*        pGame;
 namespace
 {
     extern const unsigned char aOriginalSurfaceInfo[2292];
+
+    constexpr float EXTENDED_WORLD_MIN_COORD = -10000.0f;
+    constexpr float EXTENDED_WORLD_MAX_COORD = 10000.0f;
+    constexpr float EXTENDED_WORLD_MAX_ENTITY_COORD = EXTENDED_WORLD_MAX_COORD - 1.0f;
+
+    void PatchEntityWorldBounds()
+    {
+        // Dynamic entities are stored in GTA's modulo-addressed repeat sectors,
+        // which the renderer and collision queries already use outside the
+        // native 120x120 building grid. CEntity::Add and Remove nevertheless
+        // clamp their rectangles to San Andreas, producing an empty rectangle
+        // for MTA objects around x=7000. Redirect every bound used by those two
+        // functions while deliberately leaving native building/LOD sectors,
+        // water, radar, paths and population at their original limits.
+        static const float fMinCoord = EXTENDED_WORLD_MIN_COORD;
+        static const float fMaxCoord = EXTENDED_WORLD_MAX_COORD;
+
+        const std::uintptr_t minCoordReferences[] = {0x5347ED, 0x534834, 0x534AFF, 0x534B2C, 0x534B55};
+        const std::uintptr_t maxCoordReferences[] = {0x53481B, 0x53484D, 0x534B3C, 0x534B6E};
+        const std::uintptr_t minCoordImmediates[] = {0x534811, 0x534843, 0x534B64};
+        const std::uintptr_t maxEntityCoordImmediates[] = {0x53482A, 0x53485C, 0x534B4B, 0x534B7D};
+
+        for (const std::uintptr_t address : minCoordReferences)
+            MemPut<DWORD>(address, reinterpret_cast<DWORD>(&fMinCoord));
+
+        for (const std::uintptr_t address : maxCoordReferences)
+            MemPut<DWORD>(address, reinterpret_cast<DWORD>(&fMaxCoord));
+
+        for (const std::uintptr_t address : minCoordImmediates)
+            MemPut<float>(address, EXTENDED_WORLD_MIN_COORD);
+
+        for (const std::uintptr_t address : maxEntityCoordImmediates)
+            MemPut<float>(address, EXTENDED_WORLD_MAX_ENTITY_COORD);
+
+    }
 }
 
 CWorldSA::CWorldSA()
@@ -130,6 +166,14 @@ static void __declspec(naked) HOOK_FallenCars()
 
 void CWorldSA::InstallHooks()
 {
+    const bool extendedWorldSectorsInstalled = InstallExtendedWorldSectorPatch();
+    static bool bWorldBoundsPatched = false;
+    if (!extendedWorldSectorsInstalled && !bWorldBoundsPatched)
+    {
+        PatchEntityWorldBounds();
+        bWorldBoundsPatched = true;
+    }
+
     HookInstall(0x565CB0, (DWORD)HOOK_FallenPeds, 10);
     HookInstall(0x565E80, (DWORD)HOOK_FallenCars, 10);
 }

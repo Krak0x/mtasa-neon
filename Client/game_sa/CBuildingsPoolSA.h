@@ -30,6 +30,7 @@ public:
     void           RestoreBackup() override;
     bool           Resize(int size) override;
     int            GetSize() const override { return (m_ppBuildingPoolInterface && *m_ppBuildingPoolInterface) ? (*m_ppBuildingPoolInterface)->m_nSize : 0; };
+    CBuilding*     GetBuilding(CBuildingSAInterface* pGameInterface) const noexcept;
     CClientEntity* GetClientBuilding(CBuildingSAInterface* pGameInterface) const noexcept;
 
 private:

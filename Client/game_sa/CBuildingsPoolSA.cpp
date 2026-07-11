@@ -10,6 +10,7 @@
  *****************************************************************************/
 
 #include "StdInc.h"
+#include "CWorldSectorLimits.h"
 #include "CBuildingsPoolSA.h"
 
 #include "CFileLoaderSA.h"
@@ -61,6 +62,16 @@ CClientEntity* CBuildingsPoolSA::GetClientBuilding(CBuildingSAInterface* pGameIn
         return nullptr;
 
     return m_buildingPool.entities[static_cast<size_t>(poolIndex)].pClientEntity;
+}
+
+CBuilding* CBuildingsPoolSA::GetBuilding(CBuildingSAInterface* pGameInterface) const noexcept
+{
+    const std::int32_t poolIndex = (*m_ppBuildingPoolInterface)->GetObjectIndexSafe(pGameInterface);
+
+    if (poolIndex == -1)
+        return nullptr;
+
+    return m_buildingPool.entities[static_cast<size_t>(poolIndex)].pEntity;
 }
 
 CBuilding* CBuildingsPoolSA::AddBuilding(CClientBuilding* pClientBuilding, uint16_t modelId, CVector* vPos, CVector* vRot, uint8_t interior)
@@ -270,11 +281,11 @@ void CBuildingsPoolSA::PurgeStaleSectorEntries(void* oldPool, int poolSize)
     const auto poolStart = reinterpret_cast<std::uintptr_t>(oldPool);
     const auto poolEnd = poolStart + static_cast<std::uintptr_t>(poolSize) * sizeof(CBuildingSAInterface);
 
-    // ARRAY_StreamSectors is a flat array of CSector[120][120].
+    // The active array is either GTA's vanilla grid or Neon’s relocated grid.
     // Each CSector is { CPtrListSingleLink m_buildings; CPtrListDoubleLink m_dummies } = 2 DWORDs.
     // We only scan m_buildings (even-indexed DWORDs).
-    auto*         sectorDwords = reinterpret_cast<DWORD*>(ARRAY_StreamSectors);
-    constexpr int kSectorCount = NUM_StreamSectorRows * NUM_StreamSectorCols;
+    auto*     sectorDwords = reinterpret_cast<DWORD*>(GetActiveWorldSectorArray());
+    const int kSectorCount = GetActiveWorldSectorCount();
 
     for (int i = 0; i < kSectorCount; ++i)
     {

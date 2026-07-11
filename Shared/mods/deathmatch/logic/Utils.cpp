@@ -856,8 +856,10 @@ void ReadCameraOrientation(const CVector& vecBasePosition, NetBitStreamInterface
         {3, 4.0f},      // 3 bits is +-4        12 bits total
         {5, 16.0f},     // 5 bits is +-16       18 bits total
         {9, 256.0f},    // 9 bits is +-256      30 bits total
-        {14, 8192.0f},  // 14 bits is +-8192    45 bits total
+        {14, 8192.0f},  // Legacy absolute camera position
     };
+    if (BitStream.Can(eBitStreamVersion::ExtendedWorldPositions))
+        bitCountTable[3] = {15, 16384.0f};
     // Read flag
     bool bUseAbsolutePosition = false;
     BitStream.ReadBit(bUseAbsolutePosition);

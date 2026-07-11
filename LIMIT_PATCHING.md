@@ -1,0 +1,484 @@
+# MTA Neon limit patching guide
+
+This document records the local references, workflow, and lessons learned while
+developing limit patches for MTA Neon. Read it together with `AGENTS.md` before
+changing a GTA limit.
+
+## Local source trees
+
+The relevant repositories on the macOS host are:
+
+```text
+MTA Neon (canonical working tree)
+/Users/salimtrouve/Documents/GitHub/mtasa-neon
+
+GTA: San Andreas reversed source
+/Users/salimtrouve/Documents/GitHub/gta-reversed-dryxio
+
+RenderWare reimplementation
+/Users/salimtrouve/Documents/GitHub/librw
+
+fastman92 Limit Adjuster source and documentation
+/Users/salimtrouve/Documents/GitHub/mta-misc/fastman
+```
+
+Useful subpaths include:
+
+```text
+GTA reversed game source
+/Users/salimtrouve/Documents/GitHub/gta-reversed-dryxio/source/game_sa
+
+GTA reversed executable and Ghidra material
+/Users/salimtrouve/Documents/GitHub/gta-reversed-dryxio/gta_sa.exe
+/Users/salimtrouve/Documents/GitHub/gta-reversed-dryxio/gta_sa_compact.exe
+/Users/salimtrouve/Documents/GitHub/gta-reversed-dryxio/gta_sa_compact.exe_ghidra
+
+Fastman92 main source
+/Users/salimtrouve/Documents/GitHub/mta-misc/fastman/source code/fastman92 limit adjuster/fastman92 limit adjuster/Source files
+
+Fastman92 limit implementations
+.../Source files/Modules
+
+Fastman92 GTA structures
+.../Source files/GameStructures/Rockstar Games
+
+Fastman92 documentation
+/Users/salimtrouve/Documents/GitHub/mta-misc/fastman/documentation
+```
+
+`gta-reversed-dryxio` is the best readable description of GTA behavior and
+structures. Fastman92 is the best index of known executable references and the
+extra code patches needed to make a particular limit movable. `librw` is useful
+when a limit reaches RenderWare data structures or algorithms, but it is a
+reimplementation/reference: GTA SA under MTA is not automatically executing
+the code in the local `librw` tree.
+
+## A limit is usually several limits
+
+Do not assume that changing the first constant found implements a limit
+adjuster. Trace the entire path from script/server data to rendering. A visible
+cap can exist independently in:
+
+1. MTA element creation, streaming, visibility, or manager code.
+2. MTA's GTA wrapper and its wrapper-object arrays.
+3. GTA's native fixed arrays, initialization loops, update loops, and render
+   loops.
+4. Hard-coded pointers to the start, individual fields, or end of a native
+   array.
+5. Immediate operands in native search/allocation functions.
+6. RenderWare pools, index formats, or renderer batches.
+7. Script/API validation, serialization, networking, or server-side limits.
+
+The corona experiment demonstrated this directly. Raising only MTA's marker
+streaming budget changed the observed ceiling from 32 to 62, not to the desired
+120. The remaining ceiling was GTA's 64-entry corona pool, with two entries
+reserved by MTA's allocator.
+
+## Implemented reference: 4096 coronas
+
+The first Neon limit patch is commit `98bdc2187` and expands the GTA SA 1.0 US
+corona pool from 64 to 4096 entries.
+
+The main implementation is in:
+
+```text
+Client/game_sa/CCoronasSA.cpp
+Client/game_sa/CCoronasSA.h
+Client/game_sa/CRegisteredCoronaSA.cpp
+Client/game_sa/CRegisteredCoronaSA.h
+Client/mods/deathmatch/logic/CClientMarker.cpp
+```
+
+The reusable in-repository test resource is:
+
+```text
+test-resources/corona-limit-test
+```
+
+It provides `/coronatest [count]`. The supported scripted maximum is 4094,
+because `CCoronasSA::FindFreeCorona` intentionally starts at slot 2.
+
+### Corona patch design
+
+GTA's original array begins at `0xC3E058` and contains 64 structures of `0x3C`
+bytes. Neon allocates a zero-initialized static array of 4096 structures and
+patches every known GTA SA 1.0 US instruction that directly addresses the old
+array, one of its fields, or its end.
+
+The replacement has process lifetime. This is required because GTA can use the
+array before or after MTA recreates its C++ wrapper objects. A replacement owned
+by a temporary manager instance would leave patched GTA code with dangling
+pointers.
+
+Each `CRegisteredCoronaSA` wrapper stores its explicit slot ID. It must not
+derive the ID by subtracting the old fixed address after relocation.
+
+GTA initialization and rendering counts are patched to 4096. GTA's native
+`RegisterCorona` and `UpdateCoronaCoors` searches deliberately remain limited
+to the first 64 slots. Their original bound uses short/immediate instruction
+forms that cannot represent 4096 by replacing one byte. Vanilla effects use
+those first slots; MTA scripted coronas allocate directly across the relocated
+array. Supporting more than 64 native GTA-created coronas would require the
+instruction/code-moving work shown by Fastman92, not just another constant.
+
+Fastman92's corresponding Windows x86 implementation is
+`OtherLimits::SetCoronaLimit` in:
+
+```text
+.../Source files/Modules/OtherLimits.cpp
+```
+
+Its pointer list and disassembly comments were used as the address reference.
+The readable GTA behavior and layouts are in:
+
+```text
+gta-reversed-dryxio/source/game_sa/Coronas.cpp
+gta-reversed-dryxio/source/game_sa/Coronas.h
+gta-reversed-dryxio/source/game_sa/RegisteredCorona.cpp
+gta-reversed-dryxio/source/game_sa/RegisteredCorona.h
+```
+
+### Failure that looked unrelated
+
+The first relocation attempt crashed while writing the first executable patch
+at `0x6FAACF` (the observed exception was at `0x6773A474`, accessing
+`0x006FAACF`). The cause was using `MemPutFast` on protected executable memory.
+Use MTA's protection-aware `MemPut` for these writes. A crash during patch
+installation can happen before any new array entry is used, so inspect the
+faulting write before blaming array layout or loop bounds.
+
+Temporary exception instrumentation was useful for locating that failure, but
+was removed from the final implementation.
+
+### Validation already performed
+
+The corona change was built successfully as:
+
+```text
+Game SA.vcxproj                 Release|Win32
+Client Deathmatch.vcxproj      Release|Win32
+```
+
+It was tested in the Parallels VM against the local MTA server. Progressive
+tests visibly produced 32, then 62, then 120 coronas as the independent limits
+were removed. The final 4096 configuration was also tested in game successfully.
+
+## Workflow for the next limit
+
+1. Define precisely what is being raised: created, streamed, updated, rendered,
+   loaded from a map, or synchronized. Record the vanilla and desired values.
+2. Search MTA with `rg` for the constant, manager, API name, allocation type,
+   and nearby error messages. Check both client and server code.
+3. Read the corresponding GTA reversed class and all functions that iterate or
+   index the relevant storage.
+4. Search Fastman92's `Modules` and `GameStructures` trees for the same limit.
+   Treat its implementation as an address/checklist reference, not as code that
+   must be imported wholesale.
+5. Classify every Fastman92 patch: start pointer, end pointer, field pointer,
+   allocation size, loop count, immediate comparison, code cave, or unrelated
+   platform/version support.
+6. Inspect `librw` only when the data crosses into RenderWare or when GTA
+   reversed does not explain the renderer-side restriction.
+7. Implement the smallest coherent MTA-integrated patch for GTA SA 1.0 US.
+   Preserve native behavior where possible and document deliberately unchanged
+   sub-limits.
+8. Add a deterministic test resource or command that can test below, at, and
+   above the old boundary. Test progressive counts so separate ceilings become
+   visible.
+9. Build and run using the canonical/VM workflow in `AGENTS.md`. Test resource
+   restart, reconnect, respawn, cleanup, and a short gameplay session as
+   applicable.
+10. Verify structure sizes and field offsets with `static_assert`, format C++
+    using the repository tool, review the diff, then write a commit message that
+    includes motivation, design decisions, and exact testing.
+
+## Safety and maintainability rules
+
+- Current absolute addresses are GTA SA 1.0 US-specific. Do not claim support
+  for another executable version without signatures or a separately verified
+  address table.
+- Patch every direct reference before allowing GTA to iterate a relocated
+  array. A missed field reference can silently corrupt the old array or crash
+  only on a rare render path.
+- Patch instruction operands at the correct operand address and width. Copying
+  the instruction address instead of the immediate/pointer offset corrupts code.
+- Use one authoritative constant per implemented limit and keep MTA wrapper
+  storage, GTA counts, API validation, and test-resource bounds consistent.
+- Prefer process-lifetime storage for pointers permanently installed into GTA.
+- Keep original native reservations and sentinel rules unless their full role is
+  understood.
+- Test old boundary minus one, old boundary, old boundary plus one, the target,
+  and cleanup. A visually successful low count does not validate an expanded
+  pool.
+- Large limits have performance costs even when memory is safe. Look for linear
+  searches and full-array per-frame loops; 4096 coronas are manageable, but the
+  same strategy may not scale to every pool.
+- Do not copy all of Fastman92 into MTA. Its size comes largely from supporting
+  many independent limits, games, executable versions, and platforms. Port the
+  verified subset required for one MTA feature and retain provenance in comments
+  and this guide.
+
+## Implemented reference: extended map/world bounds
+
+The current uncommitted Extended MTA World Phase 1 patch expands the usable XY
+domain for MTA-created buildings and synchronized entities. It has been tested
+with San Andreas at its original coordinates and with custom Perry Island
+terrain around X=9000.
+
+This is not one constant. The implementation changes four connected layers:
+
+1. GTA's native main-building and LOD spatial grids.
+2. GTA code that computes, clamps, indexes, scans, renders, collides with, and
+   removes entries from those grids.
+3. MTA client/server `createBuilding` validation and MTA code that scans the
+   active GTA grid.
+4. Versioned client/server network encodings whose old quantized XY range ended
+   at approximately +/-8192.
+
+The implemented geometry is:
+
+```text
+World size                 20000 units
+Supported XY domain        [-10000, +9999]
+Main sectors               400 x 400, 50 units each
+Main-sector allocation     1,280,000 bytes (160000 * 8)
+LOD sectors                100 x 100, 200 units each
+LOD-sector allocation      40,000 bytes (10000 * 4)
+Repeat sectors             unchanged at 16 x 16
+```
+
+The positive script/API bound is +9999 rather than +10000. GTA converts a
+coordinate with `floor(coordinate / sectorSize + halfGridSize)`, so +10000 is
+the first coordinate outside a 400-wide grid; -10000 is still inside it.
+
+The main implementation is in:
+
+```text
+Client/game_sa/CWorldSectorLimits.cpp
+Client/game_sa/CWorldSectorLimits.h
+Client/game_sa/CWorldSectorCodeMover.cpp
+Client/game_sa/CWorldSectorCodeMover.h
+Client/game_sa/CWorldSectorManifest.inc
+Client/game_sa/CWorldSectorDirectPatchManifest.inc
+Client/game_sa/CWorldSA.cpp
+```
+
+The manifests can be regenerated from the local Fastman92 source with:
+
+```text
+utils/extended-world/extract_world_sector_manifest.py
+```
+
+### GTA sector relocation
+
+The canonical GTA SA 1.0 US HOODLUM reference is
+`MapLimits::PatchWorldSectors_GTA_SA_PC_1_0_HOODLUM()` in Fastman92
+`Modules/MapLimits.cpp`. Its full patch is needed because GTA embeds the old
+grid addresses, dimensions, strides, half sizes, and coordinate constants in
+hundreds of instructions. Patching only the obvious array pointers or LOS hooks
+either corrupts memory or leaves independent paths using the vanilla grid.
+
+Neon allocates zero-initialized, process-lifetime replacements with
+`VirtualAlloc`: 160000 main sectors and 10000 LOD sectors. The vanilla 120x120
+and 30x30 lists are copied into the centered portion of the new grids so San
+Andreas remains at the same coordinates. The 16x16 repeat-sector array used by
+dynamic vehicles, peds, and objects keeps its original dimensions and storage;
+the Fastman92 references to it are retained so the whole world-sector patch
+remains coherent.
+
+The generated normal-executable manifests currently install:
+
+```text
+Moved instruction sites       392
+Direct pointer operands        841
+Direct integer operands         35
+Direct float operands           17
+Redirected functions/hooks      12
+Total direct patch entries     905
+```
+
+Fastman92 lists 397 `CCodeMover` calls. Five target compact-executable mirror
+addresses above `0x01000000`; MTA runs the normal HOODLUM image, so the generator
+intentionally excludes those five and emits 392 moved sites. Of the 12 redirects,
+11 come from Fastman92 and one is Neon's additional `CWorld::GetSector` fix
+described below.
+
+All direct patch operands and relocation sources are read and prepared before
+the first executable write. The captured bytes are checked again immediately
+before commit, so an unreadable address or an instruction changed concurrently
+aborts before mutation. The implementation then writes a 150000-byte executable
+code arena, redirects the 392 original instruction sites to it, and applies the
+direct patches.
+
+This check must not be mistaken for executable-version verification: the
+current manifests do not contain golden original bytes, and this installer does
+not calculate a GTA executable signature or CRC. It targets GTA SA 1.0 US
+HOODLUM addresses and currently assumes MTA has supplied the compatible image.
+Adding an explicit version/signature gate remains necessary before claiming
+that the patch safely rejects every unsupported executable. The installation is
+also not transactional or hot-swappable: there is no runtime grid resizing and
+no rollback mechanism after writes begin. Never switch grids while sector lists
+contain entities.
+
+### The Fastman92 `CCodeMover` port
+
+There is an important provenance detail. The local Fastman92 release contains
+the complete `MapLimits.cpp` call sites, addresses, comments, and encoded
+`CCodeMover::FixOnAddress` bytecode, but its referenced
+`Source files/Core/CCodeMover.h` and implementation are absent. Therefore Neon
+did not copy or compile Fastman92's private/general code mover.
+
+`CWorldSectorCodeMover` is a clean, minimal Neon implementation reconstructed
+from the observable bytecode contract used by this one WorldSectors function.
+It deliberately supports only the five opcodes present in that function:
+
+```text
+0x00  end of recipe
+0x01  emit literal bytes
+0x02  copy bytes from a GTA address
+0x03  emit a relocated 32-bit relative address
+0x05  emit a named variable using the requested width
+```
+
+For each recipe it builds replacement machine code in Neon's executable arena,
+appends the continuation jump when required, and replaces the original GTA
+instruction range with a relative jump plus NOP padding. Relative displacements
+are recalculated for the arena's actual runtime address. Source bytes captured
+during preparation are checked again before commit.
+
+`extract_world_sector_manifest.py` parses only the named HOODLUM WorldSectors
+function, requires exactly 397 calls and exactly the supported opcode set, and
+emits deterministic C++ manifests. It also extracts Fastman92's direct
+`PatchPointer`, `PatchUINT32`, `PatchFloat`, and `RedirectCode` calls. This keeps
+the large address list auditable and reproducible without importing the entire
+Limit Adjuster. Fastman92's source manifest is MIT-licensed and the generated
+files retain that attribution.
+
+Do not reuse `CWorldSectorCodeMover` for another Fastman92 module merely because
+its name is similar. Other modules use additional bytecode opcodes and may rely
+on behavior this minimal interpreter does not implement. Audit and extend the
+format explicitly for each new use.
+
+### The missing renderer path found during testing
+
+The first full sector patch produced San Andreas LODs but not its normal HD
+buildings. Runtime inspection showed that the new 400x400 and 100x100 grids were
+populated correctly. The remaining path was GTA's out-of-line
+`CWorld::GetSector` at `0x407260`, called by `CRenderer::SetupScanLists`.
+
+That helper was not included in Fastman92's WorldSectors manifest: it still
+clamped X and Y to 119, multiplied Y by the old stride 120, and returned an
+entry from `0xB7D0B8`. Neon adds a twelfth direct redirect to
+`GetExtendedWorldSector`, which clamps to 0..399 and indexes the relocated
+400-wide grid. This restored normal San Andreas buildings and was confirmed in
+game. Keep this Neon-specific entry when regenerating the direct manifest.
+
+### Dynamic entities, buildings, and MTA-side scans
+
+`CWorldSA::InstallHooks` installs the full sector patch. A smaller
+`CEntity::Add`/`Remove` bounds patch remains only as a fallback if full sector
+installation fails; the successful full patch already includes the relevant
+Fastman92 world-bound changes.
+
+MTA code that formerly assumed `ARRAY_StreamSectors` was always the vanilla
+120x120 array now asks for the active grid and dimension. This affects stale
+building-list cleanup and IPL restream scans in `CBuildingsPoolSA` and
+`CModelInfoSA`. The client and server building managers accept XY in
+`[-10000,+9999]` instead of approximately `[-3000,+3000]`.
+
+One test exposed a separate MTA wrapper issue: physical collision and LOS hit a
+script-created building at X=9500, but the LOS result returned no MTA element.
+`CPoolsSA::GetEntity` mapped peds, vehicles, and objects but not the building
+pool. `CBuildingsPoolSA::GetBuilding` and the corresponding lookup in
+`CPoolsSA::GetEntity` now return the building wrapper, so LOS reports the
+correct element. This is not a coordinate-limit patch itself, but it is required
+for correct extended-world query behavior.
+
+### Network position range
+
+MTA-created vehicles and other dynamic entities already worked beyond the
+vanilla building grid, but several network formats clipped XY near +/-8192.
+Neon adds the version gate `ExtendedWorldPositions` and changes only new-format
+connections:
+
+```text
+Quantized XY             SFloatSync<14,10> -> SFloatSync<15,10>
+Low-precision XY bound   +/-8192 -> +/-10000
+Absolute camera range    +/-8192 -> +/-16384
+```
+
+Legacy bitstream versions retain their old field widths and bounds. Both client
+and server must support the new bitstream version to synchronize the extended
+range. Unit tests cover new and legacy round trips, boundary positions,
+low-precision positions, and camera serialization.
+
+### Validation performed
+
+The patch was built as `Game SA.vcxproj Release|Win32` and exercised against the
+local custom server. `/bwtest 9500` confirmed:
+
+```text
+createBuilding   OK
+teleport         OK at approximately (9499.9, 49.5, 20.1)
+line of sight    OK, including the returned building element
+vehicle sync     OK
+vehicle camera   OK
+```
+
+The original San Andreas HD buildings, LODs, rendering, and collision remained
+visible after the `CWorld::GetSector` redirect. A generated Perry Island slice
+was then loaded around X=9000; terrain, roads, collisions, and LODs were
+confirmed in game. The reusable resources and generator are:
+
+```text
+test-resources/extended-world-test
+test-resources/perry-island-slice
+utils/extended-world/build_perry_slice.py
+```
+
+This validates the main Phase 1 path, not every boundary or lifecycle case.
+Before calling the implementation production-complete, still test -10000,
+-9999, +9999, sector edges, building removal/recreation, resource restart,
+reconnect, world reset, shutdown, high/low linking at several distances, and a
+larger Perry load while monitoring building-pool and pointer-node usage.
+
+### What this patch does not lift
+
+The supported XY range must not be described as every GTA map subsystem being
+extended. This patch does not yet relocate or extend:
+
+- native IPL loading boundaries or GTA's original map files;
+- water geometry and water limits;
+- radar texture coverage;
+- paths, traffic, zones, population, or ambient spawning;
+- native building/object/model pool counts;
+- the dimensions of the 16x16 repeat-sector ring.
+
+Custom Lua-created geometry, vehicles, and objects can operate in the extended
+area when their relevant MTA and network paths permit it, but empty space stays
+empty until a resource creates terrain there.
+
+### Changing the target again
+
+The choice of +/-10000 is the smallest round target that contains the intended
+Perry placement while keeping memory, patch values, and testing manageable. It
+is not a fundamental maximum. A +/-20000 target would require 800x800 main
+sectors and 200x200 LOD sectors: approximately 5.12 MB and 160 KB respectively,
+plus adjusted constants, API validation, network bounds, and a new full test
+pass. Quantized XY would need enough signed integer bits for that range; simply
+changing `WORLD_MAP_SIZE` without updating every connected layer is invalid.
+
+## Candidate areas for future work
+
+Water, radar, paths, zones/population, native IPL support, object/model pools,
+streaming lists, and renderer effects each need their own investigation. Locate
+the corresponding Fastman92 module first, trace the matching GTA reversed
+functions, and inspect `librw` only for RenderWare-facing behavior. Do not
+assume these candidates have the same risk or implementation size as the corona
+or world-sector patches.
+
+For the existing WOSA Perry resource, translating the main `novailhb` zone by
++8409.370117 places `perry_land_22` at X=9000 and keeps the whole zone within
+approximately X=7842..9517. This is a safer first integration than translating
+the complete resource by +9000, whose original maximum X would exceed the new
+world boundary.

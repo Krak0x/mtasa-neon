@@ -7,7 +7,7 @@
  *               sync structures
  *
  *  Position syncs have two modes: float (raw 32-bit) and quantized
- *  (SFloatSync<14,10> for X/Y, raw float for Z). Rotation syncs
+ *  (SFloatSync<15,10> for X/Y, raw float for Z). Rotation syncs
  *  quantize angles into 16-bit ranges. Velocity uses a flag bit to skip
  *  encoding when the vector is zero, and NormVector encoding for direction.
  *
@@ -38,7 +38,7 @@ TEST(SPositionSync, RoundTrip_Floats)
     EXPECT_FLOAT_EQ(50.0f, out.data.vecPosition.fZ);
 }
 
-// Quantized mode: X and Y use SFloatSync<14,10> (precision ~0.001),
+// Quantized mode: X and Y use SFloatSync<15,10> (precision ~0.001),
 // Z is still a raw float (vertical position needs full precision for
 // building interiors, etc).
 TEST(SPositionSync, RoundTrip_Quantized)
@@ -55,6 +55,38 @@ TEST(SPositionSync, RoundTrip_Quantized)
     EXPECT_NEAR(500.0f, out.data.vecPosition.fX, 0.01f);
     EXPECT_NEAR(-1234.0f, out.data.vecPosition.fY, 0.01f);
     EXPECT_FLOAT_EQ(42.0f, out.data.vecPosition.fZ);
+}
+
+TEST(SPositionSync, RoundTrip_ExtendedWorldBoundary)
+{
+    MockBitStream bs;
+    SPositionSync sync(false);
+    sync.data.vecPosition.fX = 9500.0f;
+    sync.data.vecPosition.fY = -9500.0f;
+    sync.data.vecPosition.fZ = 42.0f;
+    sync.Write(bs);
+    EXPECT_EQ(2 * (POSITION_SYNC_INTEGER_BITS + POSITION_SYNC_FRACTIONAL_BITS) + 32, bs.GetNumberOfBitsUsed());
+    bs.ResetReadPointer();
+    SPositionSync out(false);
+    EXPECT_TRUE(out.Read(bs));
+    EXPECT_NEAR(9500.0f, out.data.vecPosition.fX, 0.01f);
+    EXPECT_NEAR(-9500.0f, out.data.vecPosition.fY, 0.01f);
+}
+
+TEST(SPositionSync, LegacyVersionPreservesOldWireLimit)
+{
+    MockBitStream bs(static_cast<unsigned short>(eBitStreamVersion::Unk));
+    SPositionSync sync(false);
+    sync.data.vecPosition.fX = 9500.0f;
+    sync.data.vecPosition.fY = -9500.0f;
+    sync.data.vecPosition.fZ = 42.0f;
+    sync.Write(bs);
+    EXPECT_EQ(2 * (14 + POSITION_SYNC_FRACTIONAL_BITS) + 32, bs.GetNumberOfBitsUsed());
+    bs.ResetReadPointer();
+    SPositionSync out(false);
+    EXPECT_TRUE(out.Read(bs));
+    EXPECT_NEAR(8191.0f, out.data.vecPosition.fX, 0.01f);
+    EXPECT_NEAR(-8192.0f, out.data.vecPosition.fY, 0.01f);
 }
 
 // 2D position (float): only X and Y, used for map blips and radar positions.
@@ -87,22 +119,36 @@ TEST(SPosition2DSync, RoundTrip_Quantized)
     EXPECT_NEAR(-3000.0f, out.data.vecPosition.fY, 0.01f);
 }
 
-// Low-precision position: X/Y use 16-bit over [-8192, 8192] (step ~0.25),
+TEST(SPosition2DSync, RoundTrip_ExtendedWorldBoundary)
+{
+    MockBitStream   bs;
+    SPosition2DSync sync(false);
+    sync.data.vecPosition.fX = 9500.0f;
+    sync.data.vecPosition.fY = -9500.0f;
+    sync.Write(bs);
+    bs.ResetReadPointer();
+    SPosition2DSync out(false);
+    EXPECT_TRUE(out.Read(bs));
+    EXPECT_NEAR(9500.0f, out.data.vecPosition.fX, 0.01f);
+    EXPECT_NEAR(-9500.0f, out.data.vecPosition.fY, 0.01f);
+}
+
+// Low-precision position: X/Y use 16-bit over [-10000, 10000] (step ~0.31),
 // Z uses an 11-bit integer offset by -110 (step = 1). Used for lightweight
 // sync where exact position is less critical.
 TEST(SLowPrecisionPositionSync, RoundTrip)
 {
     MockBitStream             bs;
     SLowPrecisionPositionSync sync;
-    sync.data.vecPosition.fX = 1000.0f;
-    sync.data.vecPosition.fY = -2000.0f;
+    sync.data.vecPosition.fX = 9500.0f;
+    sync.data.vecPosition.fY = -9500.0f;
     sync.data.vecPosition.fZ = 50.0f;
     sync.Write(bs);
     bs.ResetReadPointer();
     SLowPrecisionPositionSync out;
     EXPECT_TRUE(out.Read(bs));
-    EXPECT_NEAR(1000.0f, out.data.vecPosition.fX, 0.3f);
-    EXPECT_NEAR(-2000.0f, out.data.vecPosition.fY, 0.3f);
+    EXPECT_NEAR(9500.0f, out.data.vecPosition.fX, 0.4f);
+    EXPECT_NEAR(-9500.0f, out.data.vecPosition.fY, 0.4f);
     EXPECT_NEAR(50.0f, out.data.vecPosition.fZ, 1.1f);
 }
 

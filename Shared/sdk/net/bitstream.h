@@ -40,6 +40,10 @@ enum class eBitStreamVersion : unsigned short
     // YYYY-MM-DD
     // Name,
 
+    // Extends quantized XY positions beyond the old +/-8192 wire limit.
+    // 2026-07-11
+    ExtendedWorldPositions,
+
     // This allows us to automatically increment the BitStreamVersion when things are added to this enum.
     // Make sure you only add things above this comment.
     Next,

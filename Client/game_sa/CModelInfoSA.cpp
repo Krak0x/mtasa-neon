@@ -19,6 +19,7 @@
 #include "CPedSA.h"
 #include "CPoolsSA.h"
 #include "CWorldSA.h"
+#include "CWorldSectorLimits.h"
 #include "gamesa_renderware.h"
 
 extern CCoreInterface* g_pCore;
@@ -1024,9 +1025,12 @@ void CModelInfoSA::StaticFlushPendingRestreamIPL()
 
     std::set<unsigned short> removedModels;
 
-    for (int i = 0; i < 2 * NUM_StreamSectorRows * NUM_StreamSectorCols; i++)
+    const int sectorCount = GetActiveWorldSectorCount();
+    const int sectorDimension = GetActiveWorldSectorDimension();
+    auto*     sectorArray = reinterpret_cast<DWORD**>(GetActiveWorldSectorArray());
+    for (int i = 0; i < 2 * sectorCount; i++)
     {
-        DWORD* pSectorEntry = ((DWORD**)ARRAY_StreamSectors)[i];
+        DWORD* pSectorEntry = sectorArray[i];
         while (pSectorEntry)
         {
             CEntitySAInterface* pEntity = (CEntitySAInterface*)pSectorEntry[0];
@@ -1037,7 +1041,7 @@ void CModelInfoSA::StaticFlushPendingRestreamIPL()
             {
                 // Log info
                 OutputDebugString(SString("Entity 0x%08x (with model %d) at ARRAY_StreamSectors[%d,%d] is invalid\n", pEntity, pEntity->m_nModelIndex,
-                                          i / 2 % NUM_StreamSectorRows, i / 2 / NUM_StreamSectorCols));
+                                          i / 2 % sectorDimension, i / 2 / sectorDimension));
 // Assert in debug
 #if MTA_DEBUG
                 assert(static_cast<std::size_t*>(pEntity->GetVTBL())[CEntity_DeleteRwObject_VTBL_OFFSET] != 0x00534030);
