@@ -13,6 +13,11 @@
 #include <core/CCoreInterface.h>
 #include <multiplayer/CMultiplayer.h>
 #include "CWaterManagerSA.h"
+#include "CWorldSectorCodeMover.h"
+
+#include <array>
+#include <cmath>
+#include <cstring>
 
 extern CCoreInterface* g_pCore;
 
@@ -52,6 +57,333 @@ DWORD CWaterManagerSA::m_TriangleXrefs[] = {0x6E58AD, 0x6E593B, 0x6E7C44, 0x6E7E
 DWORD CWaterManagerSA::m_ZonePolyXrefs[] = {0x6E57B2, 0x6E57AA, 0x6E57C8, 0x6E58F2, 0x6E638F, 0x6E86A1, 0x6E6387, 0x6E8699, 0x6E57DE, 0x6E57E8, 0x000000};
 
 CWaterManagerSA* g_pWaterManager = NULL;
+
+namespace
+{
+    constexpr std::size_t WATER_MOVED_CODE_CAPACITY = 4096;
+    constexpr int         TOTAL_EXTENDED_WATER_BLOCKS = NUM_WaterZones;
+    constexpr int         OUTSIDE_WORLD_BLOCKS_CAPACITY = 512;
+
+    int   g_extendedWaterBlocksPerDimension = EXTENDED_WATER_BLOCKS_PER_DIMENSION;
+    float g_extendedWaterBlocksHalf = static_cast<float>(EXTENDED_WATER_BLOCKS_HALF);
+    float g_extendedWaterMapMinCoord = EXTENDED_WATER_MAP_MIN_COORD;
+    float g_extendedWaterMapMaxCoord = EXTENDED_WATER_MAP_MAX_COORD;
+
+    std::array<CWaterPolyEntrySAInterface, TOTAL_EXTENDED_WATER_BLOCKS> g_extendedWaterZones{};
+    short g_blocksToBeRenderedOutsideWorldX[OUTSIDE_WORLD_BLOCKS_CAPACITY]{};
+    short g_blocksToBeRenderedOutsideWorldY[OUTSIDE_WORLD_BLOCKS_CAPACITY]{};
+    std::uint8_t* g_waterMovedCode{};
+    bool          g_extendedWaterMapInstalled{};
+
+    struct SWaterMapManifestEntry
+    {
+        std::uintptr_t      address;
+        std::size_t         originalSize;
+        const std::uint8_t* bytecode;
+        std::size_t         bytecodeSize;
+        std::uintptr_t      continueAt;
+    };
+
+#include "CWaterMapManifest.inc"
+
+    bool ReadWaterPatchMemory(std::uintptr_t address, void* output, std::size_t size)
+    {
+        MEMORY_BASIC_INFORMATION memory{};
+        if (VirtualQuery(reinterpret_cast<const void*>(address), &memory, sizeof(memory)) != sizeof(memory) || memory.State != MEM_COMMIT ||
+            (memory.Protect & (PAGE_NOACCESS | PAGE_GUARD)) != 0 ||
+            address + size > reinterpret_cast<std::uintptr_t>(memory.BaseAddress) + memory.RegionSize)
+        {
+            return false;
+        }
+
+        std::memcpy(output, reinterpret_cast<const void*>(address), size);
+        return true;
+    }
+
+    bool WriteWaterPatchMemory(std::uintptr_t address, const void* bytes, std::size_t size)
+    {
+        DWORD oldProtection{};
+        if (!VirtualProtect(reinterpret_cast<void*>(address), size, PAGE_EXECUTE_READWRITE, &oldProtection))
+            return false;
+
+        std::memcpy(reinterpret_cast<void*>(address), bytes, size);
+        FlushInstructionCache(GetCurrentProcess(), reinterpret_cast<void*>(address), size);
+        DWORD ignored{};
+        return VirtualProtect(reinterpret_cast<void*>(address), size, oldProtection, &ignored) != FALSE;
+    }
+
+    bool TestExtendedWaterLevelHeight(float positionZ, float waterLevel, bool limitedDepth)
+    {
+        const float lowerTolerance = *reinterpret_cast<float*>(0x858B44);
+        const float upperTolerance = *reinterpret_cast<float*>(0x858BA4);
+        return (waterLevel - lowerTolerance <= positionZ || !limitedDepth) && waterLevel + upperTolerance >= positionZ;
+    }
+
+    struct SWaterVertexValues
+    {
+        CVector position;
+        float   bigWaves;
+        float   smallWaves;
+    };
+
+    SWaterVertexValues GetWaterVertexValues(CWaterPolySA* polygon, int index)
+    {
+        auto* vertex = static_cast<CWaterVertexSA*>(polygon->GetVertex(index));
+        SWaterVertexValues values{};
+        vertex->GetPosition(values.position);
+        values.bigWaves = vertex->GetInterface()->m_fUnknown;
+        values.smallWaves = vertex->GetInterface()->m_fHeight;
+        return values;
+    }
+
+    bool TestExtendedWaterPolygon(CWaterPolySA* polygon, const CVector& position, float* waterLevel, float* bigWaves, float* smallWaves)
+    {
+        const SWaterVertexValues v0 = GetWaterVertexValues(polygon, 0);
+        const SWaterVertexValues v1 = GetWaterVertexValues(polygon, 1);
+        const SWaterVertexValues v2 = GetWaterVertexValues(polygon, 2);
+
+        if (position.fX < v0.position.fX || v1.position.fX < position.fX)
+            return false;
+
+        const float xT = (position.fX - v0.position.fX) / (v1.position.fX - v0.position.fX);
+        bool        limitedDepth{};
+
+        if (polygon->GetType() == WATER_POLY_QUAD)
+        {
+            const SWaterVertexValues v3 = GetWaterVertexValues(polygon, 3);
+            if (position.fY < v0.position.fY || v2.position.fY < position.fY)
+                return false;
+
+            const float yT = (position.fY - v0.position.fY) / (v2.position.fY - v0.position.fY);
+            if (xT + yT > 1.0f)
+            {
+                const float inverseX = 1.0f - xT;
+                const float inverseY = 1.0f - yT;
+                *waterLevel = (v1.position.fZ - v3.position.fZ) * inverseY + (v2.position.fZ - v3.position.fZ) * inverseX + v3.position.fZ;
+                if (bigWaves)
+                {
+                    *bigWaves = (v2.bigWaves - v3.bigWaves) * inverseX + (v1.bigWaves - v3.bigWaves) * inverseY + v3.bigWaves;
+                    *smallWaves = (v2.smallWaves - v3.smallWaves) * inverseX + (v1.smallWaves - v3.smallWaves) * inverseY + v3.smallWaves;
+                }
+            }
+            else
+            {
+                *waterLevel = (v1.position.fZ - v0.position.fZ) * xT + (v2.position.fZ - v0.position.fZ) * yT + v0.position.fZ;
+                if (bigWaves)
+                {
+                    *bigWaves = (v1.bigWaves - v0.bigWaves) * xT + (v2.bigWaves - v0.bigWaves) * yT + v0.bigWaves;
+                    *smallWaves = (v1.smallWaves - v0.smallWaves) * xT + (v2.smallWaves - v0.smallWaves) * yT + v0.smallWaves;
+                }
+            }
+            limitedDepth = (static_cast<CWaterQuadSA*>(polygon)->GetInterface()->m_wFlags & WATER_SHALLOW) != 0;
+        }
+        else
+        {
+            const float minY = std::min(v0.position.fY, v2.position.fY);
+            const float maxY = std::max(v0.position.fY, v2.position.fY);
+            if (position.fY < minY || maxY < position.fY)
+                return false;
+
+            const float yT = (position.fY - v0.position.fY) / (v2.position.fY - v0.position.fY);
+            if (v0.position.fX == v2.position.fX)
+            {
+                if (xT + yT > 1.0f)
+                    return false;
+                *waterLevel = (v1.position.fZ - v0.position.fZ) * xT + (v2.position.fZ - v0.position.fZ) * yT + v0.position.fZ;
+                if (bigWaves)
+                {
+                    *bigWaves = (v2.bigWaves - v0.bigWaves) * yT + (v1.bigWaves - v0.bigWaves) * xT + v0.bigWaves;
+                    *smallWaves = (v1.smallWaves - v0.smallWaves) * xT + (v2.smallWaves - v0.smallWaves) * yT + v0.smallWaves;
+                }
+            }
+            else
+            {
+                if (xT < yT)
+                    return false;
+                const float inverseX = 1.0f - xT;
+                *waterLevel = (v0.position.fZ - v1.position.fZ) * inverseX + (v2.position.fZ - v1.position.fZ) * yT + v1.position.fZ;
+                if (bigWaves)
+                {
+                    *bigWaves = (v2.bigWaves - v1.bigWaves) * yT + (v0.bigWaves - v1.bigWaves) * inverseX + v1.bigWaves;
+                    *smallWaves = (v2.smallWaves - v1.smallWaves) * yT + (v0.smallWaves - v1.smallWaves) * inverseX + v1.smallWaves;
+                }
+            }
+            limitedDepth = (static_cast<CWaterTriangleSA*>(polygon)->GetInterface()->m_wFlags & WATER_SHALLOW) != 0;
+        }
+
+        return !bigWaves || TestExtendedWaterLevelHeight(position.fZ, *waterLevel, limitedDepth);
+    }
+
+    bool __cdecl ExtendedGetWaterLevelNoWaves(CVector position, float* waterLevel, float* bigWaves, float* smallWaves)
+    {
+        if (position.fX >= EXTENDED_WATER_MAP_MIN_COORD && position.fX < EXTENDED_WATER_MAP_MAX_COORD &&
+            position.fY >= EXTENDED_WATER_MAP_MIN_COORD && position.fY < EXTENDED_WATER_MAP_MAX_COORD)
+        {
+            CWaterZoneSA* zone = g_pWaterManager->GetZoneContaining(position.fX, position.fY);
+            if (zone)
+            {
+                for (CWaterZoneSA::iterator iterator = zone->begin(); *iterator; ++iterator)
+                {
+                    if (TestExtendedWaterPolygon(*iterator, position, waterLevel, bigWaves, smallWaves))
+                        return true;
+                }
+            }
+        }
+
+        // Preserve GTA's infinite sea independently from the custom polygon
+        // index. An extended empty block outside San Andreas is still ocean.
+        if (position.fX < -3000.0f || position.fX > 3000.0f || position.fY < -3000.0f || position.fY > 3000.0f)
+        {
+            *waterLevel = *reinterpret_cast<float*>(0x6E873F);
+            if (bigWaves)
+            {
+                *bigWaves = 1.0f;
+                *smallWaves = 0.0f;
+            }
+            return true;
+        }
+        return false;
+    }
+
+    void __cdecl ExtendedWaterBlockHit(int blockX, int blockY)
+    {
+        if (blockX >= 0 && blockX < EXTENDED_WATER_BLOCKS_PER_DIMENSION && blockY >= 0 && blockY < EXTENDED_WATER_BLOCKS_PER_DIMENSION)
+        {
+            using MarkWaterPolygons_t = void(__cdecl*)(int, int, bool);
+            reinterpret_cast<MarkWaterPolygons_t>(0x6E5810)(blockX, blockY, *reinterpret_cast<DWORD*>(0xB72914) != 0);
+        }
+
+        const int vanillaMinBlock = EXTENDED_WATER_TO_VANILLA_BLOCK_OFFSET;
+        const int vanillaMaxBlock = vanillaMinBlock + VANILLA_WATER_BLOCKS_PER_DIMENSION - 1;
+        if (blockX <= vanillaMinBlock || blockX >= vanillaMaxBlock || blockY <= vanillaMinBlock || blockY >= vanillaMaxBlock)
+        {
+            auto& count = *reinterpret_cast<DWORD*>(0xC215EC);
+            if (count < OUTSIDE_WORLD_BLOCKS_CAPACITY)
+            {
+                g_blocksToBeRenderedOutsideWorldX[count] = static_cast<short>(blockX - EXTENDED_WATER_TO_VANILLA_BLOCK_OFFSET);
+                g_blocksToBeRenderedOutsideWorldY[count] = static_cast<short>(blockY - EXTENDED_WATER_TO_VANILLA_BLOCK_OFFSET);
+                ++count;
+            }
+        }
+    }
+
+    __declspec(naked) void PatchWaterAddToBlock()
+    {
+        MTA_VERIFY_HOOK_LOCAL_SIZE;
+        __asm
+        {
+            imul eax, g_extendedWaterBlocksPerDimension
+            add ecx, eax
+            push 0x6E575E
+            retn
+        }
+    }
+
+    __declspec(naked) void PatchWaterMarkBlock()
+    {
+        MTA_VERIFY_HOOK_LOCAL_SIZE;
+        __asm
+        {
+            imul eax, g_extendedWaterBlocksPerDimension
+            lea edx, [ecx + eax]
+            push 0x6E581E
+            retn
+        }
+    }
+
+    __declspec(naked) void PatchWaterTestLineBlock()
+    {
+        MTA_VERIFY_HOOK_LOCAL_SIZE;
+        __asm
+        {
+            mov ebp, edi
+            imul ebp, g_extendedWaterBlocksPerDimension
+            push 0x6E631E
+            retn
+        }
+    }
+
+    void PatchWaterPointerReferences(const std::uintptr_t* addresses, std::size_t count, const void* value)
+    {
+        for (std::size_t i = 0; i < count; ++i)
+            MemPut<DWORD>(addresses[i], reinterpret_cast<DWORD>(value));
+    }
+
+    bool InstallExtendedWaterMapPatch()
+    {
+        if (g_extendedWaterMapInstalled)
+            return true;
+
+        constexpr int vanillaOffset = EXTENDED_WATER_TO_VANILLA_BLOCK_OFFSET;
+        auto* const   vanillaZones = reinterpret_cast<CWaterPolyEntrySAInterface*>(ARRAY_WaterZones);
+        for (int x = 0; x < VANILLA_WATER_BLOCKS_PER_DIMENSION; ++x)
+        {
+            for (int y = 0; y < VANILLA_WATER_BLOCKS_PER_DIMENSION; ++y)
+            {
+                g_extendedWaterZones[(x + vanillaOffset) * EXTENDED_WATER_BLOCKS_PER_DIMENSION + y + vanillaOffset] =
+                    vanillaZones[x * VANILLA_WATER_BLOCKS_PER_DIMENSION + y];
+            }
+        }
+
+        g_waterMovedCode = static_cast<std::uint8_t*>(
+            VirtualAlloc(nullptr, WATER_MOVED_CODE_CAPACITY, MEM_COMMIT | MEM_RESERVE, PAGE_EXECUTE_READWRITE));
+        if (!g_waterMovedCode)
+            return false;
+
+        CWorldSectorCodeMover mover(reinterpret_cast<std::uintptr_t>(g_waterMovedCode), WATER_MOVED_CODE_CAPACITY, ReadWaterPatchMemory);
+        mover.SetVariable("NUMBER_OF_WATER_BLOCKS_PER_DIMENSION", EXTENDED_WATER_BLOCKS_PER_DIMENSION);
+        mover.SetVariable("NUMBER_OF_WATER_BLOCKS_PER_DIMENSION_MINUS_ONE", EXTENDED_WATER_BLOCKS_PER_DIMENSION - 1);
+        mover.SetVariable("TOTAL_NUMBER_OF_WATER_BLOCKS", TOTAL_EXTENDED_WATER_BLOCKS);
+
+        // BlockHit and GetWaterLevelNoWaves are replaced completely to retain
+        // the vanilla ocean boundary. Only TestLineAgainstWater still needs
+        // Fastman92's widened loop bounds.
+        for (std::size_t i = 12; i < std::size(WATER_MAP_MANIFEST); ++i)
+        {
+            const SWaterMapManifestEntry& entry = WATER_MAP_MANIFEST[i];
+            if (!mover.Prepare(entry.address, entry.originalSize, entry.bytecode, entry.bytecodeSize, entry.continueAt))
+                return false;
+        }
+        if (!mover.Commit(WriteWaterPatchMemory))
+            return false;
+
+        const std::uintptr_t blockArrayReferences[] = {0x6E5762, 0x6E5783, 0x6E5801, 0x6E5822, 0x6E635E, 0x6E85F3, 0x6EAE94};
+        PatchWaterPointerReferences(blockArrayReferences, std::size(blockArrayReferences), g_extendedWaterZones.data());
+
+        const std::uintptr_t minCoordReferences[] = {0x6E5A4A, 0x6E5AB9, 0x6E9DA1, 0x6E9DE7};
+        const std::uintptr_t maxCoordReferences[] = {0x6E5A83, 0x6E5AF9, 0x6E7B4C, 0x6E7B6F, 0x6E9DD2, 0x6E9DFC};
+        PatchWaterPointerReferences(minCoordReferences, std::size(minCoordReferences), &g_extendedWaterMapMinCoord);
+        PatchWaterPointerReferences(maxCoordReferences, std::size(maxCoordReferences), &g_extendedWaterMapMaxCoord);
+
+        const std::uintptr_t scanHalfReferences[] = {0x6E6DC4, 0x6E6DD8, 0x6E6DEC, 0x6E6E00, 0x6E6E14,
+                                                     0x6E6E28, 0x6E6E48, 0x6E6E5C, 0x6E6E70, 0x6E6E84};
+        const std::uintptr_t lineHalfReferences[] = {0x6E62B9, 0x6E62CE, 0x6E62E5, 0x6E62FA, 0x6E6734, 0x6E674C};
+        PatchWaterPointerReferences(scanHalfReferences, std::size(scanHalfReferences), &g_extendedWaterBlocksHalf);
+        PatchWaterPointerReferences(lineHalfReferences, std::size(lineHalfReferences), &g_extendedWaterBlocksHalf);
+
+        MemPut<DWORD>(0x6E5A57, static_cast<DWORD>(-10000));
+        MemPut<DWORD>(0x6E5A8F, static_cast<DWORD>(10000));
+        MemPut<DWORD>(0x6E5AC5, static_cast<DWORD>(-10000));
+        MemPut<DWORD>(0x6E5B05, static_cast<DWORD>(10000));
+        MemPut<DWORD>(0x6E7D0D, 20000);
+        MemPut<DWORD>(0x6E7D2A, 20000);
+        MemPut<DWORD>(0x6EAE8F, (TOTAL_EXTENDED_WATER_BLOCKS * sizeof(WORD)) / sizeof(DWORD));
+
+        HookInstall(0x6E5758, reinterpret_cast<DWORD>(&PatchWaterAddToBlock), 6);
+        HookInstall(0x6E5818, reinterpret_cast<DWORD>(&PatchWaterMarkBlock), 6);
+        HookInstall(0x6E6318, reinterpret_cast<DWORD>(&PatchWaterTestLineBlock), 6);
+        HookInstall(0x6E6CA0, reinterpret_cast<DWORD>(&ExtendedWaterBlockHit), 5);
+        HookInstall(0x6E8580, reinterpret_cast<DWORD>(&ExtendedGetWaterLevelNoWaves), 5);
+
+        g_extendedWaterMapInstalled = true;
+        return true;
+    }
+}
+
+CWaterPolyEntrySAInterface* GetExtendedWaterZoneArray()
+{
+    return g_extendedWaterZones.data();
+}
 
 // -----------------------------------------------------
 // Water zone iterator (iterates over polys in a zone)
@@ -212,8 +544,8 @@ CWaterPolyEntrySAInterface* CWaterZoneSA::AddPoly(EWaterPolyType type, WORD wID)
         pZoneStart->m_wValue = MAKE_POLYENTRY(type, wID);
 
         WORD                        wZoneStartOffset = pZoneStart - g_pWaterManager->m_ZonePolyPool;
-        CWaterPolyEntrySAInterface* pZoneInterface = (CWaterPolyEntrySAInterface*)ARRAY_WaterZones;
-        for (; pZoneInterface != &((CWaterPolyEntrySAInterface*)ARRAY_WaterZones)[NUM_WaterZones]; pZoneInterface++)
+        CWaterPolyEntrySAInterface* pZoneInterface = GetExtendedWaterZoneArray();
+        for (; pZoneInterface != &GetExtendedWaterZoneArray()[NUM_WaterZones]; pZoneInterface++)
         {
             if (POLYENTRY_TYPE(pZoneInterface) == WATER_POLY_LIST && POLYENTRY_ID(pZoneInterface) > wZoneStartOffset)
                 pZoneInterface->m_wValue++;
@@ -265,8 +597,8 @@ bool CWaterZoneSA::RemovePoly(EWaterPolyType type, WORD wID)
                 for (; pEntry < pEnd; pEntry++)
                     (pEntry - 3)->m_wValue = pEntry->m_wValue;
 
-                CWaterPolyEntrySAInterface* pZoneInterface = (CWaterPolyEntrySAInterface*)ARRAY_WaterZones;
-                for (; pZoneInterface < &((CWaterPolyEntrySAInterface*)ARRAY_WaterZones)[NUM_WaterZones]; pZoneInterface++)
+                CWaterPolyEntrySAInterface* pZoneInterface = GetExtendedWaterZoneArray();
+                for (; pZoneInterface < &GetExtendedWaterZoneArray()[NUM_WaterZones]; pZoneInterface++)
                 {
                     if (POLYENTRY_TYPE(pZoneInterface) == WATER_POLY_LIST && POLYENTRY_ID(pZoneInterface) > wOffset)
                         pZoneInterface->m_wValue -= 3;
@@ -289,8 +621,8 @@ bool CWaterZoneSA::RemovePoly(EWaterPolyType type, WORD wID)
                     for (; pEntry < pEnd; pEntry++)
                         (pEntry - 1)->m_wValue = pEntry->m_wValue;
 
-                    CWaterPolyEntrySAInterface* pZoneInterface = (CWaterPolyEntrySAInterface*)ARRAY_WaterZones;
-                    for (; pZoneInterface < &((CWaterPolyEntrySAInterface*)ARRAY_WaterZones)[NUM_WaterZones]; pZoneInterface++)
+                    CWaterPolyEntrySAInterface* pZoneInterface = GetExtendedWaterZoneArray();
+                    for (; pZoneInterface < &GetExtendedWaterZoneArray()[NUM_WaterZones]; pZoneInterface++)
                     {
                         if (POLYENTRY_TYPE(pZoneInterface) == WATER_POLY_LIST && POLYENTRY_ID(pZoneInterface) > wOffset)
                             pZoneInterface->m_wValue--;
@@ -323,10 +655,11 @@ CWaterManagerSA::CWaterManagerSA()
     m_iActivePolyCount = 0;
     m_bWaterDrawnLast = true;
     RelocatePools();
+    InstallExtendedWaterMapPatch();
     InstallHooks();
 
     for (DWORD i = 0; i < NUM_WaterZones; i++)
-        m_Zones[i].SetInterface(&((CWaterPolyEntrySAInterface*)ARRAY_WaterZones)[i]);
+        m_Zones[i].SetInterface(&GetExtendedWaterZoneArray()[i]);
 
     for (DWORD i = 0; i < NUM_NewWaterVertices; i++)
         m_Vertices[i].SetInterface(&m_VertexPool[i]);
@@ -367,9 +700,6 @@ void CWaterManagerSA::RelocatePools()
 
 // GTA default is 70 blocks. We increase this to 512 which is 2^9
 #define OUTSIDE_WORLD_BLOCKS_BITS 9
-    static short ms_BlocksToBeRenderedOutsideWorldX[1 << OUTSIDE_WORLD_BLOCKS_BITS];
-    static short ms_BlocksToBeRenderedOutsideWorldY[1 << OUTSIDE_WORLD_BLOCKS_BITS];
-
     BYTE part1[] = {0xC1, 0xF8, OUTSIDE_WORLD_BLOCKS_BITS + 1,  // sar eax,13           = 2^(10-1) = 512
                     0x7A, 0x19};                                // jp part2             Effectively jump always
 
@@ -380,15 +710,15 @@ void CWaterManagerSA::RelocatePools()
     MemCpy((void*)0x6E6CE9, part1, sizeof(part1));
     MemCpy((void*)0x6E6D07, part2, sizeof(part2));
 
-    MemPut<uint>(0x6E6CF2, (uint)&ms_BlocksToBeRenderedOutsideWorldX);
-    MemPut<uint>(0x6E6CFA, (uint)&ms_BlocksToBeRenderedOutsideWorldY);
+    MemPut<uint>(0x6E6CF2, (uint)&g_blocksToBeRenderedOutsideWorldX);
+    MemPut<uint>(0x6E6CFA, (uint)&g_blocksToBeRenderedOutsideWorldY);
 
-    MemPut<uint>(0x6EF6E4, (uint)&ms_BlocksToBeRenderedOutsideWorldX);
-    MemPut<uint>(0x6EF6EC, (uint)&ms_BlocksToBeRenderedOutsideWorldY);
+    MemPut<uint>(0x6EF6E4, (uint)&g_blocksToBeRenderedOutsideWorldX);
+    MemPut<uint>(0x6EF6EC, (uint)&g_blocksToBeRenderedOutsideWorldY);
 
-    MemPut<uint>(0x6EFE86, (uint)&ms_BlocksToBeRenderedOutsideWorldX);
-    MemPut<uint>(0x6EFE99, (uint)&ms_BlocksToBeRenderedOutsideWorldY);
-    MemPut<uint>(0x6EFEB3, (uint)&ms_BlocksToBeRenderedOutsideWorldY);
+    MemPut<uint>(0x6EFE86, (uint)&g_blocksToBeRenderedOutsideWorldX);
+    MemPut<uint>(0x6EFE99, (uint)&g_blocksToBeRenderedOutsideWorldY);
+    MemPut<uint>(0x6EFEB3, (uint)&g_blocksToBeRenderedOutsideWorldY);
 }
 
 // The following hooks change the way SA iterates over water polygons.
@@ -489,21 +819,18 @@ void CWaterManagerSA::InstallHooks()
 
 CWaterZoneSA* CWaterManagerSA::GetZone(int iCol, int iRow)
 {
-    int zoneID = 12 * iCol + iRow;
+    int zoneID = EXTENDED_WATER_BLOCKS_PER_DIMENSION * iCol + iRow;
     return &m_Zones[zoneID];
 }
 
 CWaterZoneSA* CWaterManagerSA::GetZoneContaining(float fX, float fY)
 {
-    if (fX < -3000.0f || fX > 3000.0f || fY < -3000.0f || fY > 3000.0f)
+    if (fX < EXTENDED_WATER_MAP_MIN_COORD || fX >= EXTENDED_WATER_MAP_MAX_COORD || fY < EXTENDED_WATER_MAP_MIN_COORD ||
+        fY >= EXTENDED_WATER_MAP_MAX_COORD)
         return NULL;
 
-    if (fX == 3000.0f)
-        fX = 2999.0f;
-    if (fY == 3000.0f)
-        fY = 2999.0f;
-
-    int zoneID = 12 * ((int)(fX + 3000.0f) / 500) + (int)(fY + 3000.0f) / 500;
+    int zoneID = EXTENDED_WATER_BLOCKS_PER_DIMENSION * (static_cast<int>(fX - EXTENDED_WATER_MAP_MIN_COORD) / EXTENDED_WATER_BLOCK_SIZE) +
+                 static_cast<int>(fY - EXTENDED_WATER_MAP_MIN_COORD) / EXTENDED_WATER_BLOCK_SIZE;
     return &m_Zones[zoneID];
 }
 
@@ -523,18 +850,18 @@ void CWaterManagerSA::GetZonesContaining(CWaterPoly* pPoly, std::vector<CWaterZo
 void CWaterManagerSA::GetZonesContaining(const CVector& v1, const CVector& v2, const CVector& v3, std::vector<CWaterZoneSA*>& out)
 {
     out.clear();
-    float fColumnLeft = -3000.0f;
-    for (int column = 0; column < 12; column++)
+    float fColumnLeft = EXTENDED_WATER_MAP_MIN_COORD;
+    for (int column = 0; column < EXTENDED_WATER_BLOCKS_PER_DIMENSION; column++)
     {
-        float fRowBottom = -3000.0f;
-        for (int row = 0; row < 12; row++)
+        float fRowBottom = EXTENDED_WATER_MAP_MIN_COORD;
+        for (int row = 0; row < EXTENDED_WATER_BLOCKS_PER_DIMENSION; row++)
         {
-            if (v2.fX >= fColumnLeft && v1.fX < fColumnLeft + 500.0f && std::max<float>(v1.fY, v3.fY) >= fRowBottom &&
-                std::min<float>(v1.fY, v3.fY) < fRowBottom + 500.0f)
-                out.push_back(&m_Zones[column * 12 + row]);
-            fRowBottom += 500.0f;
+            if (v2.fX >= fColumnLeft && v1.fX < fColumnLeft + EXTENDED_WATER_BLOCK_SIZE && std::max<float>(v1.fY, v3.fY) >= fRowBottom &&
+                std::min<float>(v1.fY, v3.fY) < fRowBottom + EXTENDED_WATER_BLOCK_SIZE)
+                out.push_back(&m_Zones[column * EXTENDED_WATER_BLOCKS_PER_DIMENSION + row]);
+            fRowBottom += EXTENDED_WATER_BLOCK_SIZE;
         }
-        fColumnLeft += 500.0f;
+        fColumnLeft += EXTENDED_WATER_BLOCK_SIZE;
     }
 }
 
@@ -542,15 +869,19 @@ void CWaterManagerSA::GetZonesContaining(const CVector& v1, const CVector& v2, c
 void CWaterManagerSA::GetZonesIntersecting(const CVector& startPos, const CVector& endPos, std::vector<CWaterZoneSA*>& vecOut)
 {
     vecOut.clear();
-    float minX = Clamp<float>(-3000.0f, std::min<float>(startPos.fX, endPos.fX), 3000.0f);
-    float maxX = Clamp<float>(-3000.0f, std::max<float>(startPos.fX, endPos.fX), 3000.0f);
-    float minY = Clamp<float>(-3000.0f, std::min<float>(startPos.fY, endPos.fY), 3000.0f);
-    float maxY = Clamp<float>(-3000.0f, std::max<float>(startPos.fY, endPos.fY), 3000.0f);
+    float minX = Clamp<float>(EXTENDED_WATER_MAP_MIN_COORD, std::min<float>(startPos.fX, endPos.fX), EXTENDED_WATER_MAP_MAX_ENTITY_COORD);
+    float maxX = Clamp<float>(EXTENDED_WATER_MAP_MIN_COORD, std::max<float>(startPos.fX, endPos.fX), EXTENDED_WATER_MAP_MAX_ENTITY_COORD);
+    float minY = Clamp<float>(EXTENDED_WATER_MAP_MIN_COORD, std::min<float>(startPos.fY, endPos.fY), EXTENDED_WATER_MAP_MAX_ENTITY_COORD);
+    float maxY = Clamp<float>(EXTENDED_WATER_MAP_MIN_COORD, std::max<float>(startPos.fY, endPos.fY), EXTENDED_WATER_MAP_MAX_ENTITY_COORD);
 
-    int lowXZone = Clamp<int>(0, static_cast<int>((minX + 3000.0f) / 500.0f), 11);
-    int lowYZone = Clamp<int>(0, static_cast<int>((minY + 3000.0f) / 500.0f), 11);
-    int highXZone = Clamp<int>(0, static_cast<int>((maxX + 3000.0f) / 500.0f), 11);
-    int highYZone = Clamp<int>(0, static_cast<int>((maxY + 3000.0f) / 500.0f), 11);
+    int lowXZone = Clamp<int>(0, static_cast<int>((minX - EXTENDED_WATER_MAP_MIN_COORD) / EXTENDED_WATER_BLOCK_SIZE),
+                              EXTENDED_WATER_BLOCKS_PER_DIMENSION - 1);
+    int lowYZone = Clamp<int>(0, static_cast<int>((minY - EXTENDED_WATER_MAP_MIN_COORD) / EXTENDED_WATER_BLOCK_SIZE),
+                              EXTENDED_WATER_BLOCKS_PER_DIMENSION - 1);
+    int highXZone = Clamp<int>(0, static_cast<int>((maxX - EXTENDED_WATER_MAP_MIN_COORD) / EXTENDED_WATER_BLOCK_SIZE),
+                               EXTENDED_WATER_BLOCKS_PER_DIMENSION - 1);
+    int highYZone = Clamp<int>(0, static_cast<int>((maxY - EXTENDED_WATER_MAP_MIN_COORD) / EXTENDED_WATER_BLOCK_SIZE),
+                               EXTENDED_WATER_BLOCKS_PER_DIMENSION - 1);
 
     if (lowXZone == highXZone)
     {
@@ -610,7 +941,8 @@ CWaterVertex* CWaterManagerSA::CreateVertex(const CVector& vecPosition)
 
 CWaterPoly* CWaterManagerSA::GetPolyAtPoint(const CVector& vecPosition)
 {
-    if (vecPosition.fX < -3000.0f || vecPosition.fX > 3000.0f || vecPosition.fY < -3000.0f || vecPosition.fY > 3000.0f)
+    if (vecPosition.fX < EXTENDED_WATER_MAP_MIN_COORD || vecPosition.fX >= EXTENDED_WATER_MAP_MAX_COORD ||
+        vecPosition.fY < EXTENDED_WATER_MAP_MIN_COORD || vecPosition.fY >= EXTENDED_WATER_MAP_MAX_COORD)
         return NULL;
 
     CWaterZoneSA* pZone = GetZoneContaining(vecPosition.fX, vecPosition.fY);
@@ -633,10 +965,13 @@ CWaterPoly* CWaterManagerSA::CreateQuad(const CVector& vecBL, const CVector& vec
     if (*(DWORD*)VAR_NumWaterQuads >= NUM_NewWaterQuads)
         return NULL;
 
-    if (vecTL.fX >= vecTR.fX || vecBL.fX >= vecBR.fX || vecTL.fY <= vecBL.fY || vecTR.fY <= vecBR.fY || vecTL.fX < -3000.0f || vecTL.fX > 3000.0f ||
-        vecTL.fY < -3000.0f || vecTL.fY > 3000.0f || vecTR.fX < -3000.0f || vecTR.fX > 3000.0f || vecTR.fY < -3000.0f || vecTR.fY > 3000.0f ||
-        vecBL.fX < -3000.0f || vecBL.fX > 3000.0f || vecBL.fY < -3000.0f || vecBL.fY > 3000.0f || vecBR.fX < -3000.0f || vecBR.fX > 3000.0f ||
-        vecBR.fY < -3000.0f || vecBR.fY > 3000.0f)
+    if (vecTL.fX >= vecTR.fX || vecBL.fX >= vecBR.fX || vecTL.fY <= vecBL.fY || vecTR.fY <= vecBR.fY ||
+        vecTL.fX < EXTENDED_WATER_MAP_MIN_COORD || vecTL.fX > EXTENDED_WATER_MAP_MAX_ENTITY_COORD || vecTL.fY < EXTENDED_WATER_MAP_MIN_COORD ||
+        vecTL.fY > EXTENDED_WATER_MAP_MAX_ENTITY_COORD || vecTR.fX < EXTENDED_WATER_MAP_MIN_COORD || vecTR.fX > EXTENDED_WATER_MAP_MAX_ENTITY_COORD ||
+        vecTR.fY < EXTENDED_WATER_MAP_MIN_COORD || vecTR.fY > EXTENDED_WATER_MAP_MAX_ENTITY_COORD || vecBL.fX < EXTENDED_WATER_MAP_MIN_COORD ||
+        vecBL.fX > EXTENDED_WATER_MAP_MAX_ENTITY_COORD || vecBL.fY < EXTENDED_WATER_MAP_MIN_COORD || vecBL.fY > EXTENDED_WATER_MAP_MAX_ENTITY_COORD ||
+        vecBR.fX < EXTENDED_WATER_MAP_MIN_COORD || vecBR.fX > EXTENDED_WATER_MAP_MAX_ENTITY_COORD || vecBR.fY < EXTENDED_WATER_MAP_MIN_COORD ||
+        vecBR.fY > EXTENDED_WATER_MAP_MAX_ENTITY_COORD)
         return NULL;
 
     if (*(DWORD*)VAR_NumWaterVertices + 4 > NUM_NewWaterVertices || *(DWORD*)VAR_NumWaterQuads + 1 > NUM_NewWaterQuads ||
@@ -682,9 +1017,11 @@ CWaterPoly* CWaterManagerSA::CreateTriangle(const CVector& vec1, const CVector& 
     if (*(DWORD*)VAR_NumWaterVertices >= NUM_NewWaterVertices)
         return NULL;
 
-    if (vec1.fX >= vec2.fX || vec1.fY == vec3.fY || vec2.fY == vec3.fY || (vec1.fY < vec3.fY) != (vec2.fY < vec3.fY) || vec1.fX < -3000.0f ||
-        vec1.fX > 3000.0f || vec1.fY < -3000.0f || vec1.fY > 3000.0f || vec2.fX < -3000.0f || vec2.fX > 3000.0f || vec2.fY < -3000.0f || vec2.fY > 3000.0f ||
-        vec3.fX < -3000.0f || vec3.fX > 3000.0f || vec3.fY < -3000.0f || vec3.fY > 3000.0f)
+    if (vec1.fX >= vec2.fX || vec1.fY == vec3.fY || vec2.fY == vec3.fY || (vec1.fY < vec3.fY) != (vec2.fY < vec3.fY) ||
+        vec1.fX < EXTENDED_WATER_MAP_MIN_COORD || vec1.fX > EXTENDED_WATER_MAP_MAX_ENTITY_COORD || vec1.fY < EXTENDED_WATER_MAP_MIN_COORD ||
+        vec1.fY > EXTENDED_WATER_MAP_MAX_ENTITY_COORD || vec2.fX < EXTENDED_WATER_MAP_MIN_COORD || vec2.fX > EXTENDED_WATER_MAP_MAX_ENTITY_COORD ||
+        vec2.fY < EXTENDED_WATER_MAP_MIN_COORD || vec2.fY > EXTENDED_WATER_MAP_MAX_ENTITY_COORD || vec3.fX < EXTENDED_WATER_MAP_MIN_COORD ||
+        vec3.fX > EXTENDED_WATER_MAP_MAX_ENTITY_COORD || vec3.fY < EXTENDED_WATER_MAP_MIN_COORD || vec3.fY > EXTENDED_WATER_MAP_MAX_ENTITY_COORD)
         return NULL;
 
     if (*(DWORD*)VAR_NumWaterVertices + 4 > NUM_NewWaterVertices || *(DWORD*)VAR_NumWaterTriangles + 1 > NUM_NewWaterTriangles ||
@@ -863,41 +1200,8 @@ bool CWaterManagerSA::TestLineAgainstWater(const CVector& vecStart, const CVecto
 {
     CVector rayDir = vecEnd - vecStart;
 
-    // Check if we're outside of map area.
-    // Check for intersection with ocean outside the game area (takes water level into account)
-    // If a hit is detected, and it is outside, we early out, as custom water can't be created outside game boundaries
-    {
-        CVector     intersection{};
-        const float waterHeight = *reinterpret_cast<float*>(0x6E873F);
-        if (vecStart.IntersectsSegmentPlane(rayDir, CVector(0, 0, 1), CVector(0, 0, waterHeight), &intersection))
-        {
-            if (IsPointOutsideOfGameArea(intersection))
-            {
-                *vecCollision = intersection;
-                return true;
-            }
-        }
-    }
-
-    // Early out in case of both points being out of map
-    if (IsPointOutsideOfGameArea(vecStart) && IsPointOutsideOfGameArea(vecEnd))
-    {
-        // Check if both points are on the same side of the map, in case of some mad person
-        // trying to testLineAgainstWater over entire SA landmass, which is still a valid option.
-        if ((vecStart.fX < -3000.0f && vecEnd.fX < -3000.0f) || (vecStart.fX > 3000.0f && vecEnd.fX > 3000.0f) ||
-            (vecStart.fY < -3000.0f && vecEnd.fY < -3000.0f) || (vecStart.fY > 3000.0f && vecEnd.fY > 3000.0f))
-        {
-            return false;
-        }
-    }
-
     std::vector<CWaterZoneSA*> vecZones;
     GetZonesIntersecting(vecStart, vecEnd, vecZones);
-
-    if (vecZones.empty())
-    {
-        return false;
-    }
 
     std::deque<CVector> vecVertices;
     for (auto& zone : vecZones)
@@ -942,6 +1246,16 @@ bool CWaterManagerSA::TestLineAgainstWater(const CVector& vecStart, const CVecto
         }
     }
 
+    // Custom water takes priority over GTA's infinite sea. If no polygon was
+    // hit, retain the original outside-world ocean at its independent level.
+    CVector     oceanIntersection{};
+    const float oceanHeight = *reinterpret_cast<float*>(0x6E873F);
+    if (vecStart.IntersectsSegmentPlane(rayDir, CVector(0, 0, 1), CVector(0, 0, oceanHeight), &oceanIntersection) &&
+        IsPointOutsideOfGameArea(oceanIntersection))
+    {
+        *vecCollision = oceanIntersection;
+        return true;
+    }
     return false;
 }
 
@@ -998,7 +1312,7 @@ void CWaterManagerSA::UndoChanges(void* pChangeSource)
 void CWaterManagerSA::RebuildIndex()
 {
     // Rebuilds the list of polygons of each zone
-    MemSetFast((void*)ARRAY_WaterZones, 0, NUM_WaterZones * sizeof(CWaterPolyEntrySAInterface));
+    MemSetFast(GetExtendedWaterZoneArray(), 0, NUM_WaterZones * sizeof(CWaterPolyEntrySAInterface));
     MemPutFast<DWORD>(VAR_NumWaterZonePolys, 0);
     ((BuildWaterIndex_t)FUNC_BuildWaterIndex)();
 }

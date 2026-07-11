@@ -199,5 +199,8 @@ void CWater::RoundVertex(int index)
 
 bool CWater::IsVertexWithinWorld(int index)
 {
-    return m_Vertices[index].fX >= -3000.0f && m_Vertices[index].fX <= 3000.0f && m_Vertices[index].fY >= -3000.0f && m_Vertices[index].fY <= 3000.0f;
+    constexpr float extendedWaterMinCoord = -10000.0f;
+    constexpr float extendedWaterMaxEntityCoord = 9999.0f;
+    return m_Vertices[index].fX >= extendedWaterMinCoord && m_Vertices[index].fX <= extendedWaterMaxEntityCoord &&
+           m_Vertices[index].fY >= extendedWaterMinCoord && m_Vertices[index].fY <= extendedWaterMaxEntityCoord;
 }

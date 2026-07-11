@@ -48,13 +48,29 @@ typedef bool(__cdecl* GetWaterLevel_t)(float fX, float fY, float fZ, float* pfLe
 #define NUM_NewWaterQuads     0x200
 #define NUM_NewWaterTriangles 0x20
 #define NUM_NewWaterZonePolys 0x400
-#define NUM_WaterZones        (12 * 12)
+
+// Extended MTA World keeps GTA's 500-unit water blocks but indexes custom
+// polygons across the same 20000-unit domain as buildings. The vanilla ocean
+// renderer remains in its original 12x12 coordinate system.
+#define EXTENDED_WATER_MAP_MIN_COORD            -10000.0f
+#define EXTENDED_WATER_MAP_MAX_COORD            10000.0f
+#define EXTENDED_WATER_MAP_MAX_ENTITY_COORD     9999.0f
+#define EXTENDED_WATER_BLOCK_SIZE               500
+#define EXTENDED_WATER_BLOCKS_PER_DIMENSION     40
+#define EXTENDED_WATER_BLOCKS_HALF              20
+#define VANILLA_WATER_BLOCKS_PER_DIMENSION      12
+#define VANILLA_WATER_BLOCKS_HALF               6
+#define EXTENDED_WATER_TO_VANILLA_BLOCK_OFFSET  (EXTENDED_WATER_BLOCKS_HALF - VANILLA_WATER_BLOCKS_HALF)
+#define NUM_WaterZones                           (EXTENDED_WATER_BLOCKS_PER_DIMENSION * EXTENDED_WATER_BLOCKS_PER_DIMENSION)
 
 #define ARRAY_WaterVertices  0xC22910
 #define ARRAY_WaterQuads     0xC21C90
 #define ARRAY_WaterTriangles 0xC22854
 #define ARRAY_WaterZones     0xC21B70
 #define ARRAY_WaterZonePolys 0xC215F8
+
+class CWaterPolyEntrySAInterface;
+CWaterPolyEntrySAInterface* GetExtendedWaterZoneArray();
 
 // -------------------------------
 // SA interfaces

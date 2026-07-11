@@ -220,8 +220,8 @@ were removed. The final 4096 configuration was also tested in game successfully.
 
 ## Implemented reference: extended map/world bounds
 
-The current uncommitted Extended MTA World Phase 1 patch expands the usable XY
-domain for MTA-created buildings and synchronized entities. It has been tested
+Extended MTA World Phase 1 expands the usable XY domain for MTA-created
+buildings and synchronized entities. It has been tested
 with San Andreas at its original coordinates and with custom Perry Island
 terrain around X=9000.
 
@@ -346,9 +346,10 @@ instruction range with a relative jump plus NOP padding. Relative displacements
 are recalculated for the arena's actual runtime address. Source bytes captured
 during preparation are checked again before commit.
 
-`extract_world_sector_manifest.py` parses only the named HOODLUM WorldSectors
-function, requires exactly 397 calls and exactly the supported opcode set, and
-emits deterministic C++ manifests. It also extracts Fastman92's direct
+`extract_world_sector_manifest.py --target world` parses only the named
+HOODLUM WorldSectors function, requires exactly 397 calls and exactly the
+supported opcode set, and emits deterministic C++ manifests. It also extracts
+Fastman92's direct
 `PatchPointer`, `PatchUINT32`, `PatchFloat`, and `RedirectCode` calls. This keeps
 the large address list auditable and reproducible without importing the entire
 Limit Adjuster. Fastman92's source manifest is MIT-licensed and the generated
@@ -442,13 +443,98 @@ Before calling the implementation production-complete, still test -10000,
 reconnect, world reset, shutdown, high/low linking at several distances, and a
 larger Perry load while monitoring building-pool and pointer-node usage.
 
-### What this patch does not lift
+## Implemented reference: extended custom water bounds
+
+The custom-water patch extends `createWater` from the vanilla approximately
+`[-3000,+3000]` XY domain to `[-10000,+9999]`, matching the Phase 1 world
+domain. It deliberately does not replace or enlarge GTA's infinite outside-
+world ocean: empty extended-world space still inherits that ocean and its
+independently configurable level.
+
+The implemented water geometry is:
+
+```text
+Supported custom-water XY     [-10000, +9999]
+Water blocks                  40 x 40, 500 units each
+Water-zone entries            1600 (formerly 12 x 12 = 144)
+Vanilla ocean renderer grid   unchanged at 12 x 12
+Polygon/vertex pool counts    unchanged
+Network encoding              unchanged (signed 16-bit XY already sufficient)
+```
+
+The client implementation is in `Client/game_sa/CWaterManagerSA.cpp` and
+`CWaterManagerSA.h`; server-side API validation is in
+`Server/mods/deathmatch/logic/CWater.cpp`. The reusable in-repository test
+resource is `test-resources/extended-water-test`.
+
+### Water relocation design
+
+The GTA water manager indexes custom polygons in fixed 500-unit blocks. Neon
+relocates the 144-entry block array to zero-initialized process-lifetime storage
+with 1600 entries, then copies the vanilla 12x12 block data into the centered
+portion of the new 40x40 grid. MTA's zone wrappers, polygon insertion/removal,
+index rebuild, point lookup, and line scans all use the relocated array and the
+40-wide stride.
+
+Fastman92's canonical address reference is
+`MapLimits::PatchWaterMapSize_GTA_SA_PC_1_0_HOODLUM()` in
+`Modules/MapLimits.cpp`. The local Fastman92 tree again does not contain the
+general `CCodeMover` implementation, so Neon reuses its audited minimal
+`CWorldSectorCodeMover` only after verifying that this water function uses a
+subset of the already-supported recipe opcodes. The deterministic 14-recipe
+manifest is generated with:
+
+```text
+python3 utils/extended-world/extract_world_sector_manifest.py \
+  ".../Modules/MapLimits.cpp" Client/game_sa/CWaterMapManifest.inc \
+  --format cpp --target water
+```
+
+Most Fastman92 water-map constants widen the custom polygon index. Two native
+functions need different treatment in MTA:
+
+- `CWaterLevel::BlockHit` is replaced so extended block coordinates can mark
+  custom polygons while outside-ocean render requests are translated back to
+  GTA's original 12x12 coordinate system.
+- `CWaterLevel::GetWaterLevelNoWaves` searches extended custom water first,
+  then falls back to GTA's infinite ocean outside +/-3000 at the current native
+  outside-world water level.
+
+MTA's `TestLineAgainstWater` follows the same priority: custom polygons are
+tested first, then the original infinite-ocean plane. This distinction matters
+for Perry Island, which intentionally uses the base game's ocean rather than a
+large scripted water polygon.
+
+The patch keeps the existing water polygon, vertex, triangle, quad, and
+zone-poly pool capacities. It lifts where custom water may be placed, not how
+many water polygons may exist. Absolute executable addresses remain GTA SA 1.0
+US HOODLUM-specific and have the same version-gating caveat as the world-sector
+patch.
+
+### Water validation performed
+
+`Game SA.vcxproj Release|Win32` and `Deathmatch.vcxproj Release|x64` built
+successfully. In-game tests covered the old boundary and extended positions at
+X=2990, X=9500, X=9990, and X=-9990. At extended positions they confirmed:
+
+```text
+createWater             OK at Z=8
+getWaterLevel           OK at Z=8
+line of sight           OK at Z=8
+Dinghy buoyancy          OK
+destroy/recreate cycle  OK
+```
+
+Before the patch, the same X=9500 test correctly failed to create custom water
+and observed only the base ocean at Z=0. Perry's existing ocean remained
+available after the patch.
+
+### What the world and water patches do not lift
 
 The supported XY range must not be described as every GTA map subsystem being
 extended. This patch does not yet relocate or extend:
 
 - native IPL loading boundaries or GTA's original map files;
-- water geometry and water limits;
 - radar texture coverage;
 - paths, traffic, zones, population, or ambient spawning;
 - native building/object/model pool counts;
@@ -470,7 +556,7 @@ changing `WORLD_MAP_SIZE` without updating every connected layer is invalid.
 
 ## Candidate areas for future work
 
-Water, radar, paths, zones/population, native IPL support, object/model pools,
+Radar, paths, zones/population, native IPL support, object/model pools,
 streaming lists, and renderer effects each need their own investigation. Locate
 the corresponding Fastman92 module first, trace the matching GTA reversed
 functions, and inspect `librw` only for RenderWare-facing behavior. Do not
