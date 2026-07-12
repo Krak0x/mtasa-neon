@@ -10,6 +10,7 @@
  *****************************************************************************/
 
 #include "StdInc.h"
+#include <game/CCoronas.h>
 #include <game/CColPoint.h>
 #include <game/CObjectGroupPhysicalProperties.h>
 #include <game/CStreaming.h>
@@ -106,6 +107,10 @@ void CLuaEngineDefs::LoadFunctions()
         {"engineResetModelLODDistance", EngineResetModelLODDistance},
         {"engineGetRendererStats", EngineGetRendererStats},
         {"engineResetRendererStats", EngineResetRendererStats},
+        {"engineSetDistantLightsEnabled", EngineSetDistantLightsEnabled},
+        {"engineSetDistantLightsDrawDistance", EngineSetDistantLightsDrawDistance},
+        {"engineRebuildDistantLights", EngineRebuildDistantLights},
+        {"engineGetDistantLightStats", EngineGetDistantLightStats},
         {"engineSetAsynchronousLoading", EngineSetAsynchronousLoading},
         {"engineApplyShaderToWorldTexture", EngineApplyShaderToWorldTexture},
         {"engineRemoveShaderFromWorldTexture", EngineRemoveShaderFromWorldTexture},
@@ -1201,6 +1206,56 @@ int CLuaEngineDefs::EngineResetRendererStats(lua_State* luaVM)
 {
     g_pMultiplayer->ResetRendererStats();
     lua_pushboolean(luaVM, true);
+    return 1;
+}
+
+int CLuaEngineDefs::EngineSetDistantLightsEnabled(lua_State* luaVM)
+{
+    bool enabled = false;
+    CScriptArgReader argStream(luaVM);
+    argStream.ReadBool(enabled);
+    if (argStream.HasErrors())
+        return luaL_error(luaVM, argStream.GetFullErrorMessage());
+
+    g_pGame->GetCoronas()->SetDistantLightsEnabled(enabled);
+    lua_pushboolean(luaVM, true);
+    return 1;
+}
+
+int CLuaEngineDefs::EngineSetDistantLightsDrawDistance(lua_State* luaVM)
+{
+    float distance = 0.0f;
+    CScriptArgReader argStream(luaVM);
+    argStream.ReadNumber(distance);
+    if (argStream.HasErrors())
+        return luaL_error(luaVM, argStream.GetFullErrorMessage());
+
+    lua_pushboolean(luaVM, g_pGame->GetCoronas()->SetDistantLightsDrawDistance(distance));
+    return 1;
+}
+
+int CLuaEngineDefs::EngineRebuildDistantLights(lua_State* luaVM)
+{
+    g_pGame->GetCoronas()->RebuildDistantLights();
+    lua_pushboolean(luaVM, true);
+    return 1;
+}
+
+int CLuaEngineDefs::EngineGetDistantLightStats(lua_State* luaVM)
+{
+    const SDistantLightStats stats = g_pGame->GetCoronas()->GetDistantLightStats();
+    lua_newtable(luaVM);
+
+    lua_pushboolean(luaVM, stats.enabled);
+    lua_setfield(luaVM, -2, "enabled");
+    lua_pushnumber(luaVM, stats.definitions);
+    lua_setfield(luaVM, -2, "definitions");
+    lua_pushnumber(luaVM, stats.activeCoronas);
+    lua_setfield(luaVM, -2, "activeCoronas");
+    lua_pushnumber(luaVM, stats.coronaCapacity);
+    lua_setfield(luaVM, -2, "coronaCapacity");
+    lua_pushnumber(luaVM, stats.drawDistance);
+    lua_setfield(luaVM, -2, "drawDistance");
     return 1;
 }
 

@@ -131,6 +131,7 @@ void CRegisteredCoronaSA::Init(DWORD Identifier)
 void CRegisteredCoronaSA::Refresh()
 {
     internalInterface->JustCreated = 1;
+    internalInterface->RegisteredThisFrame = 1;
 }
 
 void CRegisteredCoronaSA::Disable()

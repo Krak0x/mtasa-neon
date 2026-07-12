@@ -15,6 +15,15 @@
 class CRegisteredCorona;
 class CVector;
 
+struct SDistantLightStats
+{
+    bool  enabled;
+    DWORD definitions;
+    DWORD activeCoronas;
+    DWORD coronaCapacity;
+    float drawDistance;
+};
+
 // these are the IDs that are used internally for coronas
 #define CORONA_SUN  1
 #define CORONA_MOON 2
@@ -29,4 +38,11 @@ public:
     virtual void               DisableSunAndMoon(bool bDisabled) = 0;
     virtual void               SetCoronaReflectionsEnabled(unsigned char ucEnabled) = 0;
     virtual unsigned char      GetCoronaReflectionsEnabled() = 0;
+
+    virtual void               SetDistantLightsEnabled(bool enabled) = 0;
+    virtual bool               GetDistantLightsEnabled() const = 0;
+    virtual bool               SetDistantLightsDrawDistance(float distance) = 0;
+    virtual void               RebuildDistantLights() = 0;
+    virtual void               DoPulseDistantLights() = 0;
+    virtual SDistantLightStats GetDistantLightStats() const = 0;
 };

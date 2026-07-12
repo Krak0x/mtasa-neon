@@ -251,6 +251,65 @@ missing `vendor/discord-rpc/discord/include/discord_rpc.h`; renderer statistics
 therefore use the client Lua API and test resource rather than requiring a core
 command.
 
+## Project2DFX phase 1: native distant static lights
+
+Neon integrates the distant static-corona part of
+`ThirteenAG/III.VC.SA.IV.Project2DFX` directly into the MTA client. It does not
+load an ASI plugin or Project2DFX's bundled limit adjuster. The implementation
+uses MTA's relocated 4096-entry corona pool and the renderer capacities above,
+so corona ownership and lifetime remain under MTA.
+
+The feature is disabled by default. A client resource can enable it, select a
+draw distance from 300 to 5000 units, rebuild its world-light cache, and read
+current counts through these client Lua functions:
+
+```text
+engineSetDistantLightsEnabled
+engineSetDistantLightsDrawDistance
+engineRebuildDistantLights
+engineGetDistantLightStats
+```
+
+The opt-in test resource is:
+
+```text
+test-resources/project2dfx-test
+```
+
+It provides `/project2dfx on [300-5000]`, `/project2dfx off`,
+`/project2dfx rebuild`, and `/project2dfxstats`. It also disables the feature
+when the resource that enabled it stops.
+
+Project2DFX's `SALodLights.dat` is installed as
+`MTA/data/SALodLights.dat`. MTA resolves each model-name section against GTA's
+model table, scans the native building and dummy pools, transforms the local
+light offsets into world coordinates, and registers the closest eligible
+coronas every frame. The data and the adapted behavior retain Project2DFX's MIT
+license in `MTA/data/Project2DFX-LICENSE.txt`. If the DAT is absent, the code
+falls back to GTA's embedded model 2DFX effects so the feature fails soft.
+
+Phase 1 intentionally covers night-time static coronas only. Project2DFX
+searchlight cones, distant cars, static shadows, live GTA traffic-controller
+state, wet-weather behavior, and IDE/far-clip tweaks are separate features and
+are not silently enabled here. DAT rows marked as traffic lights use
+Project2DFX's directional red/yellow/green clock phases so opposing colors do
+not render together. The DAT's corona rows are retained when a row also asks
+for a searchlight, but the cone itself is omitted.
+
+### Project2DFX phase-1 validation
+
+`Game SA.vcxproj` built successfully as `Release|Win32`. In the Parallels VM,
+the native-effects fallback found only 17 usable lights, confirming that GTA's
+embedded effects are not a substitute for the Project2DFX data. With the DAT
+installed, the same world scan produced 1843 instantiated definitions and 1317
+active coronas at night with a 2000-unit distance. The client remained running
+and no crash artifact newer than the earlier quadtree failure was produced. An
+off/on lifecycle test released every active corona, then rebuilt 2083
+definitions with 1533 active at 3000 units as additional world objects streamed
+in. Visual testing caught simultaneous red and green distant traffic lights;
+applying Project2DFX's directional clock phases corrected the intersections
+while preserving the intended corona size, intensity, and color falloff.
+
 ## Workflow for the next limit
 
 1. Define precisely what is being raised: created, streamed, updated, rendered,

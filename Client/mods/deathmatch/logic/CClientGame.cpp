@@ -10,6 +10,7 @@
  *****************************************************************************/
 
 #include "StdInc.h"
+#include <game/CCoronas.h>
 #include <shellapi.h>
 #include <net/SyncStructures.h>
 #include <game/C3DMarkers.h>
@@ -3948,6 +3949,7 @@ void CClientGame::PreWorldProcessHandler()
 void CClientGame::PostWorldProcessHandler()
 {
     m_pManager->GetMarkerManager()->DoPulse();
+    g_pGame->GetCoronas()->DoPulseDistantLights();
     m_pManager->GetPointLightsManager()->DoPulse();
     m_pManager->GetObjectManager()->DoPulse();
 

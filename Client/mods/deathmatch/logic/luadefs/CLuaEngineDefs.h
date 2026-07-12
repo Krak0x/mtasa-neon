@@ -43,6 +43,10 @@ public:
     LUA_DECLARE(EngineResetModelLODDistance);
     LUA_DECLARE(EngineGetRendererStats);
     LUA_DECLARE(EngineResetRendererStats);
+    LUA_DECLARE(EngineSetDistantLightsEnabled);
+    LUA_DECLARE(EngineSetDistantLightsDrawDistance);
+    LUA_DECLARE(EngineRebuildDistantLights);
+    LUA_DECLARE(EngineGetDistantLightStats);
     LUA_DECLARE(EngineSetAsynchronousLoading);
     LUA_DECLARE(EngineApplyShaderToWorldTexture);
     LUA_DECLARE(EngineRemoveShaderFromWorldTexture);

@@ -49,4 +49,11 @@ public:
 
     void          SetCoronaReflectionsEnabled(unsigned char ucEnabled);
     unsigned char GetCoronaReflectionsEnabled();
+
+    void               SetDistantLightsEnabled(bool enabled) override;
+    bool               GetDistantLightsEnabled() const override;
+    bool               SetDistantLightsDrawDistance(float distance) override;
+    void               RebuildDistantLights() override;
+    void               DoPulseDistantLights() override;
+    SDistantLightStats GetDistantLightStats() const override;
 };
