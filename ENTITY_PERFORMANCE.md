@@ -18,9 +18,57 @@ respectively confirms the native `CWorld::Process`, `CRenderer::PreRender`,
 their expected loops/calls. GTA-reversed remains a readable reference; MTA
 executes this binary rather than recompiling the reversed sources.
 
-The ranking in this document is a source-supported test priority, not a claimed
-measured ranking. Populate the results table with repeated before/after samples
-before describing any item as the dominant real-world hotspot.
+## Controlled profile result
+
+An unattended 33-stage profile ran in the Windows VM with a server and VSync
+limit of 120 FPS, unrelated Neon stress resources stopped, a fixed test origin,
+standard models, a five-second warm-up, and one ten-second sample per stage.
+The exact result table is archived in
+`test-resources/entity-performance-test/results/2026-07-12-vm-profile.md`.
+These are client-local entities: they isolate MTA/GTA engine and render costs but
+do not contain real remote-player packet traffic or interpolation jitter.
+
+The measured hotspot order is:
+
+1. **Unresolved vehicle contacts and collision retries.** Sixteen deeply
+   overlapping moving vehicles measured 157.23 ms average, 176.50 ms p95, and
+   184.04 ms p99. The identical layout with collisions disabled measured
+   11.90 ms average. The controlled delta is therefore approximately
+   145 ms/frame of collision-related work. Four and eight deeply overlapping
+   vehicles stayed near 21 ms, indicating a state-dependent threshold rather
+   than a smooth per-vehicle slope.
+2. **Dense realistic vehicle contacts plus visibility.** The `touching` grid
+   measured 13.61, 26.22, and 38.89 ms average for 16, 32, and 64 moving
+   vehicles. P95 grew to 50.80 ms at 64. Visible-pointer high-water increased
+   from 56 to 72 to 92, so both actual visible density and physical contacts
+   increased in this series.
+3. **Near, streamed peds.** Idle visible peds measured 13.23, 16.81, 20.28,
+   and 21.68 ms at 32, 64, 96, and 110. At 110 moving peds, visible and hidden
+   results were 22.78 and 21.98 ms, while the far/streamed-out result was
+   12.22 ms. Only about 0.8 ms separated visible from hidden, whereas moving
+   the population outside normal streaming range removed about 9.8 ms. The
+   dominant ped cost in this scenario is therefore near streamed simulation,
+   animation/task/collision work, and MTA pulses rather than drawing/skinning
+   visible peds alone.
+4. **Mixed populations.** A 96-entity idle mixture measured 20.26 ms; 192 idle
+   and moving mixtures measured 26.66 and 31.24 ms. This confirms that costs
+   compose across managers and native entity categories before any pool raise.
+5. **Visible separated vehicles.** Sixteen and 32 idle visible vehicles
+   measured 11.95 and 14.58 ms against a 9.57 ms visible baseline. Results at
+   48 and 64 were not monotonic because both reached the same visible-pointer
+   high-water of 88; the six-unit grid expanded outside the frustum. The
+   profile therefore proves visible cost, but not a 48-to-64 density slope.
+6. **Simple standard objects.** From 128 through 1000 created objects, averages
+   stayed near 9.8-10.0 ms against a 9.57 ms baseline, and 900 moving objects
+   measured 10.26 ms. The visible list stayed near 88-89 while streaming
+   RwObject high-water reached 966. This shows that total/streamed population
+   alone is cheap for this simple model; it does not test 1000 objects inside
+   one frustum, custom geometry, shaders, or attachments.
+
+No new crash dump was produced and the client stayed responsive after all 33
+stages. Because this is one full pass rather than three repeats, small deltas
+remain provisional. Collision deltas and the visible/hidden/far separations are
+large enough to guide the next instrumentation and optimization work.
 
 ## Confirmed per-frame paths
 
@@ -52,8 +100,11 @@ overhead does not grow with entity count.
 `CWorld::Process` (`0x5684A0`) iterates GTA's moving-entity list. It first calls
 `UpdateAnim`, then virtual `ProcessControl`, and removes entities that become
 static from the moving list. It separately processes objects with control code.
-This makes moving-versus-frozen comparisons essential: frozen entities can
-retain visible render cost while avoiding much of the moving-list work.
+This makes moving-versus-frozen comparisons essential, but MTA's frozen vehicle
+state must not be equated with removal from GTA's moving list. MTA reapplies the
+frozen matrix and zero velocities every wrapper pulse, and controlled tests
+showed that deeply overlapping frozen vehicles continued to incur collision
+work and could be slower because they were prevented from separating.
 
 For unsafe moving entities, the same world pass invokes `ProcessCollision`,
 then retries unsafe entities four more times, followed by another stuck check
@@ -95,8 +146,8 @@ camera modes have intentionally different meanings:
 | --- | --- | --- |
 | visible vs hidden | PreRender, drawing, skinning, shadows/effects | Hidden entities remain near and may still have invisible-effect work |
 | hidden vs far | streamed simulation and MTA manager work | Far entities are client-local, so there is no packet load |
-| static vs moving | moving-list ProcessControl, animation, interpolation, physics | Freeze can change more than one native flag |
-| separate vs contact | collision queries, retries, and response | Packing changes overdraw and visible ordering too |
+| static vs idle vs moving | freeze maintenance, moving-list ProcessControl, animation, interpolation, physics | MTA freeze reapplies transforms and does not guarantee removal from native collision work |
+| separate vs touching vs contact | ordinary density vs adjacent contacts vs deep-overlap retries | Packing also changes overdraw and visible ordering |
 | collisions on vs off | collision-specific part of the contact delta | Collision-off is not multiplayer-correct for normal gameplay |
 | standard vs replaced model | geometry, atomics, skin, materials, texture/shader cost | Use the same position/count/settings and a fixed replacement asset |
 
@@ -107,31 +158,39 @@ client pulse scopes. A visible-only regression with flat CPU scopes suggests
 GPU or uninstrumented render-thread/driver work, but an external GPU capture is
 required to prove GPU saturation or present/VSync waiting.
 
-## Source-supported test priority
+## Remaining attribution priority
 
-1. **Vehicle collision/physics under contact.** The collision retry structure
-   makes this the strongest candidate for nonlinear spikes. Test moving contact,
-   separated, and collision-disabled runs before changing vehicle limits.
-2. **Visible ped/player PreRender and skin hierarchy updates.** Every visible
-   ped can update animation matrices and execute shadow/weapon/effect branches.
-   Compare visible and hidden moving peds, then shadows/effects settings.
-3. **Vehicle PreRender/render.** Suspension, lights, occupants, reflections,
-   components, and multi-atomic rendering make visible vehicles materially
-   different from generic objects.
-4. **MTA per-entity manager pulses and interpolation.** These are linear in the
-   streamed-in population and are paid in addition to GTA work. Real remote
-   player/vehicle samples are required; local elements do not reproduce packet
-   jitter or remote interpolation targets.
-5. **Streamer distance recomputation and list sorting.** Source complexity is
-   linear plus sort per active streamer each frame. Measure near versus far and
-   inspect the new per-streamer scopes before replacing containers or adding
-   dirty-state caching.
-6. **Generic visible object PreRender/render.** Usually simpler per entity, but
-   the object budget is much larger and custom models/shaders can dominate.
-7. **Networking and scripts.** `NetPulse` and existing Lua timing statistics
-   must be measured on a recorded or multi-client workload. They are controlled
-   away by the client-local baseline and cannot be dismissed from production
-   behavior based on that baseline.
+1. **Split native collision from the rest of `CWorld_Process`.** The on/off
+   delta proves the subsystem, but a GTA hook or profiler capture should now
+   separate broad-phase candidate scans, `ProcessEntityCollision`, collision
+   retries, and shift passes. Optimize only after identifying which phase
+   explodes when contacts remain unsafe.
+2. **Split near-ped native work from MTA ped pulses.** Visible versus hidden
+   changed little, while far removed almost all of the added cost. Add aggregate
+   native `CPed/CPlayerPed::ProcessControl`, `UpdateAnim`, and collision scopes,
+   then compare them with `MTA_PedManager`. This is more important than an
+   immediate skinning LOD based on the current evidence.
+3. **Measure vehicle render CPU versus GPU.** Separated and touching visible
+   vehicles are expensive, and native PreRender includes suspension, lighting,
+   occupants, reflections, and effects. Use a GPU capture and shadows/effects
+   toggles before attributing that cost specifically to GPU saturation.
+4. **Measure real synchronization.** The current resource intentionally has no
+   remote packet decoding, sync-owner traffic, or realistic interpolation
+   targets. A recorded packet workload or multiple clients must compare
+   `NetPulse`, MTA manager scopes, and native world work under the same camera.
+5. **Measure streamer sorting directly.** Source complexity is linear plus a
+   sort per active streamer each frame, but the current frame-level profile
+   cannot rank it against native ped work. Use the new aggregate per-streamer
+   scopes before implementing dirty-state caching or replacing containers.
+6. **Add a fixed-frustum object density profile.** Standard-object runs proved
+   total and streaming counts are cheap, not that 1000 visible custom objects
+   are cheap. Keep the camera and footprint fixed, increase actual visible
+   high-water, then repeat with controlled custom geometry, shaders, shadows,
+   and attachments.
+7. **Measure production scripts separately.** Existing Lua timing statistics
+   should be captured with a representative resource set. The clean baseline
+   prevents scripts from contaminating engine attribution but cannot dismiss
+   them as a production-server bottleneck.
 
 ## Optimization gates
 

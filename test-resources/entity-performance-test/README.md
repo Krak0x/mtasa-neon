@@ -8,20 +8,33 @@ and restores the camera after each run or resource stop.
 
 Start this resource only after stopping unrelated Neon stress/demo resources,
 especially Project2DFX, renderer-limit-test, coronas, Perry Island, and garage
-preview. Disable VSync and the FPS limiter, or record their exact state. The
-client's known approximately 74 FPS cap is explicitly warned about, but frame
-time is the authoritative result.
+preview. Disable VSync and the FPS limiter, or record their exact state. Frame
+time is the authoritative result; a server-enforced cap can censor differences
+between scenarios even when the resource itself is unchanged.
 
 ## Commands
 
 ```text
 /entitybench [baseline|vehicle|ped|object|mixed] [0|1-2000]
-             [static|moving] [visible|hidden|far]
-             [separate|contact] [on|off collisions] [5-60 seconds]
+             [static|idle|moving] [visible|hidden|far]
+             [separate|touching|contact] [on|off collisions] [5-60 seconds]
 /entitybenchmodels [vehicle model] [ped model] [object model]
+/entitybenchprofile [5-60 seconds per stage]
+/entitybenchresetorigin
 /entitybenchcancel
 /entitybenchclear
 ```
+
+The first run locks the current player position and heading as the test origin.
+Every later run in the resource session reuses that origin, so visible/hidden
+baselines and entity scenarios render the same background even if gameplay
+moves the player. Use `/entitybenchresetorigin` only when intentionally moving
+the complete benchmark to a new location.
+
+`/entitybenchprofile` runs the complete baseline, vehicle, ped, object, and
+mixed matrix sequentially. It cleans up and restores the camera between stages,
+then advances only after the preceding measurement really finishes; very slow
+collision frames therefore cannot make stages overlap.
 
 `hidden` keeps the entities near the camera but points the camera away. This
 preserves near-entity simulation while removing most entity rendering. `far`
@@ -29,9 +42,11 @@ creates the same total number about 1000 units away, outside the normal entity
 streaming area. Comparing `visible`, `hidden`, and `far` distinguishes visible
 render cost, near/streamed simulation cost, and total-element bookkeeping.
 
-`separate` uses a six-unit grid. `contact` packs entities tightly enough to
-create broad-phase and physical contacts when collisions are enabled. A
-`static` element is frozen; `moving` peds animate and moving physical entities
+`separate` uses a six-unit grid. `touching` uses a dense vehicle-sized grid to
+approximate adjacent traffic without spawning every entity at the same point.
+`contact` is the deliberately pathological deep-overlap stress case used to
+expose collision retries. A `static` element is frozen, `idle` is unfrozen with
+no initial velocity, and `moving` peds animate while moving physical entities
 receive linear and angular velocity. The scenario reports the actual created
 count because GTA/MTA pool and streamer budgets can prevent all requested
 elements from becoming native entities.

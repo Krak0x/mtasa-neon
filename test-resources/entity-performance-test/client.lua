@@ -4,7 +4,10 @@ local MAX_SECONDS = 60
 
 local entities = {}
 local benchmark = nil
+local profile = nil
+local runNextProfile
 local savedCamera = nil
+local testOrigin = nil
 local models = {
     vehicle = 411,
     ped = 7,
@@ -56,10 +59,15 @@ local function saveCamera()
 end
 
 local function getAnchor(view)
-    local px, py, pz = getElementPosition(localPlayer)
-    local rotation = math.rad(select(3, getElementRotation(localPlayer)))
-    local forwardX = -math.sin(rotation)
-    local forwardY = math.cos(rotation)
+    if not testOrigin then
+        local px, py, pz = getElementPosition(localPlayer)
+        local rotation = math.rad(select(3, getElementRotation(localPlayer)))
+        testOrigin = {x = px, y = py, z = pz, forwardX = -math.sin(rotation), forwardY = math.cos(rotation)}
+        output(("[entitybench] Locked origin at %.2f, %.2f, %.2f"):format(px, py, pz))
+    end
+
+    local px, py, pz = testOrigin.x, testOrigin.y, testOrigin.z
+    local forwardX, forwardY = testOrigin.forwardX, testOrigin.forwardY
     local distance = view == "far" and 1000 or 28
     return px + forwardX * distance, py + forwardY * distance, pz + 1, forwardX, forwardY
 end
@@ -70,8 +78,7 @@ local function configureCamera(anchorX, anchorY, anchorZ, forwardX, forwardY, vi
     local cameraY = anchorY - forwardY * 34
     local cameraZ = anchorZ + 16
     if view == "far" then
-        local px, py, pz = getElementPosition(localPlayer)
-        cameraX, cameraY, cameraZ = px, py, pz + 6
+        cameraX, cameraY, cameraZ = testOrigin.x, testOrigin.y, testOrigin.z + 6
     end
 
     if view == "hidden" or view == "far" then
@@ -81,8 +88,8 @@ local function configureCamera(anchorX, anchorY, anchorZ, forwardX, forwardY, vi
     end
 end
 
-local function getGridOffset(index, count, contact)
-    if contact then
+local function getGridOffset(index, count, layout)
+    if layout == "contact" then
         local angle = (index - 1) * 2.399963
         local radius = math.sqrt(index - 1) * 0.18
         return math.cos(angle) * radius, math.sin(angle) * radius
@@ -91,15 +98,16 @@ local function getGridOffset(index, count, contact)
     local columns = math.ceil(math.sqrt(count))
     local row = math.floor((index - 1) / columns)
     local column = (index - 1) % columns
-    local spacing = 6
-    return (column - (columns - 1) / 2) * spacing, (row - (columns - 1) / 2) * spacing
+    local spacingX = layout == "touching" and 2.0 or 6
+    local spacingY = layout == "touching" and 4.2 or 6
+    return (column - (columns - 1) / 2) * spacingX, (row - (columns - 1) / 2) * spacingY
 end
 
-local function applyState(element, kind, moving, collisions, index)
+local function applyState(element, kind, state, collisions, index)
     setElementCollisionsEnabled(element, collisions)
-    setElementFrozen(element, not moving)
+    setElementFrozen(element, state == "static")
 
-    if not moving then
+    if state ~= "moving" then
         return
     end
 
@@ -137,11 +145,11 @@ local function createScenario(config)
             kind = ({"vehicle", "ped", "object"})[((index - 1) % 3) + 1]
         end
 
-        local offsetX, offsetY = getGridOffset(index, config.count, config.contact)
+        local offsetX, offsetY = getGridOffset(index, config.count, config.layout)
         local element = createOne(kind, anchorX + offsetX, anchorY + offsetY, anchorZ, 0)
         if element then
             table.insert(entities, element)
-            applyState(element, kind, config.moving, config.collisions, index)
+            applyState(element, kind, config.state, config.collisions, index)
         end
     end
 
@@ -173,14 +181,22 @@ local function finishBenchmark(cancelled)
         local p99 = percentile(samples, 0.99)
         local worst = samples[#samples] or 0
         local config = benchmark.config
-        output(("[entitybench] %s requested=%d created=%d %s/%s/%s collisions=%s: %.1f FPS | avg %.2f ms | p95 %.2f | p99 %.2f | worst %.2f"):format(
-            config.kind, config.count, benchmark.created, config.moving and "moving" or "static", config.view,
-            config.contact and "contact" or "separate", tostring(config.collisions), fps, average, p95, p99, worst
-        ))
-
-        if fps >= 70 and fps <= 76 then
-            output("[entitybench] Warning: result is near the known ~74 FPS cap; compare frame time after disabling limiter/VSync")
+        if profile then
+            table.insert(profile.results, {
+                label = ("%s %d %s/%s/%s collisions=%s"):format(
+                    config.kind, config.count, config.state, config.view, config.layout, tostring(config.collisions)
+                ),
+                fps = fps,
+                average = average,
+                p95 = p95,
+                p99 = p99,
+                worst = worst,
+            })
         end
+        output(("[entitybench] %s requested=%d created=%d %s/%s/%s collisions=%s: %.1f FPS | avg %.2f ms | p95 %.2f | p99 %.2f | worst %.2f"):format(
+            config.kind, config.count, benchmark.created, config.state, config.view,
+            config.layout, tostring(config.collisions), fps, average, p95, p99, worst
+        ))
 
         if engineGetRendererStats then
             local stats = engineGetRendererStats()
@@ -192,8 +208,15 @@ local function finishBenchmark(cancelled)
         end
     end
 
+    local continueProfile = profile and not cancelled
+    if cancelled then
+        profile = nil
+    end
     benchmark = nil
     clearTest(false)
+    if continueProfile then
+        setTimer(runNextProfile, 1000, 1)
+    end
 end
 
 local function beginMeasurement()
@@ -228,19 +251,19 @@ local function runBenchmark(_, kind, countText, state, view, layout, collisionTe
     local seconds = math.floor(tonumber(secondsText) or DEFAULT_SECONDS)
 
     local validCount = (kind == "baseline" and count == 0) or (kind ~= "baseline" and count >= 1 and count <= 2000)
-    if not validKinds[kind] or not validCount or (state ~= "static" and state ~= "moving") or
-        not validViews[view] or (layout ~= "separate" and layout ~= "contact") or
+    if not validKinds[kind] or not validCount or (state ~= "static" and state ~= "idle" and state ~= "moving") or
+        not validViews[view] or (layout ~= "separate" and layout ~= "touching" and layout ~= "contact") or
         (collisionText ~= "on" and collisionText ~= "off") or seconds < 5 or seconds > MAX_SECONDS then
-        output("[entitybench] /entitybench [baseline|vehicle|ped|object|mixed] [0|1-2000] [static|moving] [visible|hidden|far] [separate|contact] [on|off collisions] [5-60 seconds]", true)
+        output("[entitybench] /entitybench [baseline|vehicle|ped|object|mixed] [0|1-2000] [static|idle|moving] [visible|hidden|far] [separate|touching|contact] [on|off collisions] [5-60 seconds]", true)
         return
     end
 
     local config = {
         kind = kind,
         count = count,
-        moving = state == "moving",
+        state = state,
         view = view,
-        contact = layout == "contact",
+        layout = layout,
         collisions = collisionText == "on",
     }
     local created = createScenario(config)
@@ -275,6 +298,75 @@ local function setModels(_, vehicleText, pedText, objectText)
     output(("[entitybench] models set: vehicle=%d ped=%d object=%d"):format(models.vehicle, models.ped, models.object))
 end
 
+local profileStages = {
+    "baseline 0 static visible separate off",
+    "baseline 0 static hidden separate off",
+    "vehicle 16 idle visible separate on",
+    "vehicle 32 idle visible separate on",
+    "vehicle 48 idle visible separate on",
+    "vehicle 64 idle visible separate on",
+    "vehicle 64 idle hidden separate on",
+    "vehicle 64 idle far separate on",
+    "vehicle 64 moving visible separate on",
+    "vehicle 16 moving visible touching on",
+    "vehicle 32 moving visible touching on",
+    "vehicle 64 moving visible touching on",
+    "vehicle 4 moving visible contact on",
+    "vehicle 8 moving visible contact on",
+    "vehicle 16 moving visible contact on",
+    "vehicle 16 moving visible contact off",
+    "ped 32 idle visible separate on",
+    "ped 64 idle visible separate on",
+    "ped 96 idle visible separate on",
+    "ped 110 idle visible separate on",
+    "ped 110 moving visible separate on",
+    "ped 110 moving hidden separate on",
+    "ped 110 moving far separate on",
+    "object 128 static visible separate on",
+    "object 512 static visible separate on",
+    "object 900 static visible separate on",
+    "object 1000 static visible separate on",
+    "object 1000 static hidden separate on",
+    "object 1000 static far separate on",
+    "object 900 moving visible separate on",
+    "mixed 96 idle visible separate on",
+    "mixed 192 idle visible separate on",
+    "mixed 192 moving visible separate on",
+}
+
+runNextProfile = function()
+    if not profile or benchmark then
+        return
+    end
+    if profile.index > #profileStages then
+        output(("[entitybench profile] Complete: %d stages recorded"):format(#profile.results))
+        profile = nil
+        return
+    end
+
+    local stage = profileStages[profile.index]
+    output(("[entitybench profile] Stage %d/%d: %s"):format(profile.index, #profileStages, stage))
+    profile.index = profile.index + 1
+    executeCommandHandler("entitybench", stage .. " " .. profile.seconds)
+end
+
+local function runProfile(_, secondsText)
+    if benchmark or profile then
+        output("[entitybench profile] A benchmark or profile is already running", true)
+        return
+    end
+    local seconds = math.floor(tonumber(secondsText) or 10)
+    if seconds < 5 or seconds > MAX_SECONDS then
+        output("[entitybench profile] /entitybenchprofile [5-60 seconds per stage]", true)
+        return
+    end
+
+    profile = {index = 1, seconds = seconds, results = {}}
+    testOrigin = nil
+    output(("[entitybench profile] Starting %d stages with %d-second samples"):format(#profileStages, seconds))
+    runNextProfile()
+end
+
 addEventHandler("onClientPreRender", root, function(frameTime)
     if benchmark and benchmark.phase == "measure" and frameTime and frameTime > 0 then
         table.insert(benchmark.samples, frameTime)
@@ -282,15 +374,33 @@ addEventHandler("onClientPreRender", root, function(frameTime)
 end)
 
 addCommandHandler("entitybench", runBenchmark)
+addCommandHandler("entitybenchprofile", runProfile)
 addCommandHandler("entitybenchmodels", setModels)
-addCommandHandler("entitybenchcancel", function() finishBenchmark(true) end)
+addCommandHandler("entitybenchcancel", function()
+    if benchmark then
+        finishBenchmark(true)
+    elseif profile then
+        profile = nil
+        clearTest(false)
+        output("[entitybench profile] Cancelled")
+    end
+end)
 addCommandHandler("entitybenchclear", function()
     if benchmark then
         finishBenchmark(true)
     else
+        profile = nil
         clearTest(false)
         output("[entitybench] Cleared")
     end
+end)
+addCommandHandler("entitybenchresetorigin", function()
+    if benchmark or profile then
+        output("[entitybench] Wait for the benchmark or cancel it before resetting the origin", true)
+        return
+    end
+    testOrigin = nil
+    output("[entitybench] Origin reset; the next benchmark will lock the current player position and heading")
 end)
 
 addEventHandler("onClientResourceStop", resourceRoot, function()
@@ -298,6 +408,7 @@ addEventHandler("onClientResourceStop", resourceRoot, function()
         killTimer(benchmark.timer)
     end
     benchmark = nil
+    profile = nil
     clearTest(false)
 end)
 
