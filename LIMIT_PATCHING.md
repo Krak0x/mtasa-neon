@@ -280,6 +280,14 @@ It provides `/project2dfx on [300-5000]`, `/project2dfx off`,
 `/project2dfx rebuild`, and `/project2dfxstats`. It also disables the feature
 when the resource that enabled it stops.
 
+For repeatable performance comparisons, `/project2dfxprofile [seconds]` runs an
+automatic `off`, 2000, 3000, and 5000-unit sequence. Every stage has a five
+second warm-up followed by a 5-to-60-second measurement window. It reports FPS,
+average/p95/p99/worst frame time, active coronas, and renderer high-water
+counters, then restores the previous distant-light state. Keep the camera fixed
+for the entire sequence. `/project2dfxbench [off|2000|3000|5000] [seconds]`
+runs a single stage, and `/project2dfxbenchcancel` safely stops either test.
+
 Project2DFX's `SALodLights.dat` is installed as
 `MTA/data/SALodLights.dat`. MTA resolves each model-name section against GTA's
 model table, scans the native building and dummy pools, transforms the local
