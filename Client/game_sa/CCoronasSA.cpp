@@ -256,8 +256,13 @@ namespace
             if ((!additionalCoronas && currentModel < 0) || !ParseDistantLightDefinition(begin, definition, drawSearchlight))
                 continue;
 
-            // Searchlight cones are a separate Project2DFX renderer. Phase 1
-            // keeps the corona described by the row and omits only the cone.
+            // TODO(Project2DFX): Only 24 rows in the current SA DAT request a
+            // searchlight, so phase 1 keeps their coronas and defers the cones.
+            // If this is revisited, reuse CPointLightsSA::RenderHeliLight from
+            // CClientPointLightsManager::RenderHeliLightHandler instead of
+            // importing Project2DFX's Im3D renderer. Derive the downward cone
+            // length from the model collision bounds and keep enable, distance,
+            // and budget controls separate and disabled by default.
             if (drawSearchlight)
                 ++skippedSearchlights;
 
