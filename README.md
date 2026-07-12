@@ -4,6 +4,36 @@ MTA:SA Neon is an experimental fork of [Multi Theft Auto: San Andreas](https://g
 
 The repository preserves the complete upstream history and adds proof-of-concept work on top of it. Neon is not affiliated with or endorsed by the Multi Theft Auto team.
 
+## MTA:SA vs MTA:SA Neon
+
+Neon keeps MTA:SA's resource model and default gameplay behavior while lifting selected GTA:SA engine limits and exposing new opt-in features to servers. The figures below describe the currently implemented Windows client patches.
+
+| Area | MTA:SA | MTA:SA Neon |
+| --- | ---: | ---: |
+| GTA corona pool | 64 | 4,096 (4,094 available to scripted MTA coronas) |
+| GTA 3D marker pool | 32 | 4,096 |
+| GTA checkpoint pool | 32 | 4,096 |
+| GTA checkpoint direction arrows | 5 | 4,096 |
+| Visible entity pointers | 1,000 | 8,192 |
+| Visible LOD pointers | 1,000 | 8,192 |
+| Streaming RenderWare object instances | 2,500 | 30,000 |
+| Main world-sector grid | 120 x 120 | 400 x 400 |
+| LOD world-sector grid | 30 x 30 | 100 x 100 |
+| Supported extended-world XY | Approximately -3,000 to +3,000 | -10,000 to +9,999 |
+| Low-precision networked XY | Approximately -8,192 to +8,192 | -10,000 to +10,000 for Neon-capable connections |
+| Absolute networked camera range | Approximately -8,192 to +8,192 | Approximately -16,384 to +16,384 for Neon-capable connections |
+| Custom-water block grid | 12 x 12 (144 blocks) | 40 x 40 (1,600 blocks) |
+| Custom-water XY | Approximately -3,000 to +3,000 | -10,000 to +9,999 |
+| Procedural seabed boundary | Unlimited | Server-configurable from 3,000 to 10,000, or unlimited |
+| Project2DFX distant static lights | Not integrated | Native, resource-controlled implementation with a 300-5,000 draw-distance range |
+| Local ped-skin preview workflow | Build a resource and load the replacement | Experimental drag-and-drop DFF/TXD preview for developers |
+| Neon limit telemetry and stress tests | Not included | Reproducible resources for coronas, markers, rendering, Project2DFX, extended world, water, and seabed |
+| Extended-world demonstration | Not included | Perry Island slice generator and an in-game test around X=9,000 |
+
+These are capacity increases, not forced visual defaults. Distant lights are disabled by default, ordinary draw distances remain unchanged, and servers or client resources decide when to use the extended features. Legacy network connections retain MTA:SA's original position formats.
+
+Project2DFX support currently covers distant static coronas and timed traffic lights using `SALodLights.dat`. Searchlight cones are recorded for future work; distant cars, static shadows, and the other Project2DFX modules are not included. The drag-and-drop skin preview is an intentionally insecure local development prototype, not a production or competitive-client feature. Technical design, executable address inventories, validation results, and reproducible test resources are documented in [LIMIT_PATCHING.md](./LIMIT_PATCHING.md).
+
 [![Build Status](https://github.com/multitheftauto/mtasa-blue/workflows/Build/badge.svg?event=push&branch=master)](https://github.com/multitheftauto/mtasa-blue/actions?query=branch%3Amaster+event%3Apush) [![Unique servers online](https://img.shields.io/endpoint?url=https%3A%2F%2Fmultitheftauto.com%2Fapi%2Fservers-shields.io.json)](https://community.multitheftauto.com/index.php?p=servers) [![Unique players online](https://img.shields.io/endpoint?url=https%3A%2F%2Fmultitheftauto.com%2Fapi%2Fplayers-shields.io.json)](https://multitheftauto.com) [![Unique players last 24 hours](https://img.shields.io/endpoint?url=https%3A%2F%2Fmultitheftauto.com%2Fapi%2Funique-players-shields.io.json)](https://multitheftauto.com) [![Discord](https://img.shields.io/discord/278474088903606273?label=discord&logo=discord)](https://discord.com/invite/mtasa) [![Crowdin](https://badges.crowdin.net/e/f5dba7b9aa6594139af737c85d81d3aa/localized.svg)](https://multitheftauto.crowdin.com/multitheftauto)
 
 [Multi Theft Auto](https://www.multitheftauto.com/) (MTA) is a software project that adds network play functionality to Rockstar North's Grand Theft Auto game series, in which this functionality is not originally found. It is a unique modification that incorporates an extendable network play element into a proprietary commercial single-player PC game.
