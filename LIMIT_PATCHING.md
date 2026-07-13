@@ -960,6 +960,66 @@ The marker streamer also keeps its 600-unit default range. Absolute addresses
 remain GTA SA 1.0 US-specific and have the same executable-version-gating caveat
 as the other Neon limit patches.
 
+## Editable native CULL zones
+
+Neon relocates GTA's three native CULL arrays and exposes their loaded IPL
+entries to client Lua. The implemented capacities are:
+
+```text
+Attribute zones       1300 -> 4096 (0x12 bytes each)
+Tunnel zones            40 -> 256  (0x12 bytes each)
+Mirror zones            72 -> 256  (0x18 bytes each)
+```
+
+The implementation is in `Client/game_sa/CCullZonesSA.cpp`. It patches the 37
+GTA SA 1.0 US operands used by the native lookup and loader functions, based on
+Fastman92's `IPLsectionLimits::SetCull*AttributeZones` address inventory. The
+native count globals remain authoritative because GTA's lookup loops already
+use them rather than fixed immediate limits.
+
+On first Lua access, Neon adopts every loaded vanilla entry into a stable-ID
+catalog. Native arrays remain packed, but Lua IDs do not move when another zone
+is removed. Custom entries belong to the resource that created them. Stopping
+that resource deletes its custom entries and restores any vanilla entries it
+edited or disabled. A vanilla entry can be claimed by only one resource at a
+time, preventing two resources from leaving conflicting restoration state.
+
+The client functions are:
+
+```text
+engineGetCullZones([type])
+engineCreateCullZone(type, x, y, z, width, depth, height, flags,
+                     [rotation=0, mirrorV=0, normalX=0, normalY=0, normalZ=1])
+engineSetCullZone(id, type, x, y, z, width, depth, height, flags,
+                  [rotation=0, mirrorV=0, normalX=0, normalY=0, normalZ=1])
+engineSetCullZoneEnabled(id, enabled)
+engineRemoveCullZone(id)
+engineRestoreCullZone(id)
+```
+
+Types are `attribute`, `tunnel`, and `mirror`. `engineGetCullZones` returns the
+stable ID, type, compressed native geometry expressed as center/size/rotation,
+raw flag mask, enabled/original state, and mirror-plane fields. Raw flags are
+retained because stock data uses behavior bits not fully named by the current
+`gta-reversed` enum.
+
+Geometry intentionally retains GTA's signed 16-bit whole-unit representation.
+The supported extended-world range fits it, but fractional inputs are truncated
+and coordinates or derived vector components outside `[-32768,32767]` are
+rejected. Attribute and tunnel overlap combines flags; mirror lookup preserves
+native first-match ordering.
+
+MTA's minimize-time mirror toggle now delegates to the CULL manager rather than
+temporarily saving the count itself. This keeps mirror additions and deletions
+made while minimized from being lost when rendering resumes.
+
+The opt-in resource `test-resources/cull-zone-test` provides CRUD, original-zone
+restore, resource cleanup, and old-capacity boundary commands. `Game SA`,
+`Multiplayer SA`, and `Client Deathmatch` build successfully as `Release|Win32`.
+Runtime validation should cover `/cullstats`, an attribute `NO_RAIN` volume,
+39/40/41 tunnel additions, 71/72/73 mirror additions, vanilla disable/restore,
+mirror off/on, resource restart, and reconnect.
+
 ## Candidate areas for future work
 
 Radar, paths, zones/population, native IPL support, object/model pools,
