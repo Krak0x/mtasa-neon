@@ -89,6 +89,38 @@ separate during warm-up. Both workloads must therefore remain in the suite:
 normal varied density represents production better, while identical deep
 overlap remains a targeted collision-retry stress case.
 
+### Deep collision attribution and first optimization gate
+
+A later paired six-stage pass added counters inside the native collision path.
+The complete result is archived in
+`test-resources/entity-performance-test/results/2026-07-12-vm-deep-collision-attribution.md`.
+The corrected homogeneous pass measured 59.69 ms average for 64 touching
+vehicles and 133.91 ms for 16 deeply overlapping vehicles, against 12.97 ms
+with collision disabled. In the steady deep-overlap samples, 23 native
+automobiles (the 16 test vehicles plus existing world vehicles) generated
+80-88 collision calls, 57-65 retries, 1,700-2,008 `ProcessColModels` calls,
+and roughly 93-116 ms inside `ProcessColModels` per logged frame. Eleven to
+thirteen vehicles were still unsafe after the sixth collision attempt.
+
+The varied pass confirmed that normal touching density remains expensive but
+that varied deep overlap resolves during warm-up. Sixty-four varied touching
+vehicles measured 48.43 ms average, with 69-95 retries and approximately
+16-23 ms of `ProcessColModels` work in representative measured frames. The
+16-vehicle varied deep-contact row measured 22.38 ms; its unsafe set and
+`ProcessColModels` work fell sharply as the vehicles separated. Exact repeated
+`ProcessColModels` inputs were uncommon in both workloads, so whole-query
+memoization is not a high-impact first target.
+
+The first implementation candidate was a conservative world-AABB rejection
+before body-collision `ProcessColModels` calls. It deliberately excluded the
+suspension/line-output path and retained a boundary margin. A 64-vehicle
+separated smoke test recorded zero AABB rejections in every frame despite
+108-739 `ProcessColModels` calls per logged frame. It therefore failed its
+go/no-go gate: it could not remove work and only added prefilter overhead. The
+candidate was removed and the client DLL rebuilt. No AABB optimization remains
+active; this negative result prevents the same ineffective layer from being
+reintroduced without new evidence.
+
 ## Confirmed per-frame paths
 
 ### MTA streamer and wrapper work
@@ -186,11 +218,14 @@ They resolve two earlier questions: collision consumed 19-25 ms of a 21-30 ms
 `CWorld_Process` for 110 near moving peds. MTA managers, native ProcessControl,
 animation, and PreRender were individually much smaller in those samples.
 
-1. **Split native collision internally.** The entity-level scope now proves the
-   dominant native function and records more collision calls than entities per
-   frame because unsafe entities are retried. The next hook should separate
-   broad-phase sector scans, `ProcessEntityCollision`, retry passes, and shift
-   passes before changing collision semantics.
+1. **Split `ProcessColModels` internally.** Broad-phase sector scans,
+   `ProcessEntityCollision`, retry ordinals, unsafe entities, contact counts,
+   exact repeated queries, and shift passes are now measured. They show that
+   `ProcessColModels` dominates the pathological homogeneous workload and that
+   a generic AABB prefilter has no useful rejection rate. The next attribution
+   layer should separate body from suspension work, identical from varied model
+   pairs, and sphere/box/triangle processing before changing collision
+   semantics.
 2. **Measure vehicle render CPU versus GPU.** Separated and touching visible
    vehicles are expensive, and native PreRender includes suspension, lighting,
    occupants, reflections, and effects. The measured automobile PreRender scope
@@ -223,6 +258,14 @@ using cache-friendlier active containers while preserving exact distance and
 stream-limit semantics. These should first demonstrate identical streamed sets
 and interpolation results under movement, attachment, dimension change,
 resource restart, and reconnect.
+
+Native collision candidates use the same evidence gate. The rejected AABB
+prefilter demonstrated that a mathematically safe early-out is still a net loss
+when the existing broad phase has already removed those pairs. Future work must
+first show a repeated internal operation or a costly primitive class, then
+retain identical contacts and safe/stuck transitions. Reducing retry count is a
+separate higher-risk experiment because it can change collision response and
+multiplayer synchronization even when aggregate unsafe counts appear stagnant.
 
 Frequency scaling is plausible for purely visual work: distant/offscreen
 animation association updates, skin matrices, shadows, and optional effects can

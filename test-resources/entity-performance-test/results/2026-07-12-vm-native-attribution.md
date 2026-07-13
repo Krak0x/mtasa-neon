@@ -50,3 +50,11 @@ ped animation rewrite would therefore target a secondary cost before collision.
 
 The client completed all eight stages and remained responsive. No crash was
 observed.
+
+## Follow-up
+
+The later internal collision pass is archived in
+`2026-07-12-vm-deep-collision-attribution.md`. It splits sector scans,
+`ProcessEntityCollision`, `ProcessColModels`, contacts, retry ordinals, unsafe
+entities, and shift work. It also records the first optimization candidate, a
+world-AABB prefilter that produced zero rejections and was rolled back.
