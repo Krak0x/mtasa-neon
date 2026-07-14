@@ -1,8 +1,10 @@
 #!/usr/bin/env python3
-"""Build the Clarksland exterior A/B resource from the Carcer City demo ZIP.
+"""Build the complete Carcer City exterior from the demo ZIP.
 
 The resource intentionally uses the same generated data shape and client
-runtime as ``ug-vc``.  Only text IPL instances in area zero are selected.
+runtime as ``ug-vc``. Only text IPL instances in area zero are selected. The
+IDE and IPL order below mirrors the active exterior entries in ``gta.dat`` so
+duplicate model IDs resolve exactly as they do in the original game.
 """
 
 from __future__ import annotations
@@ -30,13 +32,13 @@ IDE_PATHS = (
     "data/maps/clarksland/clark_gen.ide",
     "data/maps/clarksland/clark.ide",
     "data/maps/clarksland/clark_levels.ide",
-    # GTA loads every exterior IDE before any IPL.  Keep the later Lac Point
-    # definitions available even in a Clarksland-only placement test because
-    # the two districts intentionally share a few model IDs.
+    # GTA loads every exterior IDE before any IPL. Keep this exact ordering
+    # because the two districts intentionally share a few model IDs.
     "data/maps/lacpoint/lacw.ide",
     "data/maps/lacpoint/lacwlevels.ide",
     "data/maps/lacpoint/lace.ide",
     "data/maps/lacpoint/lacelevels.ide",
+    "data/maps/lacpoint/cc_subway.ide",
     # Carcer reuses five models defined in its interior IDE as area-zero
     # exterior props.  Placement area, not the IDE's folder, determines
     # whether an instance belongs in this resource.
@@ -48,6 +50,13 @@ IPL_PATHS = (
     "data/maps/clarksland/clark_levels.ipl",
     "data/maps/clarksland/clark_props.ipl",
     "data/maps/clarksland/clark_props2.ipl",
+    "data/maps/lacpoint/lacw.ipl",
+    "data/maps/lacpoint/lacwlevels.ipl",
+    "data/maps/lacpoint/lace.ipl",
+    "data/maps/lacpoint/lacelevels.ipl",
+    "data/maps/lacpoint/lac_props.ipl",
+    "data/maps/lacpoint/lac_props2.ipl",
+    "data/maps/lacpoint/cc_subway.ipl",
 )
 COL_MAGICS = {b"COLL", b"COL2", b"COL3", b"COL4"}
 
@@ -95,8 +104,17 @@ def parse_ide_text(text: str, source: str) -> dict[int, ModelDefinition]:
             continue
         if section not in {"objs", "tobj", "anim"}:
             continue
+        fields = split_fields(line)
+        # The active subway IDE has 15 prop rows with a missing comma between
+        # their TXD name and draw distance (``ccsubwayprop 15``). GTA accepts
+        # that whitespace-delimited pair, so normalize the same narrow form
+        # instead of dropping geometry that the original gta.dat loads.
+        if section == "objs" and len(fields) == 4:
+            texture_and_distance = fields[2].rsplit(maxsplit=1)
+            if len(texture_and_distance) == 2:
+                fields = [fields[0], fields[1], *texture_and_distance, fields[3]]
         try:
-            definition = SHARED.parse_model_definition(section, split_fields(line))
+            definition = SHARED.parse_model_definition(section, fields)
         except (IndexError, ValueError) as error:
             raise ValueError(f"invalid IDE row {source}:{line_number}: {line}") from error
         definitions[definition.source_id] = definition
@@ -272,8 +290,13 @@ def main() -> None:
 
         placements, interiors_rejected, lod_links_rejected = select_exterior(read_text)
         selected_ids = sorted({placement.source_id for placement in placements})
-        native_ids: set[int] = set()
-        missing_definitions = [source_id for source_id in selected_ids if source_id not in definitions]
+        # Subway stations deliberately place a handful of stock SA interior
+        # props by their original IDs. Keep those native instead of extracting
+        # or allocating duplicate runtime models for them.
+        native_ids = {source_id for source_id in selected_ids if source_id not in definitions and source_id < 20000}
+        missing_definitions = [
+            source_id for source_id in selected_ids if source_id not in definitions and source_id not in native_ids
+        ]
         if missing_definitions:
             raise ValueError(f"models without IDE definitions: {missing_definitions[:20]}")
         models = [definitions[source_id] for source_id in selected_ids if source_id in definitions]
@@ -285,7 +308,7 @@ def main() -> None:
         xs = [placement.x + args.translate_x for placement in placements]
         ys = [placement.y + args.translate_y for placement in placements]
         summary = (
-            f"carcer-clarksland: {len(placements)} area-0 placements, {len(models)} custom + "
+            f"carcer-city: {len(placements)} area-0 placements, {len(models)} custom + "
             f"{len(native_ids)} native models, {interiors_rejected} interiors rejected, "
             f"{lod_links_rejected} LOD links rejected; X={min(xs):.1f}..{max(xs):.1f}, "
             f"Y={min(ys):.1f}..{max(ys):.1f}"
@@ -410,10 +433,11 @@ def main() -> None:
         (args.translate_x, args.translate_y, args.translate_z),
         interiors_rejected,
         lod_links_rejected,
+        0,
         native_ids,
         generated_by="utils/extended-world/build_carcer_city.py",
     )
-    SHARED.write_meta(args.output, asset_paths, info_name="Carcer City Clarksland A/B test")
+    SHARED.write_meta(args.output, asset_paths, info_name="Carcer City complete IMG test")
     total_bytes = sum((args.output / path).stat().st_size for path in asset_paths)
     print(summary)
     print(

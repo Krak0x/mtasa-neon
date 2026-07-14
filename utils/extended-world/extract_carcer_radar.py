@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Extract and relocate Clarksland radar tiles from the Carcer City demo."""
+"""Extract and relocate complete Carcer City radar tiles from the demo."""
 
 from __future__ import annotations
 
@@ -16,14 +16,12 @@ IMG_PATH = ARCHIVE_ROOT + "models/gta3.img"
 SECTOR_SIZE = 2048
 DIRECTORY_ENTRY = struct.Struct("<IHH24s")
 
-# Clarksland's selected exterior occupies these cells before the resource's
-# +6000 X translation. Keeping the exact 500-unit source cells avoids any
-# resampling of the supplied radar artwork.
-SOURCE_COLUMNS = range(18, 23)
-# Row 19 (world Y 0..500) is Lac Point artwork. The current resource stops at
-# Y ~= 3 and contains Clarksland only, so advertising that northern landmass
-# would make the radar disagree with the streamed world.
-SOURCE_ROWS = range(20, 24)
+# The combined Clarksland and Lac Point exterior occupies these cells before
+# the resource's +6000 X translation. Keeping the exact 500-unit source cells
+# avoids any resampling of the supplied radar artwork. Rows decrease while
+# world Y increases in GTA's radar grid.
+SOURCE_COLUMNS = range(16, 23)
+SOURCE_ROWS = range(15, 24)
 TRANSLATION_X = 6000
 TRANSLATION_Y = 0
 
@@ -134,7 +132,7 @@ def main() -> None:
     write_lua_manifest(args.output, tiles)
     update_meta(args.output, tiles)
     total_bytes = sum((args.output / tile[0]).stat().st_size for tile in tiles)
-    print(f"extracted {len(tiles)} Clarksland radar tiles ({total_bytes / (1024 * 1024):.1f} MiB)")
+    print(f"extracted {len(tiles)} Carcer City radar tiles ({total_bytes / (1024 * 1024):.1f} MiB)")
     print(f"destination columns {min(tile[1] for tile in tiles)}..{max(tile[1] for tile in tiles)}, "
           f"rows {min(tile[2] for tile in tiles)}..{max(tile[2] for tile in tiles)}")
 
