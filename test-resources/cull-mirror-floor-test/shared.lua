@@ -1,5 +1,6 @@
 MirrorFloorTest = {
     dimension = 4243,
+    showroomDimension = 4244,
     -- Keep the custom test out of the exterior world. A floor mirror reflects
     -- everything below its plane, so interior 0 made the San Andreas map appear
     -- overhead when the platform was suspended above it.
@@ -19,6 +20,13 @@ MirrorFloorTest = {
         normalX = 0,
         normalY = 0,
         normalZ = 1,
+    },
+    showroom = {
+        spawnX = 0,
+        spawnY = 2511,
+        spawnZ = 201,
+        rotation = 180,
+        frameHalfSize = 11.5,
     },
     vanillaBarber = {
         x = 412.5,

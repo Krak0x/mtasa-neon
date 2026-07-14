@@ -741,7 +741,7 @@ addEventHandler("carcerCityPreparePosition", resourceRoot, function(x, y, z, tok
     fadeCamera(false, 0.25)
     if bootstrapStage == "ready" then
         prepareRequest.timer = rememberTimer(setTimer(finishPrepare, 350, 1))
-        outputChatBox("[Carcer] Prechargement natif de Clarksland...", 255, 200, 80)
+        outputChatBox("[Carcer] Prechargement natif de Carcer City...", 255, 200, 80)
         return
     end
 

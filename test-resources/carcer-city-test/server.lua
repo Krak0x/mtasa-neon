@@ -67,7 +67,7 @@ addEventHandler("carcerCityPositionReady", resourceRoot, function(token, success
     playerVehicles[client] = vehicle
     warpPedIntoVehicle(client, vehicle)
     triggerClientEvent(client, "carcerCityTeleportCommitted", resourceRoot, token)
-    outputChatBox("[Carcer] Clarksland prete. /ccback pour revenir a San Andreas.", client, 80, 255, 160)
+    outputChatBox("[Carcer] Carcer City prete. /ccback pour revenir a San Andreas.", client, 80, 255, 160)
     outputServerLog(("[Carcer] %s teleported (%s)"):format(getPlayerName(client), tostring(details)))
 end)
 

@@ -3,6 +3,8 @@ local mirrorZoneId
 local mirrorEnabled = true
 local debugEnabled = true
 local currentMode
+local showroomSpinners = {}
+local showroomLights = {}
 
 local function message(text, r, g, b)
     outputChatBox("[Mirror Floor] " .. text, r or 170, g or 225, b or 255)
@@ -72,6 +74,46 @@ local function drawBox()
     dxDrawLine3D(test.x - halfWidth, test.y + halfDepth, test.mirrorV, test.x + halfWidth, test.y - halfDepth, test.mirrorV, planeColor, 2, true)
 end
 
+local function drawShowroomFrame()
+    local frame = MirrorFloorTest.showroom.frameHalfSize
+    local floorZ = test.floorZ + 0.05
+    local planeZ = test.mirrorV + 0.06
+    local pulse = (math.sin(getTickCount() / 420) + 1) * 0.5
+    local cyan = tocolor(30, 190 + pulse * 65, 255, 245)
+    local magenta = tocolor(255, 35 + pulse * 75, 220, 245)
+
+    dxDrawLine3D(test.x - frame, test.y - frame, planeZ, test.x + frame, test.y - frame, planeZ, cyan, 6, true)
+    dxDrawLine3D(test.x + frame, test.y - frame, planeZ, test.x + frame, test.y + frame, planeZ, magenta, 6, true)
+    dxDrawLine3D(test.x + frame, test.y + frame, planeZ, test.x - frame, test.y + frame, planeZ, cyan, 6, true)
+    dxDrawLine3D(test.x - frame, test.y + frame, planeZ, test.x - frame, test.y - frame, planeZ, magenta, 6, true)
+
+    for offset = -8, 8, 4 do
+        local gridColor = offset == 0 and tocolor(255, 255, 255, 125) or tocolor(80, 210, 255, 70)
+        dxDrawLine3D(test.x - frame, test.y + offset, planeZ, test.x + frame, test.y + offset, planeZ, gridColor, offset == 0 and 2 or 1, true)
+        dxDrawLine3D(test.x + offset, test.y - frame, planeZ, test.x + offset, test.y + frame, planeZ, gridColor, offset == 0 and 2 or 1, true)
+    end
+
+    for _, corner in ipairs({ { -frame, -frame }, { frame, -frame }, { frame, frame }, { -frame, frame } }) do
+        dxDrawLine3D(test.x + corner[1], test.y + corner[2], floorZ, test.x + corner[1], test.y + corner[2], planeZ, magenta, 4, true)
+    end
+end
+
+local function createShowroomLights()
+    local lightDefinitions = {
+        { -11, -10, 203.5, 12, 255, 35, 85 },
+        { 11, -10, 203.5, 12, 30, 175, 255 },
+        { -11, 10, 203.5, 12, 35, 255, 210 },
+        { 11, 10, 203.5, 12, 255, 45, 220 },
+    }
+    for _, definition in ipairs(lightDefinitions) do
+        local light = createLight(0, test.x + definition[1], test.y + definition[2], definition[3], definition[4], definition[5], definition[6], definition[7])
+        if light then
+            setElementDimension(light, MirrorFloorTest.showroomDimension)
+            showroomLights[#showroomLights + 1] = { element = light, color = { definition[5], definition[6], definition[7] } }
+        end
+    end
+end
+
 addEventHandler("onClientRender", root, function()
     if not currentMode then
         return
@@ -94,6 +136,34 @@ addEventHandler("onClientRender", root, function()
 
     if debugEnabled and currentMode == "custom" then
         drawBox()
+    elseif currentMode == "showroom" then
+        drawShowroomFrame()
+    end
+end)
+
+addEventHandler("onClientPreRender", root, function()
+    if currentMode ~= "showroom" then
+        return
+    end
+
+    local angle = (getTickCount() * 0.045) % 360
+    for index, object in ipairs(showroomSpinners) do
+        if isElement(object) then
+            if index == 1 then
+                setElementRotation(object, 0, angle, angle * 0.5)
+            elseif index == 2 then
+                setElementRotation(object, angle * 0.65, 90, -angle)
+            else
+                setElementRotation(object, angle, angle * 0.35, 90)
+            end
+        end
+    end
+
+    local pulse = 0.75 + (math.sin(getTickCount() / 500) + 1) * 0.125
+    for _, light in ipairs(showroomLights) do
+        if isElement(light.element) then
+            setLightColor(light.element, light.color[1] * pulse, light.color[2] * pulse, light.color[3] * pulse)
+        end
     end
 end)
 
@@ -127,25 +197,36 @@ addCommandHandler("mirrorfloorinfo", function()
 end)
 
 addCommandHandler("mirrorfloorhelp", function()
-    message("/mirrorfloor - custom floor | /mirrorvanilla - stock barbershop")
+    message("/mirrorfloor - simple test | /mirrorfloor2 - mirror showroom")
+    message("/mirrorvanilla - stock barbershop")
     message("/mirrorfloortoggle [on|off] | /mirrorfloordebug [on|off]")
     message("/mirrorfloorinfo | /mirrorfloorleave")
 end)
 
 addEvent("mirrorFloorTestEntered", true)
-addEventHandler("mirrorFloorTestEntered", resourceRoot, function(mode)
+addEventHandler("mirrorFloorTestEntered", resourceRoot, function(mode, spinners)
     currentMode = mode
+    showroomSpinners = mode == "showroom" and spinners or {}
     setCameraTarget(localPlayer)
-    message(mode == "custom" and "Custom single-floor test active." or "Vanilla barbershop control active.", 90, 255, 160)
+    local modeMessages = {
+        custom = "Custom single-floor test active.",
+        showroom = "Mirror showroom active: look up and walk through the scene.",
+        vanilla = "Vanilla barbershop control active.",
+    }
+    message(modeMessages[mode] or "Mirror test active.", 90, 255, 160)
 end)
 
 addEvent("mirrorFloorTestLeft", true)
 addEventHandler("mirrorFloorTestLeft", resourceRoot, function()
     currentMode = nil
+    showroomSpinners = {}
     setCameraTarget(localPlayer)
 end)
 
-addEventHandler("onClientResourceStart", resourceRoot, createMirrorZone)
+addEventHandler("onClientResourceStart", resourceRoot, function()
+    createMirrorZone()
+    createShowroomLights()
+end)
 addEventHandler("onClientResourceStop", resourceRoot, function()
     if mirrorZoneId then
         engineRemoveCullZone(mirrorZoneId)

@@ -13,6 +13,8 @@ reflected scene from the exterior San Andreas map below it.
 Commands:
 
 - `/mirrorfloor` teleports to the custom single-floor test.
+- `/mirrorfloor2` teleports to a framed mirror showroom with a closed stage,
+  colored vehicles, pickups, animated geometry, and dynamic lighting.
 - `/mirrorvanilla` teleports to the stock GTA barbershop mirror.
 - `/mirrorfloorinfo` reports the nearest mirror definition and plane.
 - `/mirrorfloortoggle [on|off]` provides a custom-zone A/B comparison.
