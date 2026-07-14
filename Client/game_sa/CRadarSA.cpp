@@ -289,15 +289,17 @@ namespace
         {
             const float relativeX = (corners[i].fX - radarOrigin.fX) / radarRange;
             const float relativeY = (corners[i].fY - radarOrigin.fY) / radarRange;
-            rotated[i].fX = cachedCos * relativeX - cachedSin * relativeY;
-            rotated[i].fY = cachedSin * relativeX + cachedCos * relativeY;
+            // Match GTA's radar-space rotation exactly. The north marker and
+            // every native blip use this orientation as the camera turns.
+            rotated[i].fX = cachedCos * relativeX + cachedSin * relativeY;
+            rotated[i].fY = cachedCos * relativeY - cachedSin * relativeX;
         }
 
         const int vertexCount = ClipRadarPoly(clipped, rotated);
         for (int i = 0; i < vertexCount; ++i)
         {
-            const float worldX = radarOrigin.fX + (cachedCos * clipped[i].fX + cachedSin * clipped[i].fY) * radarRange;
-            const float worldY = radarOrigin.fY + (-cachedSin * clipped[i].fX + cachedCos * clipped[i].fY) * radarRange;
+            const float worldX = radarOrigin.fX + (cachedCos * clipped[i].fX - cachedSin * clipped[i].fY) * radarRange;
+            const float worldY = radarOrigin.fY + (cachedSin * clipped[i].fX + cachedCos * clipped[i].fY) * radarRange;
             textureCoordinates[i].fX = (worldX - (500.0f * x - 3000.0f)) / 500.0f;
             textureCoordinates[i].fY = -(worldY - (500.0f * (12 - y) - 3000.0f)) / 500.0f;
             TransformRadarPointToScreenSpace(&screenVertices[i], &clipped[i]);
