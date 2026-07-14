@@ -106,11 +106,24 @@ CResource::~CResource()
     // Remove refrences from requested models
     m_modelStreamer.ReleaseAll();
 
+    // Fully delete local entities before freeing their model infos. Merely queuing
+    // destroyElement leaves native buildings alive until the next pulse, where
+    // GTA can request a model that this destructor has already deallocated.
+    DeleteClientChildren();
+    g_pClientGame->GetElementDeleter()->DoDeleteAll();
+
+    // IMG links remember the previous streaming entry for every dynamic slot.
+    // Restore and close the archives while those slots still exist, then delete
+    // the model infos. This also drains any reads that still use the IMG handle.
+    if (m_pResourceIMGRoot)
+    {
+        g_pClientGame->GetElementDeleter()->DeleteRecursive(m_pResourceIMGRoot);
+        g_pClientGame->GetElementDeleter()->DoDeleteAll();
+        m_pResourceIMGRoot = nullptr;
+    }
+
     // Deallocate all models that this resource allocated earlier
     g_pClientGame->GetManager()->GetModelManager()->DeallocateModelsAllocatedByResource(this);
-
-    // Delete all the resource's locally created children (the server won't do that)
-    DeleteClientChildren();
 
     CIdArray::PushUniqueId(this, EIdClass::RESOURCE, m_uiScriptID);
     // Make sure we don't force the cursor on
@@ -149,9 +162,12 @@ CResource::~CResource()
     g_pClientGame->GetElementDeleter()->DeleteRecursive(m_pResourceIFPRoot);
     m_pResourceIFPRoot = NULL;
 
-    // Destroy the img root so all img elements are deleted except those moved out
-    g_pClientGame->GetElementDeleter()->DeleteRecursive(m_pResourceIMGRoot);
-    m_pResourceIMGRoot = NULL;
+    // The IMG root is normally destroyed before model deallocation above.
+    if (m_pResourceIMGRoot)
+    {
+        g_pClientGame->GetElementDeleter()->DeleteRecursive(m_pResourceIMGRoot);
+        m_pResourceIMGRoot = NULL;
+    }
 
     // Destroy the ddf root so all dff elements are deleted except those moved out
     g_pClientGame->GetElementDeleter()->DeleteRecursive(m_pResourceDFFEntity);

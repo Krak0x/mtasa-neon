@@ -833,6 +833,10 @@ bool CLuaEngineDefs::EngineAddImage(CClientIMG* pIMG)
 
 bool CLuaEngineDefs::EngineRemoveImage(CClientIMG* pIMG)
 {
+    // destroyElement is deferred until the next pulse. Flush those deletions
+    // before unlinking the archive so GTA cannot restream an entity whose IMG
+    // model is about to be restored or freed by the same resource teardown.
+    g_pClientGame->GetElementDeleter()->DoDeleteAll();
     return pIMG->StreamDisable();
 }
 
@@ -2958,8 +2962,14 @@ uint CLuaEngineDefs::EngineRequestTXD(lua_State* const luaVM, std::string strTxd
 
 bool CLuaEngineDefs::EngineFreeTXD(uint txdID)
 {
-    std::shared_ptr<CClientModel> pModel = m_pManager->GetModelManager()->FindModelByID(MAX_MODEL_DFF_ID + txdID);
-    return pModel && pModel->Deallocate();
+    auto                          modelManager = m_pManager->GetModelManager();
+    std::shared_ptr<CClientModel> pModel = modelManager->FindModelByID(MAX_MODEL_DFF_ID + txdID);
+
+    // Deallocate() intentionally skips model-info destruction for TXDs, but it
+    // also leaves the CClientModel registered and its GTA TXD-pool slot in use.
+    // Remove() runs RestoreTXD before dropping the registry entry, making the
+    // slot reusable when a resource switches to another custom city.
+    return pModel && modelManager->Remove(pModel);
 }
 
 size_t CLuaEngineDefs::EngineGetPoolCapacity(ePools pool)

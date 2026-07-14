@@ -12,9 +12,11 @@
 #include "StdInc.h"
 
 #include "CIplStoreSA.h"
+#include "CGameSA.h"
 #include "CQuadTreeNodeSA.h"
 
-static auto gIplQuadTree = (CQuadTreeNodesSAInterface<CIplSAInterface>**)0x8E3FAC;
+static auto     gIplQuadTree = (CQuadTreeNodesSAInterface<CIplSAInterface>**)0x8E3FAC;
+extern CGameSA* pGame;
 
 CIplStoreSA::CIplStoreSA() : m_isStreamingEnabled(true), m_ppIplPoolInterface((CPoolSAInterface<CIplSAInterface>**)0x8E3FB0)
 {
@@ -39,6 +41,22 @@ void CIplStoreSA::UnloadAndDisableStreaming(int iplId)
     auto ipl = pool->GetObject(iplId);
     if (!ipl)
         return;
+
+    // Shrinking an enlarged building pool during disconnect can discard slots
+    // above the restored capacity while an IPL still retains its old inclusive
+    // slot range. GTA trusts maxBuildId and walks past the resized allocation in
+    // CStreaming::RemoveModel on the next reconnect. Keep the IPL metadata in
+    // sync with the pool before handing it back to the native unload routine.
+    const int buildingPoolSize = pGame->GetPools()->GetBuildingsPool().GetSize();
+    if (buildingPoolSize <= 0 || ipl->minBuildId >= buildingPoolSize)
+    {
+        ipl->minBuildId = std::numeric_limits<std::uint16_t>::max();
+        ipl->maxBuildId = std::numeric_limits<std::uint16_t>::max();
+    }
+    else if (ipl->maxBuildId >= buildingPoolSize)
+    {
+        ipl->maxBuildId = static_cast<std::uint16_t>(buildingPoolSize - 1);
+    }
 
     typedef void*(__cdecl * Function_EnableStreaming)(int);
     ((Function_EnableStreaming)(0x405890))(iplId);

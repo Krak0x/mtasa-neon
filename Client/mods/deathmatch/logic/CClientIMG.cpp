@@ -177,6 +177,14 @@ bool CClientIMG::StreamDisable()
     if (!IsStreamed())
         return false;
 
+    // GTA's streaming thread may still be reading this archive when a resource
+    // stops during reconnect. Finish outstanding requests while the file handle,
+    // model infos, and TXD slots are all still valid; closing the archive first
+    // leaves CStreaming::Update with dangling custom-model requests.
+    const bool canUseStreamer = m_pManager && !m_pManager->IsBeingDeleted();
+    if (canUseStreamer)
+        g_pGame->GetStreaming()->LoadAllRequestedModels(false, "CClientIMG::StreamDisable");
+
     // Unlink all models
     for (const auto& v : m_restoreInfo)
     {
@@ -195,7 +203,7 @@ bool CClientIMG::StreamDisable()
     // order is arbitrary. Skip restreaming because earlier element cleanup may have
     // already freed TXD pool slots, and ReinitStreaming would flush pending
     // streaming channels that reference those freed parent slots.
-    if (!m_pManager || !m_pManager->IsBeingDeleted())
+    if (canUseStreamer)
         g_pClientGame->RestreamWorld();
 
     return true;
