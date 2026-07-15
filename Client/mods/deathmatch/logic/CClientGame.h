@@ -51,7 +51,14 @@
 
 class CClientModelCacheManager;
 class CClientDFF;
+class CClientIFP;
 class CClientTXD;
+class CGUIButton;
+class CGUICheckBox;
+class CGUIEdit;
+class CGUIGridList;
+class CGUILabel;
+class CGUIWindow;
 class CDebugHookManager;
 class CResourceFileDownloadManager;
 class CServerInfo;
@@ -670,6 +677,20 @@ private:
     static bool StaticProcessMessage(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam);
     bool        ProcessMessage(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam);
     void        OnFilesDropped(const std::vector<SString>& paths);
+    void        OnIFPFileDropped(const SString& path);
+    void        CreateDroppedIFPPreviewWindow();
+    void        RefreshDroppedIFPAnimationList();
+    void        ShowDroppedIFPPreviewWindow(const SString& filename);
+    void        HideDroppedIFPPreviewWindow();
+    bool        PlayDroppedIFPAnimation(const SString& animationName);
+    void        StopDroppedIFPAnimation();
+    void        UnloadDroppedIFP(bool hideWindow);
+    bool        OnDroppedIFPPlay(CGUIElement* element);
+    bool        OnDroppedIFPStop(CGUIElement* element);
+    bool        OnDroppedIFPPrevious(CGUIElement* element);
+    bool        OnDroppedIFPNext(CGUIElement* element);
+    bool        OnDroppedIFPFilterChanged(CGUIElement* element);
+    bool        OnDroppedIFPClose(CGUIElement* element);
 
     static bool PreWeaponFire(CPlayerPed* pPlayerPed, bool bStopIfUsingBulletSync);
     static void PostWeaponFire();
@@ -939,6 +960,31 @@ private:
     // local drag-and-drop files and are intentionally not authorized by the server.
     std::unique_ptr<CClientDFF> m_pDroppedSkinDFF;
     std::unique_ptr<CClientTXD> m_pDroppedSkinTXD;
+
+    // The preview IFP is registered under a generated block name because the normal
+    // loader expects resource ownership. Explicit teardown keeps that local-only
+    // block from surviving a reload or retaining a player animation reference.
+    std::shared_ptr<CClientIFP> m_pDroppedIFP;
+    SString                     m_strDroppedIFPAnimation;
+    unsigned int                m_uiDroppedIFPGeneration = 0;
+
+    CGUIWindow*   m_pDroppedIFPWindow = nullptr;
+    CGUILabel*    m_pDroppedIFPFileLabel = nullptr;
+    CGUIEdit*     m_pDroppedIFPFilter = nullptr;
+    CGUIGridList* m_pDroppedIFPAnimationList = nullptr;
+    unsigned int  m_uiDroppedIFPAnimationColumn = 0;
+    CGUICheckBox* m_pDroppedIFPLoop = nullptr;
+    CGUICheckBox* m_pDroppedIFPFreeze = nullptr;
+    CGUICheckBox* m_pDroppedIFPRootMotion = nullptr;
+    CGUIEdit*     m_pDroppedIFPSpeed = nullptr;
+    CGUIEdit*     m_pDroppedIFPBlend = nullptr;
+    CGUILabel*    m_pDroppedIFPStatus = nullptr;
+    CGUIButton*   m_pDroppedIFPPrevious = nullptr;
+    CGUIButton*   m_pDroppedIFPNext = nullptr;
+    CGUIButton*   m_pDroppedIFPPlay = nullptr;
+    CGUIButton*   m_pDroppedIFPStop = nullptr;
+    CGUIButton*   m_pDroppedIFPClose = nullptr;
+    bool          m_bDroppedIFPForcedCursor = false;
 };
 
 extern CClientGame* g_pClientGame;

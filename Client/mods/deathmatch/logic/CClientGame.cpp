@@ -428,7 +428,13 @@ CClientGame::~CClientGame()
 {
     m_bBeingDeleted = true;
 
-    // Restore the preview before the client managers it references are torn down.
+    // Restore the previews before the client managers they reference are torn down.
+    UnloadDroppedIFP(true);
+    if (m_pDroppedIFPWindow)
+    {
+        g_pCore->GetGUI()->DestroyElementRecursive(m_pDroppedIFPWindow);
+        m_pDroppedIFPWindow = nullptr;
+    }
     m_pDroppedSkinDFF.reset();
     m_pDroppedSkinTXD.reset();
     // Remove active projectile references to local player
@@ -5123,13 +5129,13 @@ bool CClientGame::ProcessMessage(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lPa
 
     if (uMsg == WM_DROPFILES)
     {
-        HDROP hDrop = reinterpret_cast<HDROP>(wParam);
+        HDROP                hDrop = reinterpret_cast<HDROP>(wParam);
         std::vector<SString> paths;
         const UINT           fileCount = DragQueryFileW(hDrop, 0xFFFFFFFF, nullptr, 0);
 
         for (UINT i = 0; i < fileCount; ++i)
         {
-            const UINT length = DragQueryFileW(hDrop, i, nullptr, 0);
+            const UINT           length = DragQueryFileW(hDrop, i, nullptr, 0);
             std::vector<wchar_t> path(length + 1);
             if (DragQueryFileW(hDrop, i, path.data(), static_cast<UINT>(path.size())))
                 paths.emplace_back(ToUTF8(path.data()));
@@ -5151,12 +5157,43 @@ bool CClientGame::ProcessMessage(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lPa
 void CClientGame::OnFilesDropped(const std::vector<SString>& paths)
 {
     // WARNING: This is an intentionally insecure developer prototype for quickly
-    // previewing local ped skins. The server does not grant this capability, the
-    // dropped files are untrusted, and replacing a base model affects every ped
-    // using that model on this client. Do not ship this in a production or
-    // competitive client without server-side permission and stricter validation.
+    // previewing local ped skins and animations. The server does not grant this
+    // capability, the dropped files are untrusted, and replacing a base model
+    // affects every ped using that model on this client. Do not ship this in a
+    // production or competitive client without permission and stricter validation.
     constexpr size_t MAX_DFF_SIZE = 64 * 1024 * 1024;
     constexpr size_t MAX_TXD_SIZE = 128 * 1024 * 1024;
+
+    SString ifpPath;
+    bool    hasSkinFile = false;
+    for (const SString& path : paths)
+    {
+        if (path.EndsWithI(".ifp"))
+        {
+            if (!ifpPath.empty())
+            {
+                g_pCore->ChatEchoColor("Animation preview: drop only one IFP at a time.", 255, 100, 100);
+                return;
+            }
+            ifpPath = path;
+        }
+        else if (path.EndsWithI(".dff") || path.EndsWithI(".txd"))
+        {
+            hasSkinFile = true;
+        }
+    }
+
+    if (!ifpPath.empty())
+    {
+        if (hasSkinFile)
+        {
+            g_pCore->ChatEchoColor("Local preview: drop an IFP separately from DFF/TXD skin files.", 255, 100, 100);
+            return;
+        }
+
+        OnIFPFileDropped(ifpPath);
+        return;
+    }
 
     SString dffPath;
     SString txdPath;
@@ -5238,6 +5275,383 @@ void CClientGame::OnFilesDropped(const std::vector<SString>& paths)
 
     m_pDroppedSkinDFF = std::move(dff);
     g_pCore->ChatEchoColor(SString("Skin preview: applied locally to model %u.", modelId), 120, 255, 120);
+}
+
+void CClientGame::OnIFPFileDropped(const SString& path)
+{
+    // Local IFP files bypass resource download and server authorization just like
+    // the skin preview above. Keep the input bounded and use the established IFP
+    // parser so this tool does not introduce a second animation data path.
+    constexpr size_t MAX_IFP_SIZE = 64 * 1024 * 1024;
+
+    if (!m_pLocalPlayer)
+    {
+        g_pCore->ChatEchoColor("Animation preview: no local player is available yet.", 255, 100, 100);
+        return;
+    }
+
+    SString ifpData;
+    if (!FileLoad(std::nothrow, path, ifpData) || ifpData.empty() || ifpData.size() > MAX_IFP_SIZE)
+    {
+        g_pCore->ChatEchoColor("Animation preview: the IFP could not be read or is too large.", 255, 100, 100);
+        return;
+    }
+    if (!CIFPEngine::IsIFPData(ifpData))
+    {
+        g_pCore->ChatEchoColor("Animation preview: the dropped file is not a supported IFP.", 255, 100, 100);
+        return;
+    }
+
+    SString blockName;
+    do
+    {
+        blockName.Format("__local_ifp_preview_%u", ++m_uiDroppedIFPGeneration);
+    } while (GetIFPPointerFromMap(HashString(blockName.ToLower())) != nullptr);
+
+    std::shared_ptr<CClientIFP> ifp(new CClientIFP(m_pManager, INVALID_ELEMENT_ID));
+    if (!ifp->Load(blockName, true, std::move(ifpData)))
+    {
+        g_pCore->ChatEchoColor("Animation preview: IFP parsing failed.", 255, 100, 100);
+        return;
+    }
+
+    const auto animations = ifp->GetIFPAnimationsPointer();
+    if (!animations || animations->vecAnimations.empty())
+    {
+        g_pCore->ChatEchoColor("Animation preview: the IFP contains no animations.", 255, 100, 100);
+        return;
+    }
+
+    // Only replace a working preview after the new file has parsed successfully.
+    // Unlinking first marks old associations as unloading and lets their shared
+    // animation data live until GTA destroys the corresponding blend association.
+    UnloadDroppedIFP(false);
+    InsertIFPPointerToMap(ifp->GetBlockNameHash(), ifp);
+    m_pDroppedIFP = std::move(ifp);
+
+    CreateDroppedIFPPreviewWindow();
+    m_pDroppedIFPFilter->SetText("");
+    RefreshDroppedIFPAnimationList();
+    ShowDroppedIFPPreviewWindow(ExtractFilename(path));
+
+    const size_t animationCount = animations->vecAnimations.size();
+    if (animationCount == 1)
+    {
+        const SString& animationName = animations->vecAnimations.front().Name;
+        if (PlayDroppedIFPAnimation(animationName))
+        {
+            g_pCore->ChatEchoColor(SString("Animation preview: playing %s (%s).", *animationName, m_pDroppedIFPLoop->GetSelected() ? "loop" : "one shot"), 120,
+                                   255, 120);
+        }
+    }
+    else
+    {
+        m_pDroppedIFPStatus->SetText(SString("Choose one of %u animations, then press Play or double-click it.", static_cast<unsigned int>(animationCount)));
+        g_pCore->ChatEchoColor(SString("Animation preview: loaded %u animations; choose one in the preview window.", static_cast<unsigned int>(animationCount)),
+                               120, 255, 120);
+    }
+}
+
+void CClientGame::CreateDroppedIFPPreviewWindow()
+{
+    if (m_pDroppedIFPWindow)
+        return;
+
+    CGUI*     gui = g_pCore->GetGUI();
+    CVector2D resolution = gui->GetResolution();
+
+    m_pDroppedIFPWindow = reinterpret_cast<CGUIWindow*>(gui->CreateWnd(nullptr, "Local IFP animation preview"));
+    m_pDroppedIFPWindow->SetPosition(CVector2D(resolution.fX / 2.0f - 280.0f, resolution.fY / 2.0f - 260.0f), false);
+    m_pDroppedIFPWindow->SetSize(CVector2D(560.0f, 520.0f), false);
+    m_pDroppedIFPWindow->SetMovable(true);
+    m_pDroppedIFPWindow->SetSizingEnabled(false);
+    m_pDroppedIFPWindow->SetAlwaysOnTop(true);
+    m_pDroppedIFPWindow->SetCloseClickHandler(GUI_CALLBACK(&CClientGame::OnDroppedIFPClose, this));
+
+    m_pDroppedIFPFileLabel = reinterpret_cast<CGUILabel*>(gui->CreateLabel(m_pDroppedIFPWindow, ""));
+    m_pDroppedIFPFileLabel->SetPosition(CVector2D(14.0f, 28.0f), false);
+    m_pDroppedIFPFileLabel->SetSize(CVector2D(530.0f, 22.0f), false);
+    m_pDroppedIFPFileLabel->SetFont("default-bold");
+
+    CGUILabel* searchLabel = reinterpret_cast<CGUILabel*>(gui->CreateLabel(m_pDroppedIFPWindow, "Filter:"));
+    searchLabel->SetPosition(CVector2D(14.0f, 56.0f), false);
+    searchLabel->SetSize(CVector2D(55.0f, 24.0f), false);
+
+    m_pDroppedIFPFilter = reinterpret_cast<CGUIEdit*>(gui->CreateEdit(m_pDroppedIFPWindow, ""));
+    m_pDroppedIFPFilter->SetPosition(CVector2D(70.0f, 54.0f), false);
+    m_pDroppedIFPFilter->SetSize(CVector2D(474.0f, 26.0f), false);
+    m_pDroppedIFPFilter->SetMaxLength(64);
+    m_pDroppedIFPFilter->SetTextChangedHandler(GUI_CALLBACK(&CClientGame::OnDroppedIFPFilterChanged, this));
+
+    m_pDroppedIFPAnimationList = reinterpret_cast<CGUIGridList*>(gui->CreateGridList(m_pDroppedIFPWindow, true));
+    m_pDroppedIFPAnimationList->SetPosition(CVector2D(14.0f, 88.0f), false);
+    m_pDroppedIFPAnimationList->SetSize(CVector2D(530.0f, 266.0f), false);
+    m_pDroppedIFPAnimationList->SetSelectionMode(SelectionModes::RowSingle);
+    m_pDroppedIFPAnimationList->SetSortingEnabled(false);
+    m_uiDroppedIFPAnimationColumn = m_pDroppedIFPAnimationList->AddColumn("Animation", 0.94f);
+    m_pDroppedIFPAnimationList->SetDoubleClickHandler(GUI_CALLBACK(&CClientGame::OnDroppedIFPPlay, this));
+
+    m_pDroppedIFPLoop = reinterpret_cast<CGUICheckBox*>(gui->CreateCheckBox(m_pDroppedIFPWindow, "Loop", true));
+    m_pDroppedIFPLoop->SetPosition(CVector2D(14.0f, 364.0f), false);
+    m_pDroppedIFPLoop->SetSize(CVector2D(100.0f, 26.0f), false);
+
+    m_pDroppedIFPFreeze = reinterpret_cast<CGUICheckBox*>(gui->CreateCheckBox(m_pDroppedIFPWindow, "Freeze last frame", false));
+    m_pDroppedIFPFreeze->SetPosition(CVector2D(120.0f, 364.0f), false);
+    m_pDroppedIFPFreeze->SetSize(CVector2D(160.0f, 26.0f), false);
+
+    m_pDroppedIFPRootMotion = reinterpret_cast<CGUICheckBox*>(gui->CreateCheckBox(m_pDroppedIFPWindow, "Apply root motion", false));
+    m_pDroppedIFPRootMotion->SetPosition(CVector2D(292.0f, 364.0f), false);
+    m_pDroppedIFPRootMotion->SetSize(CVector2D(180.0f, 26.0f), false);
+
+    CGUILabel* speedLabel = reinterpret_cast<CGUILabel*>(gui->CreateLabel(m_pDroppedIFPWindow, "Speed:"));
+    speedLabel->SetPosition(CVector2D(14.0f, 399.0f), false);
+    speedLabel->SetSize(CVector2D(55.0f, 24.0f), false);
+    m_pDroppedIFPSpeed = reinterpret_cast<CGUIEdit*>(gui->CreateEdit(m_pDroppedIFPWindow, "1.0"));
+    m_pDroppedIFPSpeed->SetPosition(CVector2D(70.0f, 396.0f), false);
+    m_pDroppedIFPSpeed->SetSize(CVector2D(75.0f, 26.0f), false);
+    m_pDroppedIFPSpeed->SetMaxLength(5);
+    m_pDroppedIFPSpeed->SetTextAcceptedHandler(GUI_CALLBACK(&CClientGame::OnDroppedIFPPlay, this));
+
+    CGUILabel* blendLabel = reinterpret_cast<CGUILabel*>(gui->CreateLabel(m_pDroppedIFPWindow, "Blend ms:"));
+    blendLabel->SetPosition(CVector2D(172.0f, 399.0f), false);
+    blendLabel->SetSize(CVector2D(75.0f, 24.0f), false);
+    m_pDroppedIFPBlend = reinterpret_cast<CGUIEdit*>(gui->CreateEdit(m_pDroppedIFPWindow, "250"));
+    m_pDroppedIFPBlend->SetPosition(CVector2D(248.0f, 396.0f), false);
+    m_pDroppedIFPBlend->SetSize(CVector2D(75.0f, 26.0f), false);
+    m_pDroppedIFPBlend->SetMaxLength(4);
+    m_pDroppedIFPBlend->SetTextAcceptedHandler(GUI_CALLBACK(&CClientGame::OnDroppedIFPPlay, this));
+
+    CGUILabel* optionsHint = reinterpret_cast<CGUILabel*>(gui->CreateLabel(m_pDroppedIFPWindow, "Press Play to apply changed options."));
+    optionsHint->SetPosition(CVector2D(338.0f, 399.0f), false);
+    optionsHint->SetSize(CVector2D(206.0f, 24.0f), false);
+
+    m_pDroppedIFPStatus = reinterpret_cast<CGUILabel*>(gui->CreateLabel(m_pDroppedIFPWindow, ""));
+    m_pDroppedIFPStatus->SetPosition(CVector2D(14.0f, 430.0f), false);
+    m_pDroppedIFPStatus->SetSize(CVector2D(530.0f, 24.0f), false);
+
+    m_pDroppedIFPPrevious = reinterpret_cast<CGUIButton*>(gui->CreateButton(m_pDroppedIFPWindow, "Previous"));
+    m_pDroppedIFPPrevious->SetPosition(CVector2D(14.0f, 462.0f), false);
+    m_pDroppedIFPPrevious->SetSize(CVector2D(96.0f, 30.0f), false);
+    m_pDroppedIFPPrevious->SetClickHandler(GUI_CALLBACK(&CClientGame::OnDroppedIFPPrevious, this));
+
+    m_pDroppedIFPNext = reinterpret_cast<CGUIButton*>(gui->CreateButton(m_pDroppedIFPWindow, "Next"));
+    m_pDroppedIFPNext->SetPosition(CVector2D(120.0f, 462.0f), false);
+    m_pDroppedIFPNext->SetSize(CVector2D(96.0f, 30.0f), false);
+    m_pDroppedIFPNext->SetClickHandler(GUI_CALLBACK(&CClientGame::OnDroppedIFPNext, this));
+
+    m_pDroppedIFPPlay = reinterpret_cast<CGUIButton*>(gui->CreateButton(m_pDroppedIFPWindow, "Play / restart"));
+    m_pDroppedIFPPlay->SetPosition(CVector2D(226.0f, 462.0f), false);
+    m_pDroppedIFPPlay->SetSize(CVector2D(116.0f, 30.0f), false);
+    m_pDroppedIFPPlay->SetClickHandler(GUI_CALLBACK(&CClientGame::OnDroppedIFPPlay, this));
+
+    m_pDroppedIFPStop = reinterpret_cast<CGUIButton*>(gui->CreateButton(m_pDroppedIFPWindow, "Stop"));
+    m_pDroppedIFPStop->SetPosition(CVector2D(352.0f, 462.0f), false);
+    m_pDroppedIFPStop->SetSize(CVector2D(86.0f, 30.0f), false);
+    m_pDroppedIFPStop->SetClickHandler(GUI_CALLBACK(&CClientGame::OnDroppedIFPStop, this));
+
+    m_pDroppedIFPClose = reinterpret_cast<CGUIButton*>(gui->CreateButton(m_pDroppedIFPWindow, "Unload"));
+    m_pDroppedIFPClose->SetPosition(CVector2D(448.0f, 462.0f), false);
+    m_pDroppedIFPClose->SetSize(CVector2D(96.0f, 30.0f), false);
+    m_pDroppedIFPClose->SetClickHandler(GUI_CALLBACK(&CClientGame::OnDroppedIFPClose, this));
+
+    m_pDroppedIFPWindow->SetVisible(false);
+}
+
+void CClientGame::RefreshDroppedIFPAnimationList()
+{
+    if (!m_pDroppedIFPAnimationList)
+        return;
+
+    m_pDroppedIFPAnimationList->Clear();
+    if (!m_pDroppedIFP)
+        return;
+
+    const SString filter = m_pDroppedIFPFilter ? m_pDroppedIFPFilter->GetText() : "";
+    const auto    animations = m_pDroppedIFP->GetIFPAnimationsPointer();
+    if (!animations)
+        return;
+
+    for (const auto& animation : animations->vecAnimations)
+    {
+        if (!filter.empty() && !animation.Name.ContainsI(filter))
+            continue;
+
+        const int row = m_pDroppedIFPAnimationList->AddRow(true);
+        m_pDroppedIFPAnimationList->SetItemText(row, m_uiDroppedIFPAnimationColumn, animation.Name, false, false, true);
+    }
+
+    m_pDroppedIFPAnimationList->ForceUpdate();
+    if (m_pDroppedIFPAnimationList->GetRowCount() > 0)
+        m_pDroppedIFPAnimationList->SetSelectedItem(0, m_uiDroppedIFPAnimationColumn, true);
+}
+
+void CClientGame::ShowDroppedIFPPreviewWindow(const SString& filename)
+{
+    if (!m_pDroppedIFPWindow)
+        return;
+
+    m_pDroppedIFPFileLabel->SetText(SString("File: %s", *filename));
+    m_pDroppedIFPWindow->SetVisible(true);
+    m_pDroppedIFPWindow->Activate();
+    m_pDroppedIFPWindow->BringToFront();
+
+    // Only release the forced cursor if this preview was the feature that enabled
+    // it; another menu or resource may already own the visible cursor state.
+    if (!g_pCore->IsCursorForcedVisible())
+    {
+        g_pCore->ForceCursorVisible(true);
+        m_bDroppedIFPForcedCursor = true;
+    }
+}
+
+void CClientGame::HideDroppedIFPPreviewWindow()
+{
+    if (m_pDroppedIFPWindow)
+        m_pDroppedIFPWindow->SetVisible(false);
+
+    if (m_bDroppedIFPForcedCursor)
+    {
+        g_pCore->ForceCursorVisible(false);
+        m_bDroppedIFPForcedCursor = false;
+    }
+}
+
+bool CClientGame::PlayDroppedIFPAnimation(const SString& animationName)
+{
+    if (!m_pDroppedIFP || !m_pLocalPlayer || !m_pLocalPlayer->GetGameEntity())
+    {
+        g_pCore->ChatEchoColor("Animation preview: the local player is not ready.", 255, 100, 100);
+        return false;
+    }
+    if (m_pLocalPlayer->GetRealOccupiedVehicle())
+    {
+        g_pCore->ChatEchoColor("Animation preview: leave the vehicle before playing a ped animation.", 255, 180, 80);
+        return false;
+    }
+    if (!m_pDroppedIFP->GetAnimationHierarchy(animationName))
+    {
+        g_pCore->ChatEchoColor("Animation preview: the selected animation is no longer available.", 255, 100, 100);
+        return false;
+    }
+
+    float speed = static_cast<float>(atof(m_pDroppedIFPSpeed->GetText().c_str()));
+    if (!std::isfinite(speed))
+        speed = 1.0f;
+    speed = std::clamp(speed, 0.05f, 4.0f);
+
+    int blend = atoi(m_pDroppedIFPBlend->GetText().c_str());
+    blend = std::clamp(blend, 0, 5000);
+    m_pDroppedIFPSpeed->SetText(SString("%.2f", speed));
+    m_pDroppedIFPBlend->SetText(SString("%d", blend));
+
+    const bool loop = m_pDroppedIFPLoop->GetSelected();
+    const bool rootMotion = m_pDroppedIFPRootMotion->GetSelected();
+    const bool freezeLastFrame = !loop && m_pDroppedIFPFreeze->GetSelected();
+
+    StopDroppedIFPAnimation();
+    if (!CStaticFunctionDefinitions::SetPedAnimation(*m_pLocalPlayer, m_pDroppedIFP->GetBlockName(), animationName.c_str(), -1, blend, loop, rootMotion, true,
+                                                     freezeLastFrame))
+    {
+        g_pCore->ChatEchoColor("Animation preview: GTA could not start the selected animation.", 255, 100, 100);
+        return false;
+    }
+
+    CStaticFunctionDefinitions::SetPedAnimationSpeed(*m_pLocalPlayer, animationName, speed);
+    m_strDroppedIFPAnimation = animationName;
+    m_pDroppedIFPStatus->SetText(
+        SString("Playing: %s | %s | speed %.2fx%s", *animationName, loop ? "loop" : "one shot", speed, rootMotion ? " | root motion" : ""));
+    return true;
+}
+
+void CClientGame::StopDroppedIFPAnimation()
+{
+    if (!m_pDroppedIFP || !m_pLocalPlayer)
+        return;
+
+    const bool ownsCurrentAnimation = m_pLocalPlayer->GetCustomAnimationBlockNameHash() == m_pDroppedIFP->GetBlockNameHash() &&
+                                      (m_pLocalPlayer->IsCurrentAnimationCustom() || m_pLocalPlayer->IsNextAnimationCustom());
+    if (ownsCurrentAnimation)
+        m_pLocalPlayer->KillAnimation();
+
+    m_strDroppedIFPAnimation.clear();
+    if (m_pDroppedIFPStatus)
+        m_pDroppedIFPStatus->SetText("Stopped. Select an animation and press Play to restart it.");
+}
+
+void CClientGame::UnloadDroppedIFP(bool hideWindow)
+{
+    StopDroppedIFPAnimation();
+    if (m_pDroppedIFP)
+    {
+        m_pDroppedIFP->Unlink();
+        m_pDroppedIFP.reset();
+    }
+
+    m_strDroppedIFPAnimation.clear();
+    if (m_pDroppedIFPAnimationList)
+        m_pDroppedIFPAnimationList->Clear();
+    if (hideWindow)
+        HideDroppedIFPPreviewWindow();
+}
+
+bool CClientGame::OnDroppedIFPPlay(CGUIElement* element)
+{
+    if (!m_pDroppedIFPAnimationList)
+        return true;
+
+    const int row = m_pDroppedIFPAnimationList->GetSelectedItemRow();
+    if (row < 0)
+    {
+        if (m_pDroppedIFPStatus)
+            m_pDroppedIFPStatus->SetText("Select an animation first.");
+        return true;
+    }
+
+    PlayDroppedIFPAnimation(m_pDroppedIFPAnimationList->GetItemText(row, m_uiDroppedIFPAnimationColumn));
+    return true;
+}
+
+bool CClientGame::OnDroppedIFPStop(CGUIElement* element)
+{
+    StopDroppedIFPAnimation();
+    return true;
+}
+
+bool CClientGame::OnDroppedIFPPrevious(CGUIElement* element)
+{
+    if (!m_pDroppedIFPAnimationList || m_pDroppedIFPAnimationList->GetRowCount() == 0)
+        return true;
+
+    const int rowCount = m_pDroppedIFPAnimationList->GetRowCount();
+    int       row = m_pDroppedIFPAnimationList->GetSelectedItemRow();
+    row = row <= 0 ? rowCount - 1 : row - 1;
+    m_pDroppedIFPAnimationList->SetSelectedItem(row, m_uiDroppedIFPAnimationColumn, true);
+    return OnDroppedIFPPlay(element);
+}
+
+bool CClientGame::OnDroppedIFPNext(CGUIElement* element)
+{
+    if (!m_pDroppedIFPAnimationList || m_pDroppedIFPAnimationList->GetRowCount() == 0)
+        return true;
+
+    const int rowCount = m_pDroppedIFPAnimationList->GetRowCount();
+    int       row = m_pDroppedIFPAnimationList->GetSelectedItemRow();
+    row = row < 0 ? 0 : (row + 1) % rowCount;
+    m_pDroppedIFPAnimationList->SetSelectedItem(row, m_uiDroppedIFPAnimationColumn, true);
+    return OnDroppedIFPPlay(element);
+}
+
+bool CClientGame::OnDroppedIFPFilterChanged(CGUIElement* element)
+{
+    RefreshDroppedIFPAnimationList();
+    return true;
+}
+
+bool CClientGame::OnDroppedIFPClose(CGUIElement* element)
+{
+    UnloadDroppedIFP(true);
+    g_pCore->ChatEchoColor("Animation preview: stopped and unloaded.", 180, 220, 255);
+    return true;
 }
 
 // Shot compensation (Jax):
