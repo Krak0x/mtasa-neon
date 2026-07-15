@@ -3,15 +3,14 @@
  *  PROJECT:     Multi Theft Auto
  *  LICENSE:     See LICENSE in the top level directory
  *  FILE:        game_sa/CNativeBullworthPackSA.h
- *  PURPOSE:     Reviewed Bullworth native world-pack descriptor
+ *  PURPOSE:     Trusted Bullworth native world-pack policy
  *
  *****************************************************************************/
 
 #pragma once
 
-struct SNativeWorldPackDescriptorSA;
+struct SNativeWorldPackPolicySA;
 
-// Bullworth remains a checked-in prototype payload, but all registration
-// behavior is driven through this descriptor so the runtime is not tied to a
-// city-specific registrar class.
-const SNativeWorldPackDescriptorSA& GetNativeBullworthPackDescriptor();
+// Payload identity and inventory are intentionally absent here; the runtime
+// reads or derives those values from the pack files.
+const SNativeWorldPackPolicySA& GetNativeBullworthPackPolicy();

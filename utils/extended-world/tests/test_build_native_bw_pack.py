@@ -78,6 +78,12 @@ class NativeBullworthPackTest(unittest.TestCase):
             self.assertEqual(3608, manifest["txd_slot_plan"]["base"])
             self.assertEqual([3608, 3773], [min(manifest["txd_slot_plan"]["slots"].values()), max(manifest["txd_slot_plan"]["slots"].values())])
 
+            runtime_manifest = json.loads((output / "native-world.json").read_text(encoding="ascii"))
+            self.assertEqual(1, runtime_manifest["format"])
+            self.assertEqual("bullworth", runtime_manifest["pack_id"])
+            self.assertEqual((output / "bw.ide").stat().st_size, runtime_manifest["files"]["ide"]["bytes"])
+            self.assertEqual((output / "bw.img").stat().st_size, runtime_manifest["files"]["img"]["bytes"])
+
             entries = read_img_directory(output / "bw.img")
             self.assertEqual(report["counts"]["archive_entries"], len(entries))
             for ipl in report["ipls"]:

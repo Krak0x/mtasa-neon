@@ -50,36 +50,80 @@ exact GTA SA 1.0 US identities: the raw HOODLUM executable and MTA's audited
 ProgramData runtime copy derived from it. It relocates the three IDE model
 stores, raises the native
 single-COL read buffer to 327,680 bytes, and registers the generated Bullworth
-pack through GTA's own startup streaming path. Install these two runtime files:
+pack through GTA's own startup streaming path. Install these three runtime files:
 
 ```text
 MTA\data\extended-world\bullworth\bw.ide
 MTA\data\extended-world\bullworth\bw.img
+MTA\data\extended-world\bullworth\native-world.json
 ```
 
 `bw.col` and the seven binary IPLs are already entries inside `bw.img`; the
-runtime does not need the JSON or text validation reports. Paths passed to the
+runtime does not need the large audit `manifest.json` or text validation
+reports. `native-world.json` is the deliberately small, versioned runtime
+schema. Paths passed to the
 native loaders must currently be ASCII and shorter than `MAX_PATH`.
 
 The runtime is now split into a generic static-world pack manager and an
-immutable Bullworth descriptor. `CNativeWorldPackManagerSA` owns startup-hook
+immutable Bullworth policy. `CNativeWorldPackManagerSA` owns startup-hook
 installation, exact preflight, mutable pool-allocation planning, native commit,
 postconditions, IPL bootstrap, lifecycle state, and the reconnect-safe
-streaming-buffer floor. `CNativeBullworthPackSA` contains the reviewed payload
-facts: opt-in variable, paths and filenames, hashes, model range and store
-deltas, TXD profiles, canonical IPL names, archive counts, expected archive
-slot, and maximum entry size. The manager derives the even streaming-buffer
+streaming-buffer floor. `CNativeBullworthPackSA` contains only trusted client
+policy: the opt-in variable and activation directory, file/archive/model count
+ceilings, coordinate bounds, native pool capacities, stock occupancies,
+executable-specific TXD fingerprints, and expected archive slot. The minimal
+runtime manifest contains only its format and pack ID plus IDE/IMG leaf names,
+byte lengths, and hashes. Model range/store deltas, TXD inventory, the unique
+COL name, ordered IPL names, archive counts/sectors, and maximum entry size are
+derived from the validated bytes instead of being redundant manifest claims.
+The manager derives the even streaming-buffer
 minimum from that validated maximum rather than storing a second 4,008-sector
 constant.
 
-This is a Phase 1 data/type refactor, not arbitrary IDE support. Descriptors
+This is Phase 2A manifest loading, not arbitrary IDE support. Manifests
 currently represent the same constrained static-world format proven by
 Bullworth: `objs`/`tobj` IDE sections, DFF/TXD entries, exactly one merged COL,
-and standalone binary IPLs. Runtime JSON manifests, server distribution,
-cache ownership, hot registration, and multi-pack aggregate allocation are not
-implemented yet. Bullworth remains the single compiled descriptor and the
-existing environment flag, hashes, executable allowlist, pool budgets,
-registration order, diagnostics, and process-lifetime behavior are unchanged.
+and standalone binary IPLs. Server distribution, cache ownership, hot
+registration, and multi-pack aggregate allocation are not implemented yet.
+Bullworth remains the single compiled policy and the existing environment
+flag, executable allowlist, trusted pool budgets, registration order,
+diagnostics, and process-lifetime behavior are unchanged.
+
+The JSON schema is closed: unknown or missing fields, duplicate JSON keys,
+unsafe leaf paths, non-ASCII strings, non-uint32 numbers, and unsupported format
+versions are rejected. A small local parser is used so `game_sa.dll` does not
+gain a dependency on the deathmatch module's JSON-C library. The runtime then
+independently reparses the IDE, complete IMG directory, and every binary IPL;
+it derives and bounds their real names, types, counts, inventories, sizes,
+model-store types, placements, coordinates, and maximum entry.
+IDE rows additionally require safe native stems, one mesh, finite positive draw
+distance, bounded uint flags, unique/balanced sections, and valid timed-object
+hours. The three files must be direct regular non-reparse children of the
+trusted directory. GTA's native APIs reopen IDE/IMG by path at commit time, so
+a local actor able to replace those files between preflight and that reopen is
+a remaining TOCTOU boundary; server-cache ownership must prevent writes while
+activation is in progress.
+
+The compiled model-store policy records the relocated foundation capacities
+(`15000` Atomic, `160` DamageAtomic, and `200` Time). Preflight requires the
+exact stock occupancy and proves each derived IDE addition fits its remaining
+headroom before `AddArchive` or any pool mutation. It also hashes every DFF
+stem with GTA's own `CKeyGen::GetUppercaseKey` routine, rejects collisions
+within the pack, and scans all 20,000 occupied model-info pointers for the same
+key. Stock model infos retain only the key rather than the original source
+name, so a stock collision diagnostic can identify its model ID, key, and the
+custom stem but not reconstruct the stock spelling.
+
+Format 1 accepts exterior static binary IPLs only: every placement has area
+flags zero, no LOD link (`lodIndex == -1`), X/Y in `[-10000, 9999]`, and Z in
+`[-5000, 5000]`. Every IMG entry has exactly one dot and a safe dot-free stem,
+preventing GTA's native extension split from disagreeing with preflight.
+
+Hashes supplied by this untrusted manifest prove that the bytes match its own
+claims; they do not authenticate a server or publisher. Phase 2B must establish
+cache provenance separately. Likewise, this phase validates container and IDE
+semantics needed before native registration, but does not exhaustively parse
+RenderWare DFF/TXD payloads or every COL record before GTA does.
 
 The switch is read once, before GTA populates its model stores. In the Windows
 VM, set it in the process-start environment and then launch the client from the

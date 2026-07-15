@@ -9,6 +9,9 @@
 
 #pragma once
 
+#include <string>
+#include <vector>
+
 class CStreamingSA;
 
 struct SNativeTxdSlotFingerprintSA
@@ -46,6 +49,68 @@ struct SNativeModelStoreUsageSA
     unsigned int time;
 };
 
+// This policy is compiled into the client. Runtime manifests are treated as
+// untrusted input and cannot select executable fingerprints, native pool
+// capacities, stock occupancy, or archive allocation rules.
+struct SNativeWorldPackPolicySA
+{
+    const char* key;
+    const char* displayName;
+    const char* logPrefix;
+    const char* featureEnvironment;
+    const char* relativeDirectory;
+    const char* runtimeManifestFileName;
+
+    unsigned int  maximumManifestBytes;
+    unsigned int  maximumIdeBytes;
+    unsigned int  maximumImgSectors;
+    unsigned int  maximumImgEntries;
+    unsigned int  maximumImgEntryBlocks;
+    unsigned int  maximumModelId;
+    unsigned int  maximumModelCount;
+    unsigned int  maximumTxdCount;
+    unsigned int  maximumIplInstances;
+    unsigned int  txdPoolCapacity;
+    unsigned int  stockColOccupied;
+    unsigned int  colPoolCapacity;
+    unsigned int  stockIplOccupied;
+    unsigned int  iplPoolCapacity;
+    unsigned char expectedArchiveId;
+
+    SNativeModelStoreUsageSA       stockModelStores;
+    SNativeModelStoreUsageSA       modelStoreCapacities;
+    const SNativeTxdPoolProfileSA* txdPoolProfiles;
+    unsigned int                   txdPoolProfileCount;
+};
+
+// Holds the minimal payload identity loaded from JSON plus inventory derived
+// from IDE/IMG bytes. Derived values never come from manifest claims.
+struct SNativeWorldPackRuntimeDataSA
+{
+    unsigned int format{};
+    std::string  packId;
+    std::string  ideFileName;
+    std::string  imgFileName;
+    std::string  colFileName;
+    std::string  ideSha256;
+    std::string  imgSha256;
+    unsigned int ideBytes{};
+    unsigned int imgBytes{};
+
+    unsigned int             modelFirst{};
+    unsigned int             modelLast{};
+    unsigned int             modelCount{};
+    unsigned int             txdCount{};
+    std::vector<std::string> iplNames;
+    unsigned int             imgEntryCount{};
+    unsigned int             imgSectorCount{};
+    unsigned int             largestImgEntryBlocks{};
+    SNativeModelStoreUsageSA addedModelStores{};
+};
+
+// Internal merged view. It exists only after the untrusted manifest has been
+// parsed and checked against the compiled policy, which keeps the registrar's
+// native-commit code independent of the manifest representation.
 struct SNativeWorldPackDescriptorSA
 {
     const char* key;

@@ -23,7 +23,9 @@
 #include "SharedUtil.Misc.h"
 
 #include <cstdarg>
+#include <cmath>
 #include <fstream>
+#include <limits>
 #include <sstream>
 
 extern CGameSA* pGame;
@@ -46,6 +48,9 @@ namespace
     constexpr DWORD DAMAGE_MODEL_VTABLE = 0x85BC30;
     constexpr DWORD TIME_MODEL_VTABLE = 0x85BCB0;
     constexpr DWORD FLIPPED_RECT_SENTINELS[] = {0x49742400, 0xC9742400, 0xC9742400, 0x49742400};
+    constexpr float MIN_STATIC_WORLD_XY = -10000.0f;
+    constexpr float MAX_STATIC_WORLD_XY = 9999.0f;
+    constexpr float MAX_STATIC_WORLD_Z = 5000.0f;
 
 #pragma pack(push, 1)
     struct SImgHeader
@@ -61,7 +66,25 @@ namespace
         WORD  streamingSize;
         char  name[24];
     };
+
+    struct SBinaryIplHeader
+    {
+        char  magic[4];
+        DWORD counts[6];
+        DWORD sections[12];
+    };
+
+    struct SBinaryIplInstance
+    {
+        float position[3];
+        float quaternion[4];
+        int   modelId;
+        DWORD instanceType;
+        int   lodIndex;
+    };
 #pragma pack(pop)
+    static_assert(sizeof(SBinaryIplHeader) == 0x4C, "Unexpected binary IPL header size");
+    static_assert(sizeof(SBinaryIplInstance) == 0x28, "Unexpected binary IPL instance size");
 
     struct SColDef
     {
@@ -129,6 +152,10 @@ namespace
     };
 
     CStreamingSA*                       g_streaming = nullptr;
+    const SNativeWorldPackPolicySA*     g_policy = nullptr;
+    SNativeWorldPackRuntimeDataSA       g_manifest;
+    std::vector<const char*>            g_iplNamePointers;
+    SNativeWorldPackDescriptorSA        g_runtimeDescriptor{};
     const SNativeWorldPackDescriptorSA* g_pack = nullptr;
     EState                              g_state = EState::Off;
 
@@ -138,14 +165,13 @@ namespace
         return *g_pack;
     }
 
-    const SNativeWorldPackDescriptorSA* SelectEnabledPack()
+    const SNativeWorldPackPolicySA* SelectEnabledPolicy()
     {
-        // Phase 1 intentionally has one reviewed descriptor. Keeping selection
-        // here makes adding another immutable descriptor independent of the
-        // registrar implementation; aggregate capacity planning comes later.
-        const SNativeWorldPackDescriptorSA* available[] = {&GetNativeBullworthPackDescriptor()};
-        const SNativeWorldPackDescriptorSA* selected = nullptr;
-        for (const SNativeWorldPackDescriptorSA* candidate : available)
+        // Activation path and native process policy stay compiled even though
+        // the payload inventory now comes from a runtime manifest.
+        const SNativeWorldPackPolicySA* available[] = {&GetNativeBullworthPackPolicy()};
+        const SNativeWorldPackPolicySA* selected = nullptr;
+        for (const SNativeWorldPackPolicySA* candidate : available)
         {
             char        value[8]{};
             const DWORD valueLength = GetEnvironmentVariableA(candidate->featureEnvironment, value, sizeof(value));
@@ -165,7 +191,8 @@ namespace
         va_start(arguments, format);
         _vsnprintf_s(detail, sizeof(detail), _TRUNCATE, format, arguments);
         va_end(arguments);
-        const SString message("%s %s", Pack().logPrefix, detail);
+        const char*   prefix = g_pack ? Pack().logPrefix : (g_policy ? g_policy->logPrefix : "[NativeWorld]");
+        const SString message("%s %s", prefix, detail);
         OutputDebugStringA(message.c_str());
         OutputDebugStringA("\n");
         SharedUtil::WriteDebugEvent(message);
@@ -201,10 +228,17 @@ namespace
 
     bool ParseUnsigned(const std::string& value, unsigned int& result)
     {
-        char*               end = nullptr;
-        const unsigned long number = strtoul(value.c_str(), &end, 10);
-        if (!end || end == value.c_str() || *end != '\0' || number > UINT_MAX)
+        if (value.empty())
             return false;
+        uint64_t number = 0;
+        for (unsigned char character : value)
+        {
+            if (character < '0' || character > '9')
+                return false;
+            number = number * 10 + character - '0';
+            if (number > UINT_MAX)
+                return false;
+        }
         result = static_cast<unsigned int>(number);
         return true;
     }
@@ -219,6 +253,379 @@ namespace
         return true;
     }
 
+    bool HasExactFileSize(const SString& path, unsigned int expected)
+    {
+        WIN32_FILE_ATTRIBUTE_DATA data{};
+        return GetFileAttributesExW(SharedUtil::FromUTF8(path).c_str(), GetFileExInfoStandard, &data) && data.nFileSizeHigh == 0 &&
+               data.nFileSizeLow == expected;
+    }
+
+    bool IsSafeRegularFile(const SString& path)
+    {
+        const DWORD attributes = GetFileAttributesW(SharedUtil::FromUTF8(path).c_str());
+        return attributes != INVALID_FILE_ATTRIBUTES && !(attributes & (FILE_ATTRIBUTE_DIRECTORY | FILE_ATTRIBUTE_REPARSE_POINT));
+    }
+
+    struct SJsonValue
+    {
+        enum class EType
+        {
+            Object,
+            Array,
+            String,
+            Unsigned,
+        } type{};
+        std::map<std::string, SJsonValue> object;
+        std::vector<SJsonValue>           array;
+        std::string                       string;
+        unsigned int                      number{};
+    };
+
+    class CStrictJsonParser
+    {
+    public:
+        explicit CStrictJsonParser(const std::string& text) : m_text(text) {}
+
+        bool Parse(SJsonValue& value, std::string& error)
+        {
+            SkipWhitespace();
+            if (!ParseValue(value, 0, error))
+                return false;
+            SkipWhitespace();
+            if (m_offset != m_text.size())
+            {
+                error = "runtime manifest has trailing data";
+                return false;
+            }
+            return true;
+        }
+
+    private:
+        bool ParseValue(SJsonValue& value, unsigned int depth, std::string& error)
+        {
+            if (depth > 8 || m_offset >= m_text.size())
+            {
+                error = "runtime manifest nesting or value is invalid";
+                return false;
+            }
+            if (m_text[m_offset] == '{')
+                return ParseObject(value, depth, error);
+            if (m_text[m_offset] == '[')
+                return ParseArray(value, depth, error);
+            if (m_text[m_offset] == '"')
+            {
+                value.type = SJsonValue::EType::String;
+                return ParseString(value.string, error);
+            }
+            value.type = SJsonValue::EType::Unsigned;
+            return ParseUnsignedValue(value.number, error);
+        }
+
+        bool ParseObject(SJsonValue& value, unsigned int depth, std::string& error)
+        {
+            value.type = SJsonValue::EType::Object;
+            ++m_offset;
+            SkipWhitespace();
+            if (Consume('}'))
+                return true;
+            while (m_offset < m_text.size())
+            {
+                std::string key;
+                if (!ParseString(key, error))
+                    return false;
+                SkipWhitespace();
+                if (!Consume(':'))
+                {
+                    error = "runtime manifest object is missing a colon";
+                    return false;
+                }
+                SkipWhitespace();
+                SJsonValue child;
+                if (!ParseValue(child, depth + 1, error))
+                    return false;
+                if (!value.object.emplace(key, std::move(child)).second)
+                {
+                    error = "runtime manifest contains a duplicate object key";
+                    return false;
+                }
+                SkipWhitespace();
+                if (Consume('}'))
+                    return true;
+                if (!Consume(','))
+                {
+                    error = "runtime manifest object is missing a comma";
+                    return false;
+                }
+                SkipWhitespace();
+            }
+            error = "runtime manifest object is truncated";
+            return false;
+        }
+
+        bool ParseArray(SJsonValue& value, unsigned int depth, std::string& error)
+        {
+            value.type = SJsonValue::EType::Array;
+            ++m_offset;
+            SkipWhitespace();
+            if (Consume(']'))
+                return true;
+            while (m_offset < m_text.size())
+            {
+                SJsonValue child;
+                if (!ParseValue(child, depth + 1, error))
+                    return false;
+                value.array.emplace_back(std::move(child));
+                SkipWhitespace();
+                if (Consume(']'))
+                    return true;
+                if (!Consume(','))
+                {
+                    error = "runtime manifest array is missing a comma";
+                    return false;
+                }
+                SkipWhitespace();
+            }
+            error = "runtime manifest array is truncated";
+            return false;
+        }
+
+        bool ParseString(std::string& result, std::string& error)
+        {
+            if (!Consume('"'))
+            {
+                error = "runtime manifest expected a string";
+                return false;
+            }
+            while (m_offset < m_text.size())
+            {
+                const unsigned char character = m_text[m_offset++];
+                if (character == '"')
+                    return true;
+                if (character < 0x20 || character > 0x7E)
+                {
+                    error = "runtime manifest strings must contain printable ASCII";
+                    return false;
+                }
+                if (character == '\\')
+                {
+                    if (m_offset >= m_text.size())
+                        break;
+                    const char escaped = m_text[m_offset++];
+                    if (escaped != '"' && escaped != '\\' && escaped != '/')
+                    {
+                        error = "runtime manifest uses an unsupported string escape";
+                        return false;
+                    }
+                    result.push_back(escaped);
+                }
+                else
+                    result.push_back(static_cast<char>(character));
+                if (result.size() > 128)
+                {
+                    error = "runtime manifest string exceeds 128 bytes";
+                    return false;
+                }
+            }
+            error = "runtime manifest string is truncated";
+            return false;
+        }
+
+        bool ParseUnsignedValue(unsigned int& result, std::string& error)
+        {
+            const size_t start = m_offset;
+            if (m_offset >= m_text.size() || m_text[m_offset] < '0' || m_text[m_offset] > '9')
+            {
+                error = "runtime manifest permits only unsigned integer values";
+                return false;
+            }
+            if (m_text[m_offset] == '0' && m_offset + 1 < m_text.size() && m_text[m_offset + 1] >= '0' && m_text[m_offset + 1] <= '9')
+            {
+                error = "runtime manifest integer has a leading zero";
+                return false;
+            }
+            uint64_t number = 0;
+            while (m_offset < m_text.size() && m_text[m_offset] >= '0' && m_text[m_offset] <= '9')
+            {
+                number = number * 10 + (m_text[m_offset++] - '0');
+                if (number > std::numeric_limits<unsigned int>::max())
+                {
+                    error = "runtime manifest integer exceeds uint32";
+                    return false;
+                }
+            }
+            if (m_offset == start)
+                return false;
+            result = static_cast<unsigned int>(number);
+            return true;
+        }
+
+        bool Consume(char expected)
+        {
+            if (m_offset >= m_text.size() || m_text[m_offset] != expected)
+                return false;
+            ++m_offset;
+            return true;
+        }
+
+        void SkipWhitespace()
+        {
+            while (m_offset < m_text.size() && (m_text[m_offset] == ' ' || m_text[m_offset] == '\t' || m_text[m_offset] == '\r' || m_text[m_offset] == '\n'))
+                ++m_offset;
+        }
+
+        const std::string& m_text;
+        size_t             m_offset{};
+    };
+
+    bool HasExactKeys(const SJsonValue& value, std::initializer_list<const char*> keys)
+    {
+        if (value.type != SJsonValue::EType::Object || value.object.size() != keys.size())
+            return false;
+        for (const char* key : keys)
+            if (value.object.find(key) == value.object.end())
+                return false;
+        return true;
+    }
+
+    const SJsonValue* Member(const SJsonValue& value, const char* key, SJsonValue::EType type)
+    {
+        const auto found = value.object.find(key);
+        return found != value.object.end() && found->second.type == type ? &found->second : nullptr;
+    }
+
+    bool IsSafeLeafName(const std::string& name, size_t maximumLength)
+    {
+        if (name.empty() || name.size() > maximumLength || name == "." || name == "..")
+            return false;
+        return std::all_of(name.begin(), name.end(),
+                           [](unsigned char character)
+                           {
+                               return (character >= 'a' && character <= 'z') || (character >= '0' && character <= '9') || character == '_' ||
+                                      character == '-' || character == '.';
+                           });
+    }
+
+    bool IsLowerSha256(const std::string& value)
+    {
+        return value.size() == 64 && std::all_of(value.begin(), value.end(), [](unsigned char character)
+                                                 { return (character >= '0' && character <= '9') || (character >= 'a' && character <= 'f'); });
+    }
+
+    bool LoadRuntimeManifest(const SString& path, std::string& error)
+    {
+        std::ifstream file(SharedUtil::FromUTF8(path), std::ios::binary);
+        if (!file)
+        {
+            error = "native-world.json cannot be opened";
+            return false;
+        }
+        file.seekg(0, std::ios::end);
+        const std::streamoff length = file.tellg();
+        if (length <= 0 || length > g_policy->maximumManifestBytes)
+        {
+            error = "runtime manifest byte length exceeds trusted policy";
+            return false;
+        }
+        file.seekg(0, std::ios::beg);
+        std::string bytes(static_cast<size_t>(length), '\0');
+        if (!file.read(bytes.data(), length))
+        {
+            error = "runtime manifest read is truncated";
+            return false;
+        }
+
+        SJsonValue root;
+        if (!CStrictJsonParser(bytes).Parse(root, error))
+            return false;
+        if (!HasExactKeys(root, {"format", "pack_id", "files"}))
+        {
+            error = "runtime manifest root schema differs from format 1";
+            return false;
+        }
+        const SJsonValue* format = Member(root, "format", SJsonValue::EType::Unsigned);
+        const SJsonValue* packId = Member(root, "pack_id", SJsonValue::EType::String);
+        const SJsonValue* files = Member(root, "files", SJsonValue::EType::Object);
+        if (!format || !packId || !files || format->number != 1 || packId->string != g_policy->key || !HasExactKeys(*files, {"ide", "img"}))
+        {
+            error = "runtime manifest format, pack ID, or nested schema is invalid";
+            return false;
+        }
+
+        const SJsonValue* ide = Member(*files, "ide", SJsonValue::EType::Object);
+        const SJsonValue* img = Member(*files, "img", SJsonValue::EType::Object);
+        if (!ide || !img || !HasExactKeys(*ide, {"name", "bytes", "sha256"}) || !HasExactKeys(*img, {"name", "bytes", "sha256"}))
+        {
+            error = "runtime manifest file or model-store schema is invalid";
+            return false;
+        }
+
+        const auto        stringMember = [](const SJsonValue& object, const char* key) { return Member(object, key, SJsonValue::EType::String); };
+        const auto        numberMember = [](const SJsonValue& object, const char* key) { return Member(object, key, SJsonValue::EType::Unsigned); };
+        const SJsonValue* ideName = stringMember(*ide, "name");
+        const SJsonValue* imgName = stringMember(*img, "name");
+        const SJsonValue* ideHash = stringMember(*ide, "sha256");
+        const SJsonValue* imgHash = stringMember(*img, "sha256");
+        const SJsonValue* ideBytes = numberMember(*ide, "bytes");
+        const SJsonValue* imgBytes = numberMember(*img, "bytes");
+        if (!ideName || !imgName || !ideHash || !imgHash || !ideBytes || !imgBytes || !IsSafeLeafName(ideName->string, 63) ||
+            !IsSafeLeafName(imgName->string, 63) || !IsLowerSha256(ideHash->string) || !IsLowerSha256(imgHash->string) || !ideBytes->number ||
+            ideBytes->number > g_policy->maximumIdeBytes || !imgBytes->number || imgBytes->number % 2048 != 0 ||
+            imgBytes->number / 2048 > g_policy->maximumImgSectors)
+        {
+            error = "runtime manifest contains an invalid filename, hash, or integer field";
+            return false;
+        }
+
+        SNativeWorldPackRuntimeDataSA manifest;
+        manifest.format = format->number;
+        manifest.packId = packId->string;
+        manifest.ideFileName = ideName->string;
+        manifest.imgFileName = imgName->string;
+        manifest.ideSha256 = ideHash->string;
+        manifest.imgSha256 = imgHash->string;
+        manifest.ideBytes = ideBytes->number;
+        manifest.imgBytes = imgBytes->number;
+
+        // Build the merged view only after the complete schema is accepted.
+        g_manifest = std::move(manifest);
+        g_iplNamePointers.clear();
+        for (const std::string& name : g_manifest.iplNames)
+            g_iplNamePointers.push_back(name.c_str());
+        g_runtimeDescriptor = {
+            g_manifest.packId.c_str(),
+            g_policy->displayName,
+            g_policy->logPrefix,
+            g_policy->featureEnvironment,
+            g_policy->relativeDirectory,
+            g_manifest.ideFileName.c_str(),
+            g_manifest.imgFileName.c_str(),
+            nullptr,
+            g_manifest.ideSha256.c_str(),
+            g_manifest.imgSha256.c_str(),
+            0,
+            0,
+            0,
+            0,
+            g_policy->txdPoolCapacity,
+            g_policy->stockColOccupied,
+            g_policy->colPoolCapacity,
+            g_policy->stockIplOccupied,
+            g_policy->iplPoolCapacity,
+            nullptr,
+            0,
+            0,
+            0,
+            0,
+            g_policy->expectedArchiveId,
+            g_policy->stockModelStores,
+            {},
+            g_policy->txdPoolProfiles,
+            g_policy->txdPoolProfileCount,
+        };
+        g_pack = &g_runtimeDescriptor;
+        return true;
+    }
+
     bool ValidateDescriptor(std::string& error)
     {
         const SNativeWorldPackDescriptorSA& pack = Pack();
@@ -229,15 +636,29 @@ namespace
             error = "native world-pack descriptor has a missing required field";
             return false;
         }
-        if (pack.modelFirst > pack.modelLast || pack.modelLast - pack.modelFirst + 1 != pack.modelCount ||
+        if (strcmp(pack.key, g_policy->key) != 0 || pack.modelFirst > pack.modelLast || pack.modelLast > g_policy->maximumModelId ||
+            pack.modelLast - pack.modelFirst + 1 != pack.modelCount ||
             pack.addedModelStores.atomic + pack.addedModelStores.damageAtomic + pack.addedModelStores.time != pack.modelCount)
         {
             error = "native world-pack descriptor model range or store deltas are inconsistent";
             return false;
         }
-        if (pack.txdCount > pack.txdPoolCapacity || pack.stockColOccupied >= pack.colPoolCapacity ||
+        if (pack.stockModelStores.atomic > g_policy->modelStoreCapacities.atomic ||
+            pack.addedModelStores.atomic > g_policy->modelStoreCapacities.atomic - pack.stockModelStores.atomic ||
+            pack.stockModelStores.damageAtomic > g_policy->modelStoreCapacities.damageAtomic ||
+            pack.addedModelStores.damageAtomic > g_policy->modelStoreCapacities.damageAtomic - pack.stockModelStores.damageAtomic ||
+            pack.stockModelStores.time > g_policy->modelStoreCapacities.time ||
+            pack.addedModelStores.time > g_policy->modelStoreCapacities.time - pack.stockModelStores.time)
+        {
+            error = "native world-pack model-store additions exceed trusted capacities";
+            return false;
+        }
+        if (!pack.modelCount || pack.modelCount > g_policy->maximumModelCount || !pack.txdCount || pack.txdCount > g_policy->maximumTxdCount ||
+            pack.txdCount > pack.txdPoolCapacity || pack.stockColOccupied >= pack.colPoolCapacity ||
             pack.stockIplOccupied + pack.iplCount > pack.iplPoolCapacity || !pack.imgEntryCount || !pack.imgSectorCount || !pack.largestImgEntryBlocks ||
-            pack.largestImgEntryBlocks > pack.imgSectorCount || strlen(pack.ideSha256) != 64 || strlen(pack.imgSha256) != 64)
+            pack.imgEntryCount > g_policy->maximumImgEntries || pack.imgSectorCount > g_policy->maximumImgSectors ||
+            pack.largestImgEntryBlocks > g_policy->maximumImgEntryBlocks || pack.largestImgEntryBlocks > pack.imgSectorCount ||
+            pack.imgEntryCount != pack.modelCount + pack.txdCount + pack.iplCount + 1 || strlen(pack.ideSha256) != 64 || strlen(pack.imgSha256) != 64)
         {
             error = "native world-pack descriptor pool, archive, or hash contract is inconsistent";
             return false;
@@ -250,6 +671,24 @@ namespace
                 return false;
             }
         return true;
+    }
+
+    bool IsSafeIdeStem(const std::string& value)
+    {
+        return !value.empty() && value.size() <= 19 &&
+               std::all_of(value.begin(), value.end(),
+                           [](unsigned char character)
+                           {
+                               return (character >= 'a' && character <= 'z') || (character >= 'A' && character <= 'Z') ||
+                                      (character >= '0' && character <= '9') || character == '_' || character == '-';
+                           });
+    }
+
+    bool ParseFinitePositiveFloat(const std::string& value)
+    {
+        char*       end = nullptr;
+        const float number = strtof(value.c_str(), &end);
+        return end && end != value.c_str() && *end == '\0' && std::isfinite(number) && number > 0.0f && number <= 100000.0f;
     }
 
     bool ParseIde(const SString& path, SIdePlan& plan, std::string& error)
@@ -267,25 +706,51 @@ namespace
             Objects,
             TimedObjects,
         } section = ESection::None;
+        bool         sawObjects = false;
+        bool         sawTimedObjects = false;
+        unsigned int lineNumber = 0;
 
         std::string line;
         while (std::getline(file, line))
         {
+            ++lineNumber;
+            if (line.size() > 512 || !std::all_of(line.begin(), line.end(), [](unsigned char character) { return character <= 0x7F; }))
+            {
+                error = SString("%s line %u exceeds the ASCII/length contract", Pack().ideFileName, lineNumber);
+                return false;
+            }
             line = Trim(line);
             if (line.empty() || line[0] == '#')
                 continue;
             if (line == "objs")
             {
+                if (section != ESection::None || sawObjects)
+                {
+                    error = SString("%s has a duplicate or nested objs section", Pack().ideFileName);
+                    return false;
+                }
+                sawObjects = true;
                 section = ESection::Objects;
                 continue;
             }
             if (line == "tobj")
             {
+                if (section != ESection::None || sawTimedObjects)
+                {
+                    error = SString("%s has a duplicate or nested tobj section", Pack().ideFileName);
+                    return false;
+                }
+                sawTimedObjects = true;
                 section = ESection::TimedObjects;
                 continue;
             }
             if (line == "end")
             {
+                if (section == ESection::None)
+                {
+                    error = SString("%s has an unmatched end", Pack().ideFileName);
+                    return false;
+                }
                 section = ESection::None;
                 continue;
             }
@@ -304,8 +769,14 @@ namespace
 
             unsigned int id = 0;
             unsigned int flags = 0;
-            if (!ParseUnsigned(fields[0], id) || !ParseUnsigned(fields[5], flags) || id < Pack().modelFirst || id > Pack().modelLast ||
-                !plan.modelIds.insert(id).second || fields[1].empty() || fields[2].empty())
+            unsigned int meshCount = 0;
+            unsigned int timeOn = 0;
+            unsigned int timeOff = 0;
+            const bool   timedFieldsValid = section != ESection::TimedObjects || (ParseUnsigned(fields[6], timeOn) && ParseUnsigned(fields[7], timeOff) &&
+                                                                                timeOn <= 23 && timeOff <= 23 && timeOn != timeOff);
+            if (!ParseUnsigned(fields[0], id) || !ParseUnsigned(fields[3], meshCount) || meshCount != 1 || !ParseFinitePositiveFloat(fields[4]) ||
+                !ParseUnsigned(fields[5], flags) || flags > 0x00FFFFFF || !timedFieldsValid || id > g_policy->maximumModelId ||
+                !plan.modelIds.insert(id).second || !IsSafeIdeStem(fields[1]) || !IsSafeIdeStem(fields[2]))
             {
                 error = SString("%s contains an invalid or duplicate model", Pack().ideFileName);
                 return false;
@@ -331,13 +802,18 @@ namespace
             }
         }
 
-        if (plan.modelIds.size() != Pack().modelCount || *plan.modelIds.begin() != Pack().modelFirst || *plan.modelIds.rbegin() != Pack().modelLast ||
-            plan.modelNames.size() != Pack().modelCount || plan.txdNames.size() != Pack().txdCount || plan.atomic != Pack().addedModelStores.atomic ||
-            plan.damage != Pack().addedModelStores.damageAtomic || plan.time != Pack().addedModelStores.time)
+        if (section != ESection::None || (!sawObjects && !sawTimedObjects) || plan.modelIds.empty() || plan.modelIds.size() > g_policy->maximumModelCount ||
+            plan.txdNames.empty() || plan.txdNames.size() > g_policy->maximumTxdCount ||
+            *plan.modelIds.rbegin() - *plan.modelIds.begin() + 1 != plan.modelIds.size() || plan.modelNames.size() != plan.modelIds.size())
         {
-            error = SString("%s counts or ID range differ from the native plan", Pack().ideFileName);
+            error = SString("%s derived counts or contiguous ID range exceed trusted policy", Pack().ideFileName);
             return false;
         }
+        g_runtimeDescriptor.modelFirst = *plan.modelIds.begin();
+        g_runtimeDescriptor.modelLast = *plan.modelIds.rbegin();
+        g_runtimeDescriptor.modelCount = static_cast<unsigned int>(plan.modelIds.size());
+        g_runtimeDescriptor.txdCount = static_cast<unsigned int>(plan.txdNames.size());
+        g_runtimeDescriptor.addedModelStores = {plan.atomic, plan.damage, plan.time};
         return true;
     }
 
@@ -363,8 +839,8 @@ namespace
         SImgHeader    header{};
         DWORD         read = 0;
         const bool    validHeader = GetFileSizeEx(file, &fileSize) && ReadFile(file, &header, sizeof(header), &read, nullptr) && read == sizeof(header) &&
-                                 memcmp(header.magic, "VER2", 4) == 0 && header.count == Pack().imgEntryCount &&
-                                 fileSize.QuadPart == static_cast<LONGLONG>(Pack().imgSectorCount) * 2048;
+                                 memcmp(header.magic, "VER2", 4) == 0 && header.count > 0 && header.count <= g_policy->maximumImgEntries &&
+                                 fileSize.QuadPart == g_manifest.imgBytes && fileSize.QuadPart % 2048 == 0;
         if (!validHeader)
         {
             CloseHandle(file);
@@ -386,16 +862,21 @@ namespace
         std::set<std::string>                dffs;
         std::set<std::string>                txds;
         std::set<std::string>                ipls;
+        std::vector<std::string>             orderedIpls;
+        std::string                          colName;
         unsigned int                         colCount = 0;
         unsigned int                         maxEntrySize = 0;
+        const uint64_t                       directoryEndSector = (sizeof(SImgHeader) + static_cast<uint64_t>(header.count) * sizeof(SImgEntry) + 2047) / 2048;
         std::vector<std::pair<DWORD, DWORD>> ranges;
         for (const SImgEntry& entry : entries)
         {
             const std::string name = EntryName(entry);
             const size_t      dot = name.rfind('.');
+            const size_t      firstDot = name.find('.');
             const uint64_t    endSector = static_cast<uint64_t>(entry.offset) + entry.size;
-            if (name.empty() || dot == std::string::npos || !entry.size || entry.streamingSize != entry.size || entry.offset < 18 ||
-                endSector > Pack().imgSectorCount || !names.insert(name).second)
+            if (!IsSafeLeafName(name, 23) || dot == std::string::npos || dot == 0 || firstDot != dot || !IsSafeLeafName(name.substr(0, dot), 19) ||
+                !entry.size || entry.size > g_policy->maximumImgEntryBlocks || entry.streamingSize != entry.size || entry.offset < directoryEndSector ||
+                endSector > static_cast<uint64_t>(fileSize.QuadPart / 2048) || !names.insert(name).second)
             {
                 error = SString("%s contains an invalid, duplicate, or out-of-bounds entry", Pack().imgFileName);
                 return false;
@@ -409,10 +890,21 @@ namespace
                 dffs.insert(name);
             else if (extension == ".txd")
                 txds.insert(name.substr(0, dot));
-            else if (extension == ".col" && name == Pack().colFileName)
+            else if (extension == ".col")
+            {
                 ++colCount;
+                colName = name;
+            }
             else if (extension == ".ipl")
-                ipls.insert(name.substr(0, dot));
+            {
+                const std::string iplName = name.substr(0, dot);
+                if (!IsSafeLeafName(iplName, 15) || iplName.find('.') != std::string::npos || !ipls.insert(iplName).second)
+                {
+                    error = SString("%s contains an unsafe or duplicate IPL name", Pack().imgFileName);
+                    return false;
+                }
+                orderedIpls.push_back(iplName);
+            }
             else
             {
                 error = SString("%s contains an unexpected entry type", Pack().imgFileName);
@@ -429,14 +921,92 @@ namespace
             }
         }
 
-        std::set<std::string> expectedIpls;
-        for (unsigned int index = 0; index < Pack().iplCount; ++index)
-            expectedIpls.insert(Pack().iplNames[index]);
-        if (dffs != ide.modelNames || txds != ide.txdNames || ipls != expectedIpls || colCount != 1 || maxEntrySize != Pack().largestImgEntryBlocks)
+        if (dffs != ide.modelNames || txds != ide.txdNames || colCount != 1 || orderedIpls.empty() ||
+            orderedIpls.size() > g_policy->iplPoolCapacity - g_policy->stockIplOccupied)
         {
-            error = SString("%s names do not match %s and descriptor %s", Pack().imgFileName, Pack().ideFileName, Pack().key);
+            error = SString("%s inventory does not match %s or trusted pool budgets", Pack().imgFileName, Pack().ideFileName);
             return false;
         }
+        g_manifest.colFileName = colName;
+        g_manifest.iplNames = std::move(orderedIpls);
+        g_iplNamePointers.clear();
+        for (const std::string& name : g_manifest.iplNames)
+            g_iplNamePointers.push_back(name.c_str());
+        g_runtimeDescriptor.colFileName = g_manifest.colFileName.c_str();
+        g_runtimeDescriptor.iplNames = g_iplNamePointers.data();
+        g_runtimeDescriptor.iplCount = static_cast<unsigned int>(g_iplNamePointers.size());
+        g_runtimeDescriptor.imgEntryCount = header.count;
+        g_runtimeDescriptor.imgSectorCount = static_cast<unsigned int>(fileSize.QuadPart / 2048);
+        g_runtimeDescriptor.largestImgEntryBlocks = maxEntrySize;
+        return true;
+    }
+
+    bool ValidateBinaryIpls(const SString& path, const SIdePlan& ide, std::string& error)
+    {
+        const WString widePath = SharedUtil::FromUTF8(path);
+        HANDLE        file = CreateFileW(widePath.c_str(), GENERIC_READ, FILE_SHARE_READ, nullptr, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
+        if (file == INVALID_HANDLE_VALUE)
+        {
+            error = SString("%s cannot be reopened for binary IPL validation", Pack().imgFileName);
+            return false;
+        }
+        unsigned int totalInstances = 0;
+        for (unsigned int index = 0; index < Pack().iplCount; ++index)
+        {
+            const std::string name = SString("%s.ipl", Pack().iplNames[index]);
+            const SImgEntry&  entry = ide.imgEntries.at(name);
+            std::vector<BYTE> data(static_cast<size_t>(entry.size) * 2048);
+            LARGE_INTEGER     offset{};
+            offset.QuadPart = static_cast<LONGLONG>(entry.offset) * 2048;
+            DWORD read = 0;
+            if (!SetFilePointerEx(file, offset, nullptr, FILE_BEGIN) || !ReadFile(file, data.data(), static_cast<DWORD>(data.size()), &read, nullptr) ||
+                read != data.size())
+            {
+                CloseHandle(file);
+                error = SString("%s binary IPL entry is truncated", name.c_str());
+                return false;
+            }
+            const auto*    header = reinterpret_cast<const SBinaryIplHeader*>(data.data());
+            const DWORD    count = header->counts[0];
+            const DWORD    instanceOffset = header->sections[0];
+            const uint64_t instancesEnd = static_cast<uint64_t>(instanceOffset) + static_cast<uint64_t>(count) * sizeof(SBinaryIplInstance);
+            bool           unsupportedSection = false;
+            for (unsigned int section = 1; section < 6; ++section)
+                unsupportedSection = unsupportedSection || header->counts[section] != 0;
+            if (data.size() < sizeof(SBinaryIplHeader) || memcmp(header->magic, "bnry", 4) != 0 || !count ||
+                count > g_policy->maximumIplInstances - totalInstances || instanceOffset < sizeof(SBinaryIplHeader) || instancesEnd > data.size() ||
+                unsupportedSection)
+            {
+                CloseHandle(file);
+                error = SString("%s has an invalid or unsupported binary IPL header", name.c_str());
+                return false;
+            }
+            const auto* instances = reinterpret_cast<const SBinaryIplInstance*>(data.data() + instanceOffset);
+            for (DWORD instanceIndex = 0; instanceIndex < count; ++instanceIndex)
+            {
+                const SBinaryIplInstance& instance = instances[instanceIndex];
+                bool                      finite = true;
+                for (float coordinate : instance.position)
+                    finite = finite && std::isfinite(coordinate);
+                float quaternionLength = 0.0f;
+                for (float component : instance.quaternion)
+                {
+                    finite = finite && std::isfinite(component);
+                    quaternionLength += component * component;
+                }
+                if (!finite || instance.position[0] < MIN_STATIC_WORLD_XY || instance.position[0] > MAX_STATIC_WORLD_XY ||
+                    instance.position[1] < MIN_STATIC_WORLD_XY || instance.position[1] > MAX_STATIC_WORLD_XY ||
+                    fabsf(instance.position[2]) > MAX_STATIC_WORLD_Z || quaternionLength < 0.25f || quaternionLength > 2.25f ||
+                    ide.modelIds.find(instance.modelId) == ide.modelIds.end() || instance.instanceType != 0 || instance.lodIndex != -1)
+                {
+                    CloseHandle(file);
+                    error = SString("%s contains an invalid binary IPL instance", name.c_str());
+                    return false;
+                }
+            }
+            totalInstances += count;
+        }
+        CloseHandle(file);
         return true;
     }
 
@@ -750,6 +1320,13 @@ namespace
             error = "native model stores are not at exact stock occupancy";
             return false;
         }
+        if (atomic + Pack().addedModelStores.atomic > g_policy->modelStoreCapacities.atomic ||
+            damage + Pack().addedModelStores.damageAtomic > g_policy->modelStoreCapacities.damageAtomic ||
+            time + Pack().addedModelStores.time > g_policy->modelStoreCapacities.time)
+        {
+            error = "native model-store headroom is below the derived IDE additions";
+            return false;
+        }
 
         CBaseModelInfoSAInterface** models = reinterpret_cast<CBaseModelInfoSAInterface**>(ARRAY_ModelInfo);
         for (unsigned int id = Pack().modelFirst; id <= Pack().modelLast; ++id)
@@ -757,6 +1334,37 @@ namespace
             if (models[id] || !StreamingInfoIsFree(id))
             {
                 error = SString("a %s model ID or streaming slot is already occupied", Pack().displayName);
+                return false;
+            }
+        }
+
+        // GTA stores only CKeyGen::GetUppercaseKey(modelName) in model infos.
+        // Compare those exact native keys before LoadObjectTypes can construct
+        // any custom entries; filename/string equality alone misses hash and
+        // case-fold collisions.
+        const auto                          uppercaseKey = reinterpret_cast<unsigned int(__cdecl*)(const char*)>(GET_UPPERCASE_KEY);
+        std::map<unsigned int, std::string> modelKeys;
+        for (const auto& [id, fileName] : ide.modelFileNames)
+        {
+            const std::string  modelStem = fileName.substr(0, fileName.size() - 4);
+            const unsigned int key = uppercaseKey(modelStem.c_str());
+            const auto [existing, inserted] = modelKeys.emplace(key, modelStem);
+            if (!inserted)
+            {
+                error = SString("%s DFF native-key collision key=0x%08X names=%s,%s", Pack().displayName, key, existing->second.c_str(), modelStem.c_str());
+                return false;
+            }
+        }
+        for (unsigned int id = 0; id <= g_policy->maximumModelId; ++id)
+        {
+            const CBaseModelInfoSAInterface* model = models[id];
+            if (!model)
+                continue;
+            const auto collision = modelKeys.find(model->ulHashKey);
+            if (collision != modelKeys.end())
+            {
+                error = SString("%s DFF native-key collides with occupied stock model id=%u key=0x%08X name=%s", Pack().displayName, id, model->ulHashKey,
+                                collision->second.c_str());
                 return false;
             }
         }
@@ -801,7 +1409,6 @@ namespace
         }
 
         const auto                          findTxd = reinterpret_cast<int(__cdecl*)(const char*)>(FIND_TXD_SLOT);
-        const auto                          uppercaseKey = reinterpret_cast<unsigned int(__cdecl*)(const char*)>(GET_UPPERCASE_KEY);
         std::map<unsigned int, std::string> txdKeys;
         for (const std::string& name : ide.txdNames)
         {
@@ -1014,18 +1621,20 @@ namespace
         SIdePlan      ide;
         std::string   error;
         Log("registrar=preflight ide=%s img=%s", idePath.c_str(), imgPath.c_str());
-        if (!IsNativePathSafe(idePath) || !IsNativePathSafe(imgPath))
-            error = "native loader paths must be ASCII and shorter than MAX_PATH";
+        if (!IsNativePathSafe(idePath) || !IsNativePathSafe(imgPath) || !IsSafeRegularFile(idePath) || !IsSafeRegularFile(imgPath))
+            error = "native loader paths must be regular non-reparse ASCII files shorter than MAX_PATH";
         if (error.empty())
         {
             const SString ideHash = SharedUtil::GenerateSha256HexStringFromFile(idePath);
             const SString imgHash = SharedUtil::GenerateSha256HexStringFromFile(imgPath);
-            if (_stricmp(ideHash.c_str(), Pack().ideSha256) != 0 || _stricmp(imgHash.c_str(), Pack().imgSha256) != 0)
-                error = "runtime pack SHA-256 differs from the reviewed generated payload";
+            if (!HasExactFileSize(idePath, g_manifest.ideBytes) || !HasExactFileSize(imgPath, g_manifest.imgBytes) ||
+                _stricmp(ideHash.c_str(), Pack().ideSha256) != 0 || _stricmp(imgHash.c_str(), Pack().imgSha256) != 0)
+                error = "runtime pack byte length or SHA-256 differs from its manifest";
             else
                 Log("registrar=integrity-ok ideSha256=%s imgSha256=%s", Pack().ideSha256, Pack().imgSha256);
         }
-        if (!error.empty() || !ParseIde(idePath, ide, error) || !ValidateImg(imgPath, ide, error) || !PreflightRuntime(ide, error))
+        if (!error.empty() || !ParseIde(idePath, ide, error) || !ValidateImg(imgPath, ide, error) || !ValidateBinaryIpls(imgPath, ide, error) ||
+            !ValidateDescriptor(error) || !PreflightRuntime(ide, error))
         {
             RestoreTxdFindCache(ide);
             g_state = EState::Refused;
@@ -1133,12 +1742,20 @@ namespace
 
 void CNativeWorldPackManagerSA::InstallFromEnvironment(CStreamingSA* streaming)
 {
-    const SNativeWorldPackDescriptorSA* selected = SelectEnabledPack();
+    const SNativeWorldPackPolicySA* selected = SelectEnabledPolicy();
     if (!selected)
         return;
-    g_pack = selected;
-    std::string descriptorError;
-    if (!ValidateDescriptor(descriptorError))
+    if (g_state != EState::Off)
+    {
+        Log("registrar=unchanged state=%d", static_cast<int>(g_state));
+        return;
+    }
+    g_policy = selected;
+    const SString manifestPath = SharedUtil::CalcMTASAPath(SString("%s\\%s", g_policy->relativeDirectory, g_policy->runtimeManifestFileName));
+    std::string   descriptorError;
+    if (!IsNativePathSafe(manifestPath) || !IsSafeRegularFile(manifestPath))
+        descriptorError = "runtime manifest must be a regular non-reparse ASCII file shorter than MAX_PATH";
+    if (!descriptorError.empty() || !LoadRuntimeManifest(manifestPath, descriptorError))
     {
         Log("registrar=refused reason=%s", descriptorError.c_str());
         g_state = EState::Refused;
@@ -1148,11 +1765,6 @@ void CNativeWorldPackManagerSA::InstallFromEnvironment(CStreamingSA* streaming)
     {
         Log("registrar=refused reason=native-model-store-foundation-inactive");
         g_state = EState::Refused;
-        return;
-    }
-    if (g_state != EState::Off)
-    {
-        Log("registrar=unchanged state=%d", static_cast<int>(g_state));
         return;
     }
     if (memcmp(reinterpret_cast<const void*>(LOAD_CD_DIRECTORY_CALL), LOAD_CD_DIRECTORY_CALL_BYTES, sizeof(LOAD_CD_DIRECTORY_CALL_BYTES)) != 0)
@@ -1165,7 +1777,8 @@ void CNativeWorldPackManagerSA::InstallFromEnvironment(CStreamingSA* streaming)
     g_streaming = streaming;
     HookInstallCall(LOAD_CD_DIRECTORY_CALL, reinterpret_cast<DWORD>(&LoadCdDirectoryHook));
     g_state = EState::Hooked;
-    Log("registrar=hooked call=0x%08X pack=%s runtimeFiles=%s,%s", LOAD_CD_DIRECTORY_CALL, Pack().relativeDirectory, Pack().ideFileName, Pack().imgFileName);
+    Log("registrar=hooked call=0x%08X pack=%s manifest=%s runtimeFiles=%s,%s", LOAD_CD_DIRECTORY_CALL, Pack().relativeDirectory,
+        g_policy->runtimeManifestFileName, Pack().ideFileName, Pack().imgFileName);
 }
 
 unsigned int CNativeWorldPackManagerSA::GetRequiredStreamingBufferSizeBlocks()

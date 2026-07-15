@@ -1,0 +1,16 @@
+{
+  "format": 1,
+  "pack_id": "bullworth",
+  "files": {
+    "ide": {
+      "name": "bw.ide",
+      "bytes": 31760,
+      "sha256": "0bdf5aeb17eaefe6e2f42e47d38f82d65526c580f3eecc223b7b65f8b905eeb4"
+    },
+    "img": {
+      "name": "bw.img",
+      "bytes": 169545728,
+      "sha256": "bc7f3ad5ce47bbd8a9018c9743142582cd458875d2100f31c0d96aac7f4bbfc0"
+    }
+  }
+}

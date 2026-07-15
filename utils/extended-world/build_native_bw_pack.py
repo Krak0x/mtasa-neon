@@ -20,6 +20,7 @@ from typing import BinaryIO
 
 from build_ug_map import COL_MAGICS, ModelDefinition, Placement, parse_ide
 from pack_img import DIRECTORY_ENTRY, HEADER, SECTOR_SIZE, sectors_for, write_padding
+from native_world_manifest import build_runtime_manifest, dump_runtime_manifest
 
 
 MODEL_ID_START = 18631
@@ -914,6 +915,7 @@ def build_pack(resource: Path, output: Path, gta_root: Path) -> dict[str, object
     }
     (output / "manifest.json").write_text(json.dumps(manifest, indent=2, sort_keys=True) + "\n", encoding="utf-8")
     report = verify_pack(output, models, placements)
+    dump_runtime_manifest(output / "native-world.json", build_runtime_manifest(report, output / "bw.ide", output / "bw.img"))
     (output / "validation.json").write_text(json.dumps(report, indent=2, sort_keys=True) + "\n", encoding="utf-8")
     write_text_report(output / "validation.txt", report)
     return report
