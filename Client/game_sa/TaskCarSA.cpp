@@ -163,3 +163,38 @@ CTaskComplexLeaveCarSA::CTaskComplexLeaveCarSA(CVehicle* pTargetVehicle, const i
         // clang-format on
     }
 }
+
+// ##############################################################################
+// ## Name:    CTaskComplexCarDriveWander
+// ## Purpose: Lets GTA's road AI cruise a vehicle indefinitely
+// ##############################################################################
+
+CTaskComplexCarDriveWanderSA::CTaskComplexCarDriveWanderSA(CVehicle* pTargetVehicle, float fSpeed, int iDrivingStyle) : CTaskComplexSA()
+{
+    CVehicleSA* pTargetVehicleSA = dynamic_cast<CVehicleSA*>(pTargetVehicle);
+
+    if (pTargetVehicleSA)
+    {
+        CreateTaskInterface(sizeof(CTaskComplexCarDriveWanderSAInterface));
+        if (!IsValid())
+            return;
+
+        DWORD dwFunc = FUNC_CTaskComplexCarDriveWander__Constructor;
+        DWORD dwVehiclePtr = (DWORD)pTargetVehicleSA->GetInterface();
+        DWORD dwThisInterface = (DWORD)GetInterface();
+
+        // The verified native signature is (vehicle, drivingStyle, speed). Use
+        // GTA's implementation so its safe-reference, autopilot setup and
+        // destructor restoration remain intact.
+        // clang-format off
+        __asm
+        {
+            mov     ecx, dwThisInterface
+            push    fSpeed
+            push    iDrivingStyle
+            push    dwVehiclePtr
+            call    dwFunc
+        }
+        // clang-format on
+    }
+}

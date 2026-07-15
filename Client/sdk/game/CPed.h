@@ -30,6 +30,23 @@ class CWeapon;
 class CWeaponStat;
 class CProjectileSAInterface;
 
+enum ePedCreatedBy : std::uint8_t
+{
+    PED_CREATED_BY_UNKNOWN = 0,
+    PED_CREATED_BY_GAME = 1,
+    PED_CREATED_BY_MISSION = 2,
+    PED_CREATED_BY_GAME_MISSION = 3,
+};
+
+struct SPedCreatedByState
+{
+    ePedCreatedBy createdBy{PED_CREATED_BY_UNKNOWN};
+    float         hearingRange{};
+    float         seeingRange{};
+    std::uint32_t numPedsToScan{};
+    float         decisionMakerRadius{};
+};
+
 enum ePedPieceTypes
 {
     PED_PIECE_UNKNOWN = 0,
@@ -319,4 +336,10 @@ public:
     virtual void Say(const ePedSpeechContext& speechId, float probability) = 0;
 
     virtual void SetInWaterFlags(bool inWater) = 0;
+
+    // Append new cross-module methods to preserve every existing CPed vtable
+    // index for independently built MTA modules such as core.dll.
+    virtual SPedCreatedByState GetCreatedByState() const = 0;
+    virtual void               SetCreatedBy(ePedCreatedBy createdBy) = 0;
+    virtual void               RestoreCreatedByState(const SPedCreatedByState& state) = 0;
 };

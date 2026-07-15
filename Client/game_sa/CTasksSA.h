@@ -19,6 +19,7 @@ class CTaskComplexEnterCarAsDriver;
 class CTaskComplexEnterCarAsPassenger;
 class CTaskComplexFacial;
 class CTaskComplexLeaveCar;
+class CTaskComplexCarDriveWander;
 class CTaskComplexGoToPointAndStandStill;
 class CTaskComplexSunbathe;
 class CTaskComplexUseMobilePhone;
@@ -70,10 +71,11 @@ public:
     CTaskComplexEnterBoatAsDriver*      CreateTaskComplexEnterBoatAsDriver(CVehicle* pVehicle);
     CTaskComplexUseMobilePhone*         CreateTaskComplexUseMobilePhone(const int iDuration = -1);
 
-    CTaskComplexLeaveCar* CreateTaskComplexLeaveCar(CVehicle* pVehicle, const int iTargetDoor = 0xFF, const int iDelayTime = 0,
-                                                    const bool bSensibleLeaveCar = true, const bool bForceGetOut = false);
-    CTaskSimpleDuck*      CreateTaskSimpleDuck(eDuckControlTypes nDuckControl, unsigned short nLengthOfDuck = 0, unsigned short nUseShotsWhizzingEvents = -1);
-    CTaskSimpleChoking*   CreateTaskSimpleChoking(CPed* pAttacker, bool bIsTearGas);
+    CTaskComplexLeaveCar*       CreateTaskComplexLeaveCar(CVehicle* pVehicle, const int iTargetDoor = 0xFF, const int iDelayTime = 0,
+                                                          const bool bSensibleLeaveCar = true, const bool bForceGetOut = false);
+    CTaskComplexCarDriveWander* CreateTaskComplexCarDriveWander(CVehicle* pVehicle, float fSpeed, int iDrivingStyle);
+    CTaskSimpleDuck*    CreateTaskSimpleDuck(eDuckControlTypes nDuckControl, unsigned short nLengthOfDuck = 0, unsigned short nUseShotsWhizzingEvents = -1);
+    CTaskSimpleChoking* CreateTaskSimpleChoking(CPed* pAttacker, bool bIsTearGas);
 
     CTaskSimpleClimb*   CreateTaskSimpleClimb(CEntitySAInterface* pClimbEnt, const CVector& vecTarget, float fHeading, unsigned char nSurfaceType,
                                               eClimbHeights nHeight = CLIMB_GRAB, const bool bForceClimb = false);

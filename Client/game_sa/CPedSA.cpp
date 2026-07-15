@@ -80,6 +80,39 @@ void CPedSA::SetModelIndex(std::uint32_t modelIndex)
     GetPedInterface()->pedSound.m_bIsFemale = type == 5 || type == 22;
 }
 
+SPedCreatedByState CPedSA::GetCreatedByState() const
+{
+    const auto* pedInterface = GetPedInterface();
+    const auto* intelligence = pedInterface->pPedIntelligence;
+    return {
+        static_cast<ePedCreatedBy>(pedInterface->createdBy),
+        intelligence->hearingRange,
+        intelligence->seeingRange,
+        intelligence->numPedsToScan,
+        intelligence->decisionMakerRadius,
+    };
+}
+
+void CPedSA::SetCreatedBy(ePedCreatedBy createdBy)
+{
+    // Use GTA's native setter because CREATE_CHAR also resets the decision
+    // maker and applies mission-specific perception ranges.
+    ((void(__thiscall*)(CPedSAInterface*, ePedCreatedBy))FUNC_SetCharCreatedBy)(GetPedInterface(), createdBy);
+}
+
+void CPedSA::RestoreCreatedByState(const SPedCreatedByState& state)
+{
+    SetCreatedBy(state.createdBy);
+
+    // The native setter does not undo mission perception/scanner changes when
+    // returning to PED_GAME, so restore the exact pre-claim AI state.
+    auto* intelligence = GetPedInterface()->pPedIntelligence;
+    intelligence->hearingRange = state.hearingRange;
+    intelligence->seeingRange = state.seeingRange;
+    intelligence->numPedsToScan = state.numPedsToScan;
+    intelligence->decisionMakerRadius = state.decisionMakerRadius;
+}
+
 bool CPedSA::AddProjectile(eWeaponType weaponType, CVector origin, float force, CVector* target, CEntity* targetEntity)
 {
     CProjectileInfo* projectileInfo = pGame->GetProjectileInfo();

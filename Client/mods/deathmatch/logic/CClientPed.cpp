@@ -3684,6 +3684,11 @@ void CClientPed::_CreateModel()
         // Put our pointer in the stored data and update the remote data with the new model pointer
         m_pPlayerPed->SetStoredPointer(this);
 
+        // Script peds are reconstructed as CPlayerPed instances whenever they
+        // stream in. Reapply their persisted actor classification before GTA
+        // starts evaluating ambient task transitions on the new instance.
+        ApplyMissionActorState();
+
         g_pMultiplayer->AddRemoteDataStorage(m_pPlayerPed, m_remoteDataStorage);
 
         // Grab the task manager
@@ -4258,6 +4263,39 @@ void CClientPed::StreamOutWeaponForABit(eWeaponSlot eSlot)
         // Remove it
         pWeapon->Remove();
     }
+}
+
+bool CClientPed::SetMissionActor(bool enabled)
+{
+    if (GetType() != CCLIENTPED)
+        return false;
+
+    if (m_bMissionActor == enabled)
+        return true;
+
+    if (!enabled && m_pPlayerPed && m_missionActorNativeState)
+        m_pPlayerPed->RestoreCreatedByState(*m_missionActorNativeState);
+
+    m_bMissionActor = enabled;
+    m_missionActorNativeState.reset();
+
+    if (enabled && m_pPlayerPed)
+        ApplyMissionActorState();
+
+    return true;
+}
+
+void CClientPed::ApplyMissionActorState()
+{
+    m_missionActorNativeState.reset();
+    if (!m_bMissionActor || !m_pPlayerPed)
+        return;
+
+    // SetCharCreatedBy changes perception and decision-maker state in addition
+    // to the classification byte. Snapshot all affected values so disabling
+    // the policy is a true restoration rather than a partial flag reset.
+    m_missionActorNativeState = m_pPlayerPed->GetCreatedByState();
+    m_pPlayerPed->SetCreatedBy(PED_CREATED_BY_MISSION);
 }
 
 void CClientPed::InternalWarpIntoVehicle(CVehicle* pGameVehicle)

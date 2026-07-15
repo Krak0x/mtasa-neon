@@ -11,6 +11,8 @@
 
 #pragma once
 
+#include <cstddef>
+
 #include <game/CPedIntelligence.h>
 
 class CPedSAInterface;
@@ -36,9 +38,19 @@ public:
     DWORD                   taskManager;  // +4 (really CTaskManagerSAInterface)
     BYTE                    bPad[16];
     CFightManagerInterface* fightInterface;  // +24
-    BYTE                    bPad2[184];
+    BYTE                    bPad2[160];
+    float                   hearingRange;         // +188
+    float                   seeingRange;          // +192
+    DWORD                   numPedsToScan;        // +196
+    float                   decisionMakerRadius;  // +200
+    BYTE                    bPad3[8];
     DWORD                   vehicleScanner;  // +212 (really CVehicleScannerSAInterface)
 };
+
+static_assert(offsetof(CPedIntelligenceSAInterface, hearingRange) == 0xBC, "Invalid ped hearing range offset");
+static_assert(offsetof(CPedIntelligenceSAInterface, seeingRange) == 0xC0, "Invalid ped seeing range offset");
+static_assert(offsetof(CPedIntelligenceSAInterface, numPedsToScan) == 0xC4, "Invalid ped scan-count offset");
+static_assert(offsetof(CPedIntelligenceSAInterface, decisionMakerRadius) == 0xC8, "Invalid ped decision-maker radius offset");
 
 class CPedIntelligenceSA : public CPedIntelligence
 {

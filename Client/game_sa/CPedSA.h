@@ -44,6 +44,7 @@ class CVehicleSAInterface;
 #define FUNC_CPed_RemoveBodyPart        0x5F0140  // CPed::RemoveBodyPart
 #define FUNC_PreRenderAfterTest         0x5E65A0  // CPed::PreRenderAfterTest
 #define FUNC_CPed_Say                   0x5EFFE0
+#define FUNC_SetCharCreatedBy           0x5E47E0  // CPed::SetCharCreatedBy
 
 // CPlayerPed
 #define FUNC_MakeChangesForNewWeapon_Slot 0x60D000  // CPlayerPed::MakeChangesForNewWeapon
@@ -354,6 +355,9 @@ public:
     int          unk_798;
 };
 static_assert(sizeof(CPedSAInterface) == 0x79C, "Invalid size for CPedSAInterface");
+// Script-created characters are distinguished from ambient peds by this byte;
+// native vehicle tasks branch on it, so a layout drift changes task lifecycles.
+static_assert(offsetof(CPedSAInterface, createdBy) == 0x484, "Invalid created-by offset for CPedSAInterface");
 // GunControl reads this exact byte to choose both burst length and the delay
 // between bursts, so a layout drift here would silently change scripted combat.
 static_assert(offsetof(CPedSAInterface, weaponShootingRate) == 0x719, "Invalid weapon shooting rate offset for CPedSAInterface");
@@ -375,6 +379,10 @@ public:
     void Init();
 
     void SetModelIndex(std::uint32_t modelIndex) override;
+
+    SPedCreatedByState GetCreatedByState() const override;
+    void               SetCreatedBy(ePedCreatedBy createdBy) override;
+    void               RestoreCreatedByState(const SPedCreatedByState& state) override;
 
     bool InternalAttachEntityToEntity(DWORD entityInterface, const CVector* position, const CVector* rotation) override;
     void DetachPedFromEntity() override;

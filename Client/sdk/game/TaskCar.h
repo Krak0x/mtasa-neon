@@ -21,6 +21,17 @@ enum
     DOOR_REAR_LEFT = 11
 };
 
+enum eCarDrivingStyle
+{
+    DRIVING_STYLE_STOP_FOR_CARS = 0,
+    DRIVING_STYLE_SLOW_DOWN_FOR_CARS,
+    DRIVING_STYLE_AVOID_CARS,
+    DRIVING_STYLE_PLOUGH_THROUGH,
+    DRIVING_STYLE_STOP_FOR_CARS_IGNORE_LIGHTS,
+    DRIVING_STYLE_AVOID_CARS_OBEY_LIGHTS,
+    DRIVING_STYLE_AVOID_CARS_STOP_FOR_PEDS_OBEY_LIGHTS,
+};
+
 class CTaskComplexEnterCar : public virtual CTaskComplex
 {
 public:
@@ -55,4 +66,10 @@ public:
     virtual ~CTaskComplexLeaveCar() {};
 
     virtual int GetTargetDoor() = 0;
+};
+
+class CTaskComplexCarDriveWander : public virtual CTaskComplex
+{
+public:
+    virtual ~CTaskComplexCarDriveWander() {};
 };

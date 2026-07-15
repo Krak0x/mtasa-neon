@@ -15,8 +15,10 @@
 #include <game/CTasks.h>
 #include <game/TaskAttack.h>
 #include <game/TaskBasic.h>
+#include <game/TaskCar.h>
 #include <game/TaskGoTo.h>
 #include <game/CAnimManager.h>
+#include "CDeathmatchVehicle.h"
 #include "CLuaPedDefs.h"
 
 #define MIN_CLIENT_REQ_REMOVEPEDFROMVEHICLE_CLIENTSIDE "1.3.0-9.04482"
@@ -68,6 +70,8 @@ void CLuaPedDefs::LoadFunctions()
         {"setPedWeaponAccuracy", ArgumentParser<SetPedWeaponAccuracy>},
         {"setPedGoTo", ArgumentParser<SetPedGoTo>},
         {"setPedShootAt", ArgumentParser<SetPedShootAt>},
+        {"setPedDriveWander", ArgumentParser<SetPedDriveWander>},
+        {"setPedMissionActor", ArgumentParser<SetPedMissionActor>},
         {"setPedBleeding", ArgumentParser<SetPedBleeding>},
         {"playPedVoiceLine", ArgumentParser<PlayPedVoiceLine>},
 
@@ -94,6 +98,7 @@ void CLuaPedDefs::LoadFunctions()
         {"isPedFrozen", IsPedFrozen},
         {"isPedFootBloodEnabled", IsPedFootBloodEnabled},
         {"getPedCameraRotation", GetPedCameraRotation},
+        {"isPedMissionActor", ArgumentParser<IsPedMissionActor>},
 
         {"getPedStat", GetPedStat},
         {"getPedOxygenLevel", GetPedOxygenLevel},
@@ -192,6 +197,7 @@ void CLuaPedDefs::AddClass(lua_State* luaVM)
     lua_classfunction(luaVM, "getWeaponSlot", "getPedWeaponSlot");
     lua_classfunction(luaVM, "getWalkingStyle", "getPedWalkingStyle");
     lua_classfunction(luaVM, "isBleeding", "isPedBleeding");
+    lua_classfunction(luaVM, "isMissionActor", "isPedMissionActor");
     lua_classfunction(luaVM, "isUsingNativeWalkingStyle", "isPedUsingNativeWalkingStyle");
 
     lua_classfunction(luaVM, "setCanBeKnockedOffBike", "setPedCanBeKnockedOffBike");
@@ -225,6 +231,8 @@ void CLuaPedDefs::AddClass(lua_State* luaVM)
     lua_classfunction(luaVM, "setWeaponAccuracy", "setPedWeaponAccuracy");
     lua_classfunction(luaVM, "setGoTo", "setPedGoTo");
     lua_classfunction(luaVM, "setShootAt", "setPedShootAt");
+    lua_classfunction(luaVM, "setDriveWander", "setPedDriveWander");
+    lua_classfunction(luaVM, "setMissionActor", "setPedMissionActor");
     lua_classfunction(luaVM, "setBleeding", "setPedBleeding");
     lua_classfunction(luaVM, "playVoiceLine", "playPedVoiceLine");
 
@@ -252,6 +260,7 @@ void CLuaPedDefs::AddClass(lua_State* luaVM)
     lua_classvariable(luaVM, "targetingMarker", "setPedTargetingMarkerEnabled", "isPedTargetingMarkerEnabled");
     lua_classvariable(luaVM, "footBlood", "setPedFootBloodEnabled", NULL);
     lua_classvariable(luaVM, "bleeding", "setPedBleeding", "isPedBleeding");
+    lua_classvariable(luaVM, "missionActor", "setPedMissionActor", "isPedMissionActor");
     lua_classvariable(luaVM, "targetCollision", nullptr, OOP_GetPedTargetCollision);
     lua_classvariable(luaVM, "targetEnd", nullptr, OOP_GetPedTargetEnd);
     lua_classvariable(luaVM, "targetStart", nullptr, OOP_GetPedTargetStart);
@@ -2697,6 +2706,81 @@ bool CLuaPedDefs::SetPedShootAt(CClientPed* ped, CVector target, std::optional<i
     // movement or ambient task competing with the script-requested firing burst.
     task->SetAsPedTask(ped->GetGamePlayer(), TASK_PRIORITY_PRIMARY, true);
     return true;
+}
+
+bool CLuaPedDefs::SetPedDriveWander(CClientPed* ped, CClientVehicle* vehicle, float speed, std::optional<std::variant<std::string, int>> drivingStyle)
+{
+    if (!ped->IsStreamedIn() || ped->IsDead() || !vehicle->IsStreamedIn() || vehicle->IsBlown() || !ped->GetGamePlayer() || !vehicle->GetGameVehicle() ||
+        (!ped->IsLocalPlayer() && !ped->IsLocalEntity() && !ped->IsSyncing()) || ped->GetOccupiedVehicle() != vehicle || !std::isfinite(speed) ||
+        speed < 0.0f || speed > 255.0f)
+    {
+        return false;
+    }
+
+    // Wander changes the vehicle autopilot, not just the passenger ped. Refuse
+    // to run it where another client owns the unoccupied vehicle, otherwise its
+    // next sync packet would overwrite the native road AI movement.
+    auto*      deathmatchVehicle = dynamic_cast<CDeathmatchVehicle*>(vehicle);
+    const bool ownsVehicle = vehicle->IsLocalEntity() || vehicle->GetOccupant(0) == ped || (deathmatchVehicle && deathmatchVehicle->IsSyncing());
+    if (!ownsVehicle || (vehicle->GetOccupant(0) && vehicle->GetOccupant(0) != ped))
+        return false;
+
+    int style = DRIVING_STYLE_STOP_FOR_CARS;
+    if (drivingStyle.has_value())
+    {
+        if (std::holds_alternative<int>(*drivingStyle))
+        {
+            style = std::get<int>(*drivingStyle);
+        }
+        else
+        {
+            const std::string& name = std::get<std::string>(*drivingStyle);
+            if (stricmp(name.c_str(), "stop_for_cars") == 0)
+                style = DRIVING_STYLE_STOP_FOR_CARS;
+            else if (stricmp(name.c_str(), "slow_down_for_cars") == 0)
+                style = DRIVING_STYLE_SLOW_DOWN_FOR_CARS;
+            else if (stricmp(name.c_str(), "avoid_cars") == 0)
+                style = DRIVING_STYLE_AVOID_CARS;
+            else if (stricmp(name.c_str(), "plough_through") == 0)
+                style = DRIVING_STYLE_PLOUGH_THROUGH;
+            else if (stricmp(name.c_str(), "stop_for_cars_ignore_lights") == 0)
+                style = DRIVING_STYLE_STOP_FOR_CARS_IGNORE_LIGHTS;
+            else if (stricmp(name.c_str(), "avoid_cars_obey_lights") == 0)
+                style = DRIVING_STYLE_AVOID_CARS_OBEY_LIGHTS;
+            else if (stricmp(name.c_str(), "avoid_cars_stop_for_peds_obey_lights") == 0)
+                style = DRIVING_STYLE_AVOID_CARS_STOP_FOR_PEDS_OBEY_LIGHTS;
+            else
+                return false;
+        }
+    }
+    if (style < DRIVING_STYLE_STOP_FOR_CARS || style > DRIVING_STYLE_AVOID_CARS_STOP_FOR_PEDS_OBEY_LIGHTS)
+        return false;
+
+    auto* task = g_pGame->GetTasks()->CreateTaskComplexCarDriveWander(vehicle->GetGameVehicle(), speed, style);
+    if (!task)
+        return false;
+
+    // This indefinite task owns the car's autopilot state until cancellation;
+    // primary replacement guarantees that its destructor restores that state.
+    task->SetAsPedTask(ped->GetGamePlayer(), TASK_PRIORITY_PRIMARY, true);
+    return true;
+}
+
+bool CLuaPedDefs::IsPedMissionActor(CClientPed* ped)
+{
+    // Player elements share CClientPed internals but must retain GTA's player
+    // classification; this policy is only for script-created ped elements.
+    return ped && ped->GetType() == CCLIENTPED && ped->IsMissionActor();
+}
+
+bool CLuaPedDefs::SetPedMissionActor(CClientPed* ped, bool enabled)
+{
+    if (!ped || ped->GetType() != CCLIENTPED)
+        return false;
+
+    // The policy is stored on the MTA element and reapplied after native model
+    // recreation, so callers may set it before the ped is streamed in.
+    return ped->SetMissionActor(enabled);
 }
 
 bool CLuaPedDefs::killPedTask(CClientPed* ped, taskType taskType, std::uint8_t taskNumber, std::optional<bool> gracefully)

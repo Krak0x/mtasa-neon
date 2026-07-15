@@ -1,10 +1,22 @@
 # MTA:SA Neon Engine
 
+[![Join the MTA:SA Neon Discord](https://img.shields.io/badge/Discord-Join%20MTA%3ASA%20Neon-5865F2?logo=discord&logoColor=white)](https://discord.com/invite/mgFRd2AzF8)
+
 MTA:SA Neon is an experimental fork of [Multi Theft Auto: San Andreas](https://github.com/multitheftauto/mtasa-blue), focused on prototyping advanced engine features and exploring changes that may be too early or too specialized for the upstream project.
 
 The repository preserves the complete upstream history and adds proof-of-concept work on top of it. Neon is not affiliated with or endorsed by the Multi Theft Auto team.
 
 Readers familiar with the historical [MTA:Eir](https://wiki.multitheftauto.com/wiki/MTA:Eir) project may recognize a related ambition: using an independent MTA:BLUE-derived codebase as a laboratory for deeper GTA:SA engine integration, expanded streaming and IMG workflows, reverse-engineered native features, and new scripting APIs. Neon is not a continuation of or affiliated with MTA:Eir; the comparison is about scope and experimental spirit.
+
+## Demos and media
+
+### Native CULL-zone editing
+
+An in-game demonstration of Neon's resource-controlled native CULL-zone editing workflow.
+
+[![Watch the native CULL-zone editing demo](https://img.youtube.com/vi/17QrE21uDgM/hqdefault.jpg)](https://www.youtube.com/watch?v=17QrE21uDgM)
+
+[Watch on YouTube](https://www.youtube.com/watch?v=17QrE21uDgM)
 
 ## MTA:SA vs MTA:SA Neon
 
@@ -39,7 +51,7 @@ Neon keeps MTA:SA's resource model and default gameplay behavior while lifting s
 | Local asset preview workflow | Build a resource and load the replacement | Experimental drag-and-drop DFF/TXD skin and IFP animation previews for developers |
 | Server-authoritative custom models | Client-local dynamic model allocations only | Stable resource-owned vehicle/object IDs mapped to per-client runtime slots, with synchronized lifecycle and native-parent fallback |
 | Model-native ped walking styles | No explicit synchronized model-native mode | Server/client Lua opt-in that follows skin changes and ped recreation |
-| Native ped task primitives | No direct resource API for these GTA tasks | Client-owned native go-to and coordinate-shooting tasks with verified combat parameters |
+| Native ped task primitives | No direct resource API for these GTA tasks | Client-owned native movement/combat/vehicle tasks plus persistent GTA mission-actor classification with verified layouts and lifecycles |
 | Per-object gang-tag rendering | Single-player tag gameplay disabled by MTA | Opt-in native Grove-material alpha for scripted tag objects without restoring gameplay progress |
 | SA-MP-style fast weapon strafe | Not available as a synchronized glitch | Optional `fastweaponstrafe` glitch, server-synchronized and disabled by default |
 | Neon diagnostics and stress tests | Not included | Reproducible resources for limits, rendering, extended-world systems, radar/F11 composition, model-registry lifecycle, IMG residency, native mirrors, and dense-entity profiling |
@@ -135,14 +147,19 @@ The mode follows skin changes, entity recreation, joins, and streaming. The OOP 
 | Function | Side | Description |
 | --- | --- | --- |
 | `setPedGoTo(ped, target [, movement, radius, slowdownRadius, timeout])` | Client | Replaces the owned ped's primary task with GTA's native go-to-and-stand-still task; movement is `walk`, `run`, or `sprint`. |
+| `setPedEnterVehicle(ped [, vehicle, seatOrPassenger])` | Client | Requests MTA's authoritative vehicle-entry lifecycle; an explicit passenger seat runs GTA's native enter-car-as-passenger task after server confirmation. |
+| `setPedExitVehicle(ped)` | Client | Requests an authoritative MTA vehicle exit; the ped's syncer runs GTA's native leave-car task after server confirmation. |
+| `setPedDriveWander(ped, vehicle, speed [, drivingStyle])` | Client | Assigns GTA's indefinite road-cruising task to an owned ped already occupying a vehicle owned by the same client. |
+| `setPedMissionActor(ped, enabled)` | Client | Persists GTA's `PED_MISSION` classification on a script ped across local native model recreation, restoring its previous AI state when disabled. |
+| `isPedMissionActor(ped)` | Client | Reports the locally persisted mission-actor policy for a script ped, including while its native model is streamed out. |
 | `setPedShootAt(ped, target [, duration, burstLength])` | Client | Replaces the owned ped's primary task with GTA's native coordinate `GunControl` firing task. |
 | `setPedWeaponShootingRate(ped, rate)` | Client | Sets GTA's persistent 0-255 shooting-rate byte used by native gun tasks. |
 | `setPedWeaponAccuracy(ped, accuracy)` | Client | Sets GTA's persistent 0-255 weapon-accuracy byte used for shot spread. |
 | `setObjectGangTagAlpha(object, alpha)` | Client | Sets a logical 0-255 Grove-material alpha on a streamed native gang-tag object, or clears the opt-in override when `alpha` is `false`. |
 
-All five functions return a boolean. Ped functions require a living, streamed ped simulated by the calling client: the local player, a client-local ped, or a server ped for which that client is the current syncer. `setPedGoTo` defaults to `walk`, a `0.5` target radius, a `2.0` slowdown radius, and an untimed task; timeout `-1` selects the SCM-compatible 20-second timeout. `setPedShootAt` defaults to 1,000 ms and a burst length of five; every negative duration is indefinite, matching GTA's native task.
+All ten functions return a boolean. Task and combat functions require a living, streamed ped simulated by the calling client: the local player, a client-local ped, or a server ped for which that client is the current syncer. `setPedMissionActor` and `isPedMissionActor` accept only script ped elements, never players; their client-local policy may be set while the native model is streamed out and is reapplied when it is recreated. `setPedGoTo` defaults to `walk`, a `0.5` target radius, a `2.0` slowdown radius, and an untimed task; timeout `-1` selects the SCM-compatible 20-second timeout. `setPedEnterVehicle` and `setPedExitVehicle` are existing MTA APIs rather than duplicate task constructors: Neon now verifies and locks their underlying `CTaskComplexEnterCarAsPassenger` and `CTaskComplexLeaveCar` ABIs while preserving MTA's server-confirmed occupant lifecycle. MTA seat `0` is the driver and seat `1` is the first passenger, corresponding to SCM passenger index `0`. `setPedDriveWander` accepts a finite speed from `0` through `255` and a driving style integer from `0` through `6`, or one of `stop_for_cars`, `slow_down_for_cars`, `avoid_cars`, `plough_through`, `stop_for_cars_ignore_lights`, `avoid_cars_obey_lights`, and `avoid_cars_stop_for_peds_obey_lights`; its task is indefinite and the driver seat must be free or occupied by the target ped. `setPedShootAt` defaults to 1,000 ms and a burst length of five; every negative duration is indefinite, matching GTA's native task. The OOP vehicle aliases are `ped:setEnterVehicle(...)`, `ped:setExitVehicle()`, and `ped:setDriveWander(...)`.
 
-The task calls replace the primary task but do not yet provide resource-owned handles, completion events, or reconstruction after syncer migration. Gang-tag alpha currently applies to streamed models `1490` and `1524` through `1531`; resources must reapply it after stream-in or game-object recreation and clear it with `false` when relinquishing a surviving object. The OOP equivalents are `ped:setGoTo(...)`, `ped:setShootAt(...)`, `ped:setWeaponShootingRate(rate)`, `ped:setWeaponAccuracy(accuracy)`, and `object:setGangTagAlpha(alpha)`. See [STORY_RUNTIME.md](./STORY_RUNTIME.md) for the verified GTA behavior and current architectural limits.
+The task calls do not yet provide resource-owned handles, completion events, or reconstruction after syncer migration. Mission-actor policy is client-local and last-writer-wins, so a synchronized resource should replicate the intended value to every client and clear it before relinquishing a surviving ped. Gang-tag alpha currently applies to streamed models `1490` and `1524` through `1531`; resources must reapply it after stream-in or game-object recreation and clear it with `false` when relinquishing a surviving object. The remaining OOP equivalents are `ped:setGoTo(...)`, `ped:setShootAt(...)`, `ped:setWeaponShootingRate(rate)`, `ped:setWeaponAccuracy(accuracy)`, `ped:setMissionActor(enabled)`, `ped:isMissionActor()`, and `object:setGangTagAlpha(alpha)`. See [STORY_RUNTIME.md](./STORY_RUNTIME.md) for the verified GTA behavior and current architectural limits.
 
 ### Existing API extensions
 

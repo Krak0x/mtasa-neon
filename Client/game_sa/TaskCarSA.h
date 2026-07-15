@@ -24,6 +24,7 @@ typedef DWORD AnimationId;
 #define FUNC_CTaskComplexEnterCarAsPassenger__Constructor 0x640340
 #define FUNC_CTaskComplexEnterBoatAsDriver__Constructor   0x63B5E0
 #define FUNC_CTaskComplexLeaveCar__Constructor            0x63B8C0
+#define FUNC_CTaskComplexCarDriveWander__Constructor      0x63CB10
 
 // ##############################################################################
 // ## Name:    CTaskComplexEnterCar
@@ -58,6 +59,9 @@ public:
     float                         m_fCruiseSpeed;
     int                           m_iEnterCarStartTime;
 };
+// The native clone allocates exactly 0x50 bytes. Keeping this assertion beside
+// the interface prevents later field edits from silently corrupting GTA's ctor.
+static_assert(sizeof(CTaskComplexEnterCarSAInterface) == 0x50, "Invalid CTaskComplexEnterCarSAInterface size");
 
 class CTaskComplexEnterCarSA : public virtual CTaskComplexSA
 {
@@ -115,6 +119,7 @@ class CTaskComplexEnterCarAsPassengerSAInterface : public CTaskComplexEnterCarSA
 {
 public:
 };
+static_assert(sizeof(CTaskComplexEnterCarAsPassengerSAInterface) == 0x50, "Invalid CTaskComplexEnterCarAsPassengerSAInterface size");
 
 class CTaskComplexEnterCarAsPassengerSA : public virtual CTaskComplexEnterCarSA, public virtual CTaskComplexEnterCarAsPassenger
 {
@@ -161,6 +166,11 @@ public:
 
     bool m_bDie;
 
+    // GTA owns this helper and destroys it with the task. The original 0x34
+    // layout stores it at +0x1C; omitting it shifts every trailing field and
+    // makes the native constructor/destructor operate on the wrong offsets.
+    CTaskUtilityLineUpPedWithCar* m_pTaskUtilityLineUpPedWithCar;
+
     unsigned char m_nDoorFlagsSet;
     unsigned char m_nNumGettingInSet;
 
@@ -170,12 +180,13 @@ public:
 
     unsigned char m_bIsInAir;
 };
+static_assert(sizeof(CTaskComplexLeaveCarSAInterface) == 0x34, "Invalid CTaskComplexLeaveCarSAInterface size");
 
 class CTaskComplexLeaveCarSA : public virtual CTaskComplexSA, public virtual CTaskComplexLeaveCar
 {
 public:
     CTaskComplexLeaveCarSA() {};
-    CTaskComplexLeaveCarSA(CVehicle* pTargetVehicle, const int iTargetDoor = 0, const int iDelayTime = 0, const bool bSensibleLeaveCar = true,
+    CTaskComplexLeaveCarSA(CVehicle* pTargetVehicle, const int iTargetDoor = 0xFF, const int iDelayTime = 0, const bool bSensibleLeaveCar = true,
                            const bool bForceGetOut = false);
 
     int GetTargetDoor()
@@ -183,4 +194,34 @@ public:
         CTaskComplexLeaveCarSAInterface* thisInterface = (CTaskComplexLeaveCarSAInterface*)GetInterface();
         return thisInterface->m_iTargetDoor;
     }
+};
+
+// ##############################################################################
+// ## Name:    CTaskComplexCarDriveWander
+// ## Purpose: Lets GTA's road AI cruise a vehicle indefinitely
+// ##############################################################################
+
+class CTaskComplexCarDriveWanderSAInterface : public CTaskComplexSAInterface
+{
+public:
+    CVehicle* m_pTargetVehicle;
+    float     m_fCruiseSpeed;
+    int       m_iDesiredCarModel;
+    int       m_iCarDrivingStyle;
+
+    bool          m_bAsDriver;
+    unsigned char m_nOriginalDrivingStyle;
+    signed char   m_nOriginalMission;
+    unsigned char m_nOriginalSpeed;
+    bool          m_bIsCarSetUp;
+};
+// Handler 05D2 and the native clone both allocate exactly 0x24 bytes. The
+// derived Wander task adds no fields to its car-drive base.
+static_assert(sizeof(CTaskComplexCarDriveWanderSAInterface) == 0x24, "Invalid CTaskComplexCarDriveWanderSAInterface size");
+
+class CTaskComplexCarDriveWanderSA : public virtual CTaskComplexSA, public virtual CTaskComplexCarDriveWander
+{
+public:
+    CTaskComplexCarDriveWanderSA() {};
+    CTaskComplexCarDriveWanderSA(CVehicle* pTargetVehicle, float fSpeed, int iDrivingStyle);
 };

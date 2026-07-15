@@ -84,6 +84,7 @@ public:
     LUA_DECLARE(IsPedOnFire);
     LUA_DECLARE(GetPedOxygenLevel);
     LUA_DECLARE(IsPedDead);
+    static bool IsPedMissionActor(CClientPed* ped);
 
     LUA_DECLARE(SetPedRotation);
     LUA_DECLARE(SetPedCanBeKnockedOffBike);
@@ -121,6 +122,8 @@ public:
     static bool SetPedGoTo(CClientPed* ped, CVector target, std::optional<std::string> movement, std::optional<float> radius,
                            std::optional<float> slowdownRadius, std::optional<int> timeout);
     static bool SetPedShootAt(CClientPed* ped, CVector target, std::optional<int> duration, std::optional<int> burstLength);
+    static bool SetPedDriveWander(CClientPed* ped, CClientVehicle* vehicle, float speed, std::optional<std::variant<std::string, int>> drivingStyle);
+    static bool SetPedMissionActor(CClientPed* ped, bool enabled);
     static bool IsPedBleeding(CClientPed* ped);
     static bool SetPedBleeding(CClientPed* ped, bool bleeding);
 

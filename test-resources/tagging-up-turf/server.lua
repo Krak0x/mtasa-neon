@@ -10,10 +10,16 @@ local mission = {
     completedTags = {},
     sprayCooldown = {},
     timers = {},
+    demoLeaveSerial = 0,
+    demoLeave = nil,
     demoWalkSerial = 0,
     demoWalk = nil,
     demoShootSerial = 0,
     demoShoot = nil,
+    demoEnterSerial = 0,
+    demoEnter = nil,
+    ballasDepartureSerial = 0,
+    ballasDeparture = nil,
 }
 
 -- The server owns every stage transition and spray increment so several clients can
@@ -166,6 +172,21 @@ local function setStage(stage, extra)
     broadcastState(extra)
 end
 
+local function cancelDemoLeave(reason)
+    local leave = mission.demoLeave
+    if not leave then
+        return
+    end
+
+    mission.demoLeave = nil
+    if isTimer(leave.guardTimer) then
+        killTimer(leave.guardTimer)
+    end
+    if isElement(mission.leader) then
+        triggerClientEvent(mission.leader, "tagup:sweetDemoLeaveCancel", resourceRoot, leave.id, reason or "server_cancelled")
+    end
+end
+
 local function cancelDemoWalk(reason)
     local walk = mission.demoWalk
     if not walk then
@@ -199,6 +220,41 @@ local function cancelDemoShoot(reason)
     end
     if isElement(mission.leader) then
         triggerClientEvent(mission.leader, "tagup:sweetDemoShootCancel", resourceRoot, shoot.id, reason or "server_cancelled")
+    end
+end
+
+local function cancelDemoEnter(reason)
+    local enter = mission.demoEnter
+    if not enter then
+        return
+    end
+
+    mission.demoEnter = nil
+    if isTimer(enter.guardTimer) then
+        killTimer(enter.guardTimer)
+    end
+    if isElement(mission.leader) then
+        triggerClientEvent(mission.leader, "tagup:sweetReturnEnterCancel", resourceRoot, enter.id, reason or "server_cancelled")
+    end
+end
+
+local function cancelBallasDeparture(reason)
+    local departure = mission.ballasDeparture
+    if not departure then
+        return
+    end
+
+    mission.ballasDeparture = nil
+    if isTimer(departure.guardTimer) then
+        killTimer(departure.guardTimer)
+    end
+    if isTimer(departure.postStartTimer) then
+        killTimer(departure.postStartTimer)
+    end
+    for _, player in ipairs(mission.party) do
+        if isElement(player) then
+            triggerClientEvent(player, "tagup:ballasDepartureCancel", resourceRoot, departure.id, reason or "server_cancelled")
+        end
     end
 end
 
@@ -288,13 +344,32 @@ local function currentGroupComplete()
     return true
 end
 
-local function advanceAfterTags()
+local function advanceAfterTags(extra)
     if mission.stage == "tags_idlewood" then
-        setStage("return_car")
+        setStage("return_car", extra)
     elseif mission.stage == "tags_ballas" then
-        setStage("rooftop")
+        setStage("rooftop", extra)
     elseif mission.stage == "rooftop" then
-        setStage("return_after_roof")
+        -- The original mission later replaces Wander with a recorded-car
+        -- playback. Until that playback service is ported, stop 05D2 and place
+        -- the same Greenwood at the SCM return-cut position so the existing
+        -- final drive remains playable without pretending this is native.
+        if isElement(mission.leader) then
+            triggerClientEvent(mission.leader, "tagup:stopBallasWander", resourceRoot)
+        end
+        rememberTimer(setTimer(function()
+            local vehicle = mission.entities.vehicle
+            if not mission.running or mission.stage ~= "rooftop" or not isElement(vehicle) then
+                return
+            end
+            local position = TAGUP.sweetReturnPosition
+            setElementPosition(vehicle, position[1], position[2], position[3])
+            setElementRotation(vehicle, 0, 0, position[4])
+            setElementVelocity(vehicle, 0, 0, 0)
+            warpSweetIntoFirstFreeSeat()
+            outputDebugString("[tagging-up-turf] Lua substitute: stopped 05D2 and placed the Greenwood at the future recorded-car return point")
+            setStage("return_after_roof", extra)
+        end, 400, 1))
     end
 end
 
@@ -312,21 +387,24 @@ local function failMission(reason)
     end, 3500, 1))
 end
 
-finishMission = function(passed)
+finishMission = function(passed, traceExtra)
     if not mission.running or mission.finishing then
         return
     end
 
     mission.finishing = true
+    cancelDemoLeave("mission_finished")
     cancelDemoWalk("mission_finished")
     cancelDemoShoot("mission_finished")
+    cancelDemoEnter("mission_finished")
+    cancelBallasDeparture("mission_finished")
     clearMissionTimers()
     if passed then
         mission.stage = "complete"
         -- Failure paths already log their terminal state; keep successful runs
         -- equally visible so a complete manual mission can be audited afterward.
         outputDebugString(("[tagging-up-turf] Mission passed: rewarding %d participant(s)."):format(#mission.party))
-        broadcastState()
+        broadcastState(traceExtra)
         for _, player in ipairs(mission.party) do
             if isElement(player) then
                 givePlayerMoney(player, 500)
@@ -354,8 +432,11 @@ finishMission = function(passed)
         mission.tagProgress = {}
         mission.completedTags = {}
         mission.sprayCooldown = {}
+        mission.demoLeave = nil
         mission.demoWalk = nil
         mission.demoShoot = nil
+        mission.demoEnter = nil
+        mission.ballasDeparture = nil
     end, delay, 1)
 end
 
@@ -406,6 +487,9 @@ local function startMission(requester)
     local sweet = createPed(TAGUP.sweetModel, unpack(TAGUP.sweetStart))
     setElementDimension(sweet, TAGUP.dimension)
     setElementData(sweet, "tagup.sweet", true, true)
+    -- GTA's CREATE_CHAR marks story actors as PED_MISSION. Replicate the
+    -- policy so every client applies it before becoming Sweet's syncer.
+    setElementData(sweet, TAGUP.missionActorData, true, true)
     mission.entities.sweet = sweet
     setElementSyncer(sweet, requester)
 
@@ -461,55 +545,63 @@ addCommandHandler("tagupskip", function(player)
             setElementFrozen(member, false)
         end
         warpSweetIntoFirstFreeSeat()
-        setStage("enter_car")
+        setStage("enter_car", {traceSkipped = true})
     elseif mission.stage == "enter_car" then
         if warpSweetIntoFirstFreeSeat() then
-            setStage("drive_idlewood")
+            setStage("drive_idlewood", {traceSkipped = true})
         end
     elseif mission.stage == "drive_idlewood" then
-        setStage("demo")
+        setStage("demo", {traceSkipped = true})
         triggerEvent("tagup:beginDemo", resourceRoot)
     elseif mission.stage == "demo" then
+        cancelDemoLeave("stage_skipped")
         cancelDemoWalk("stage_skipped")
         cancelDemoShoot("stage_skipped")
-        setStage("tags_idlewood")
+        cancelDemoEnter("stage_skipped")
+        if isElement(mission.entities.sweet) then
+            removePedFromVehicle(mission.entities.sweet)
+        end
+        -- Debug skips do not execute the native task trace. Seat Sweet immediately
+        -- so later skip stages remain usable without weakening the real path.
+        warpSweetIntoFirstFreeSeat()
+        setStage("tags_idlewood", {traceSkipped = true})
     elseif mission.stage == "tags_idlewood" or mission.stage == "tags_ballas" or mission.stage == "rooftop" then
         for _, id in ipairs(activeTagIds()) do
             mission.completedTags[id] = true
             mission.tagProgress[id] = 1
             replaceTagObject(id)
         end
-        advanceAfterTags()
+        advanceAfterTags({traceSkipped = true})
     elseif mission.stage == "return_car" then
-        setStage("drive_ballas")
+        setStage("drive_ballas", {traceSkipped = true})
     elseif mission.stage == "drive_ballas" then
-        setStage("tags_ballas")
+        setStage("tags_ballas", {traceSkipped = true})
+        spawnBallas()
+    elseif mission.stage == "ballas_departure" then
+        cancelBallasDeparture("stage_skipped")
+        for _, member in ipairs(mission.party) do
+            removePedFromVehicle(member)
+        end
+        setStage("tags_ballas", {traceSkipped = true})
         spawnBallas()
     elseif mission.stage == "return_after_roof" then
-        setStage("drive_home")
+        setStage("drive_home", {traceSkipped = true})
     elseif mission.stage == "drive_home" then
-        finishMission(true)
+        finishMission(true, {traceSkipped = true})
     end
 end)
 
-addEvent("tagup:beginDemo", false)
-addEventHandler("tagup:beginDemo", resourceRoot, function()
-    if not mission.running or mission.stage ~= "demo" then
-        return
-    end
-    local sweet = mission.entities.sweet
-    if not isElement(sweet) or not isElement(mission.leader) then
-        return failMission("Sweet ou le leader n'est plus disponible pour la demonstration.")
-    end
-
-    cancelDemoWalk("replaced")
-    cancelDemoShoot("replaced")
-    removePedFromVehicle(sweet)
+local function startDemoWalk(sweet)
     local profile = TAGUP.sweetDemoWalk
-    setElementInterior(sweet, 0)
-    setElementDimension(sweet, TAGUP.dimension)
-    setElementPosition(sweet, profile.start.x, profile.start.y, profile.start.z)
-    setElementRotation(sweet, 0, 0, profile.start.heading)
+    local exitX, exitY, exitZ = getElementPosition(sweet)
+    local _, _, exitHeading = getElementRotation(sweet)
+    local deltaX, deltaY = profile.target.x - exitX, profile.target.y - exitY
+    local distance2D = math.sqrt(deltaX * deltaX + deltaY * deltaY)
+    local distance3D = tagupDistance3D(exitX, exitY, exitZ, profile.target.x, profile.target.y, profile.target.z)
+
+    -- The native leave-car task owns Sweet's final position and heading. Keeping
+    -- them avoids a visible snap and mirrors the SCM sequence, which assigns the
+    -- following go-to task from the actor's natural vehicle-exit position.
     setElementSyncer(sweet, mission.leader)
 
     mission.demoWalkSerial = mission.demoWalkSerial + 1
@@ -525,8 +617,95 @@ addEventHandler("tagup:beginDemo", resourceRoot, function()
         failMission("La marche native de Sweet a depasse le delai de garde.")
     end, profile.guardTimeout, 1, walk.id))
 
-    outputDebugString(("[tagging-up-turf] Starting Sweet native go-to #%d for syncer %s"):format(walk.id, getPlayerName(mission.leader)))
+    local diagnostic =
+        ("[tagging-up-turf] Starting Sweet native go-to #%d from natural exit=(%.2f, %.2f, %.2f, heading=%.1f) to target=(%.2f, %.2f, %.2f), distance2D=%.2f m, distance3D=%.2f m, syncer=%s")
+            :format(walk.id, exitX, exitY, exitZ, exitHeading, profile.target.x, profile.target.y, profile.target.z, distance2D, distance3D,
+                    getPlayerName(mission.leader))
+    outputDebugString(diagnostic)
     triggerClientEvent(mission.leader, "tagup:sweetDemoWalkStart", resourceRoot, walk.id, sweet, profile)
+end
+
+local function tryCompleteDemoLeave()
+    local leave = mission.demoLeave
+    if not leave or not isElement(leave.ped) or not leave.clientObserved or not leave.serverExited or getPedOccupiedVehicle(leave.ped) then
+        return
+    end
+
+    local ped, leaveId = leave.ped, leave.id
+    outputDebugString(("[tagging-up-turf] Sweet native leave-car #%d confirmed by task observation and server vehicle state"):format(leaveId))
+    cancelDemoLeave("completed")
+    startDemoWalk(ped)
+end
+
+addEvent("tagup:beginDemo", false)
+addEventHandler("tagup:beginDemo", resourceRoot, function()
+    if not mission.running or mission.stage ~= "demo" then
+        return
+    end
+    local sweet, vehicle = mission.entities.sweet, mission.entities.vehicle
+    if not isElement(sweet) or not isElement(vehicle) or not isElement(mission.leader) then
+        return failMission("Sweet, la Greenwood ou le leader n'est plus disponible pour la demonstration.")
+    end
+    if getPedOccupiedVehicle(sweet) ~= vehicle then
+        return failMission("Sweet n'est plus dans la Greenwood avant sa sortie native.")
+    end
+
+    cancelDemoLeave("replaced")
+    cancelDemoWalk("replaced")
+    cancelDemoShoot("replaced")
+    setElementSyncer(sweet, mission.leader)
+
+    mission.demoLeaveSerial = mission.demoLeaveSerial + 1
+    local leave = {
+        id = mission.demoLeaveSerial,
+        ped = sweet,
+        vehicle = vehicle,
+        clientObserved = false,
+        serverExited = false,
+    }
+    mission.demoLeave = leave
+    leave.guardTimer = rememberTimer(setTimer(function(expectedId)
+        local active = mission.demoLeave
+        if not mission.running or mission.stage ~= "demo" or not active or active.id ~= expectedId then
+            return
+        end
+        outputDebugString(("[tagging-up-turf] Sweet native leave-car #%d exceeded the %d ms server guard"):format(
+                              expectedId, TAGUP.sweetDemoLeave.guardTimeout), 1)
+        cancelDemoLeave("server_timeout")
+        failMission("La sortie native de Sweet a depasse le delai de garde.")
+    end, TAGUP.sweetDemoLeave.guardTimeout, 1, leave.id))
+
+    outputDebugString(("[tagging-up-turf] Requesting Sweet native leave-car #%d from syncer %s"):format(leave.id, getPlayerName(mission.leader)))
+    triggerClientEvent(mission.leader, "tagup:sweetDemoLeaveStart", resourceRoot, leave.id, sweet, vehicle, TAGUP.sweetDemoLeave)
+end)
+
+addEvent("tagup:sweetDemoLeaveResult", true)
+addEventHandler("tagup:sweetDemoLeaveResult", resourceRoot, function(leaveId, ped, vehicle, result, details)
+    local player = client
+    local leave = mission.demoLeave
+    if source ~= resourceRoot or not mission.running or mission.stage ~= "demo" or player ~= mission.leader or not isMissionPlayer(player) or
+        not leave or leave.id ~= tonumber(leaveId) or leave.ped ~= ped or leave.vehicle ~= vehicle or ped ~= mission.entities.sweet or
+        vehicle ~= mission.entities.vehicle or not isElement(ped) or not isElement(vehicle) then
+        outputDebugString("[tagging-up-turf] Rejected stale or unauthorized Sweet leave-car result", 2)
+        return
+    end
+
+    details = tostring(details or "")
+    outputDebugString(("[tagging-up-turf] Sweet native leave-car #%d result=%s (%s)"):format(leave.id, tostring(result), details:sub(1, 240)))
+    if result ~= "exited" then
+        cancelDemoLeave("client_" .. tostring(result))
+        return failMission("La sortie native de Sweet a echoue: " .. tostring(result))
+    end
+    if getElementSyncer(ped) ~= player then
+        cancelDemoLeave("invalid_syncer")
+        return failMission("Le resultat de sortie de Sweet ne vient plus de son syncer.")
+    end
+
+    leave.clientObserved = true
+    if getPedOccupiedVehicle(ped) ~= vehicle then
+        leave.serverExited = true
+    end
+    tryCompleteDemoLeave()
 end)
 
 local function startDemoShoot(ped, distanceFromWalkTarget)
@@ -553,6 +732,62 @@ local function startDemoShoot(ped, distanceFromWalkTarget)
     outputDebugString(("[tagging-up-turf] Sweet go-to accepted at %.2f m; starting native shoot #%d (duration=%d, burst=%d)"):format(
         distanceFromWalkTarget, shoot.id, profile.duration, profile.burstLength))
     triggerClientEvent(mission.leader, "tagup:sweetDemoShootStart", resourceRoot, shoot.id, ped, demo, profile)
+end
+
+local function tryCompleteSweetReturnEnter()
+    local enter = mission.demoEnter
+    if not enter or not enter.clientObserved or not enter.serverEntered or not isElement(enter.ped) or not isElement(enter.vehicle) or
+        getPedOccupiedVehicle(enter.ped) ~= enter.vehicle or getPedOccupiedVehicleSeat(enter.ped) ~= enter.seat then
+        return
+    end
+
+    outputDebugString(("[tagging-up-turf] Sweet native passenger entry #%d confirmed by task observation and server vehicle state (seat=%d)"):format(
+                          enter.id, enter.seat))
+    cancelDemoEnter("completed")
+    broadcastState({message = "Sweet est remonte dans la Greenwood."})
+end
+
+local function startSweetReturnEnter(ped)
+    local vehicle = mission.entities.vehicle
+    local profile = TAGUP.sweetReturnEnter
+    if not isElement(ped) or not isElement(vehicle) or not isElement(mission.leader) then
+        return failMission("Sweet, la Greenwood ou le leader a disparu avant l'entree passager native.")
+    end
+    if getPedOccupiedVehicle(ped) then
+        return failMission("Sweet occupe deja un vehicule avant l'entree passager native.")
+    end
+    if getVehicleOccupant(vehicle, profile.seat) then
+        return failMission("Le siege passager de Sweet est deja occupe.")
+    end
+
+    cancelDemoEnter("replaced")
+    setElementSyncer(ped, mission.leader)
+    mission.demoEnterSerial = mission.demoEnterSerial + 1
+    local enter = {
+        id = mission.demoEnterSerial,
+        ped = ped,
+        vehicle = vehicle,
+        seat = profile.seat,
+        requestedAt = getTickCount(),
+        clientObserved = false,
+        serverEntered = false,
+    }
+    mission.demoEnter = enter
+    enter.guardTimer = rememberTimer(setTimer(function(expectedId)
+        local active = mission.demoEnter
+        if not mission.running or not active or active.id ~= expectedId or
+            (mission.stage ~= "tags_idlewood" and mission.stage ~= "return_car") then
+            return
+        end
+        outputDebugString(("[tagging-up-turf] Sweet native passenger entry #%d exceeded the %d ms server guard"):format(
+                              expectedId, profile.guardTimeout), 1)
+        cancelDemoEnter("server_timeout")
+        failMission("L'entree passager native de Sweet a depasse le delai de garde.")
+    end, profile.guardTimeout, 1, enter.id))
+
+    outputDebugString(("[tagging-up-turf] Requesting Sweet native passenger entry #%d (SCM seat=0, MTA seat=%d, SCM timeout=%d ms) from syncer %s"):format(
+                          enter.id, enter.seat, profile.scmTimeout, getPlayerName(mission.leader)))
+    triggerClientEvent(mission.leader, "tagup:sweetReturnEnterStart", resourceRoot, enter.id, ped, vehicle, profile)
 end
 
 addEvent("tagup:sweetDemoWalkResult", true)
@@ -690,9 +925,137 @@ addEventHandler("tagup:sweetDemoShootObserved", resourceRoot, function(shootId, 
 
             cancelDemoShoot("completed_after_scm_wait")
             outputDebugString("[tagging-up-turf] SCM WAIT 1000 complete; advancing without the not-yet-ported checkout animation, audio, or camera")
-            setStage("tags_idlewood")
+            -- SWEET1 releases the player to spray the two tags while Sweet walks
+            -- back to the Greenwood. Keep both operations concurrent.
+            setStage("tags_idlewood", {deferTraceStep = true})
+            startSweetReturnEnter(completed.ped)
         end, profile.postCompletionWait, 1, active.id))
     end, profile.progressInterval, 0, shoot.id))
+end)
+
+local function allMissionPlayersExitedBallasVehicle(departure)
+    for _, player in ipairs(mission.party) do
+        if isElement(player) and not departure.exitedPlayers[player] then
+            return false
+        end
+    end
+    return true
+end
+
+local function tryStartBallasWander()
+    local departure = mission.ballasDeparture
+    local sweet, vehicle = mission.entities.sweet, mission.entities.vehicle
+    if not departure or departure.wanderRequested or not allMissionPlayersExitedBallasVehicle(departure) then
+        return
+    end
+    if not isElement(sweet) or not isElement(vehicle) or getVehicleController(vehicle) or getPedOccupiedVehicle(sweet) ~= vehicle then
+        cancelBallasDeparture("invalid_wander_state")
+        return failMission("La Greenwood n'est pas prete pour le depart natif de Sweet.")
+    end
+
+    -- The ped task drives the vehicle autopilot, so the same persistent client
+    -- must own both streams for ordinary MTA synchronization to carry 05D2.
+    setElementSyncer(sweet, mission.leader, true, true)
+    setElementSyncer(vehicle, mission.leader, true, true)
+    departure.wanderRequested = true
+    departure.wanderRequestedAt = getTickCount()
+    outputDebugString(("[tagging-up-turf] All players exited; requesting 05D2 DriveWander #%d (speed=%.1f, style=%s) from %s"):format(
+                          departure.id, TAGUP.ballasDeparture.speed, TAGUP.ballasDeparture.drivingStyle, getPlayerName(mission.leader)))
+    triggerClientEvent(mission.leader, "tagup:ballasDriveWanderStart", resourceRoot, departure.id, sweet, vehicle, TAGUP.ballasDeparture)
+end
+
+local function startBallasDeparture()
+    local vehicle, sweet = mission.entities.vehicle, mission.entities.sweet
+    if not isElement(vehicle) or not isElement(sweet) then
+        return failMission("Sweet ou la Greenwood a disparu a l'arrivee Ballas.")
+    end
+
+    cancelBallasDeparture("replaced")
+    mission.ballasDepartureSerial = mission.ballasDepartureSerial + 1
+    local departure = {
+        id = mission.ballasDepartureSerial,
+        vehicle = vehicle,
+        ped = sweet,
+        exitedPlayers = {},
+        clientExitReports = {},
+        requestedAt = getTickCount(),
+    }
+    mission.ballasDeparture = departure
+    setStage("ballas_departure", {deferTraceStep = true})
+
+    departure.guardTimer = rememberTimer(setTimer(function(expectedId)
+        local active = mission.ballasDeparture
+        if not mission.running or mission.stage ~= "ballas_departure" or not active or active.id ~= expectedId then
+            return
+        end
+        cancelBallasDeparture("server_timeout")
+        failMission("La sequence native de depart de Sweet a depasse le delai de garde.")
+    end, TAGUP.ballasDeparture.guardTimeout, 1, departure.id))
+
+    for _, player in ipairs(mission.party) do
+        if isElement(player) then
+            triggerClientEvent(player, "tagup:ballasPlayerExitStart", resourceRoot, departure.id, vehicle, TAGUP.ballasDeparture)
+        end
+    end
+end
+
+addEvent("tagup:ballasPlayerExitResult", true)
+addEventHandler("tagup:ballasPlayerExitResult", resourceRoot, function(departureId, vehicle, result, details)
+    local player = client
+    local departure = mission.ballasDeparture
+    if source ~= resourceRoot or not mission.running or mission.stage ~= "ballas_departure" or not departure or
+        departure.id ~= tonumber(departureId) or departure.vehicle ~= vehicle or vehicle ~= mission.entities.vehicle or not isMissionPlayer(player) then
+        outputDebugString("[tagging-up-turf] Rejected stale or unauthorized Ballas exit result", 2)
+        return
+    end
+
+    outputDebugString(("[tagging-up-turf] Ballas departure #%d player=%s exit=%s (%s)"):format(
+                          departure.id, getPlayerName(player), tostring(result), tostring(details or ""):sub(1, 180)))
+    if result ~= "exited" and result ~= "already_out" then
+        cancelBallasDeparture("client_exit_" .. tostring(result))
+        return failMission("La sortie native d'un membre de l'equipe a echoue: " .. tostring(result))
+    end
+    departure.clientExitReports[player] = true
+    if getPedOccupiedVehicle(player) ~= vehicle then
+        departure.exitedPlayers[player] = true
+        tryStartBallasWander()
+    else
+        outputDebugString(("[tagging-up-turf] Waiting for server onVehicleExit for %s"):format(getPlayerName(player)))
+    end
+end)
+
+addEvent("tagup:ballasDriveWanderResult", true)
+addEventHandler("tagup:ballasDriveWanderResult", resourceRoot, function(departureId, ped, vehicle, result, details)
+    local player = client
+    local departure = mission.ballasDeparture
+    if source ~= resourceRoot or not mission.running or mission.stage ~= "ballas_departure" or player ~= mission.leader or not departure or
+        departure.id ~= tonumber(departureId) or departure.ped ~= ped or departure.vehicle ~= vehicle or ped ~= mission.entities.sweet or
+        vehicle ~= mission.entities.vehicle then
+        outputDebugString("[tagging-up-turf] Rejected stale or unauthorized DriveWander result", 2)
+        return
+    end
+
+    outputDebugString(("[tagging-up-turf] Sweet 05D2 #%d result=%s (%s)"):format(
+                          departure.id, tostring(result), tostring(details or ""):sub(1, 220)))
+    if result ~= "observed" then
+        cancelBallasDeparture("client_wander_" .. tostring(result))
+        return failMission("Le depart natif de Sweet a echoue: " .. tostring(result))
+    end
+    if departure.wanderObserved or getElementSyncer(ped) ~= player or getElementSyncer(vehicle) ~= player or getVehicleController(vehicle) then
+        cancelBallasDeparture("invalid_wander_observation")
+        return failMission("L'observation 05D2 ne vient pas du double syncer attendu.")
+    end
+
+    departure.wanderObserved = true
+    departure.postStartTimer = rememberTimer(setTimer(function(expectedId)
+        local active = mission.ballasDeparture
+        if not mission.running or mission.stage ~= "ballas_departure" or not active or active.id ~= expectedId then
+            return
+        end
+        cancelBallasDeparture("keep_wandering")
+        setStage("tags_ballas")
+        spawnBallas()
+    end, TAGUP.ballasDeparture.postStartWait, 1, departure.id))
 end)
 
 addEvent("tagup:vehicleReady", true)
@@ -719,15 +1082,17 @@ addEventHandler("tagup:vehicleReady", resourceRoot, function(kind)
             triggerEvent("tagup:beginDemo", resourceRoot)
         end
     elseif kind == "returned" and mission.stage == "return_car" and isPartyInVehicle() then
-        warpSweetIntoFirstFreeSeat()
-        setStage("drive_ballas")
+        if getPedOccupiedVehicle(mission.entities.sweet) == vehicle and getPedOccupiedVehicleSeat(mission.entities.sweet) == TAGUP.sweetReturnEnter.seat then
+            setStage("drive_ballas")
+        elseif mission.demoEnter then
+            broadcastState({message = "Attendez que Sweet finisse de monter."})
+        else
+            failMission("Sweet n'est pas dans la Greenwood apres son entree passager native.")
+        end
     elseif kind == "ballas" and mission.stage == "drive_ballas" then
         local x, y, z = getElementPosition(vehicle)
         if tagupDistance3D(x, y, z, unpack(TAGUP.ballasDestination)) < 13 then
-            removePedFromVehicle(mission.entities.sweet)
-            setElementPosition(mission.entities.sweet, 2341.0, -1498.5, 23.0)
-            setStage("tags_ballas")
-            spawnBallas()
+            startBallasDeparture()
         end
     elseif kind == "roof_return" and mission.stage == "return_after_roof" and isPartyInVehicle() then
         warpSweetIntoFirstFreeSeat()
@@ -798,6 +1163,68 @@ addEventHandler("onVehicleExplode", root, function()
     end
 end)
 
+addEventHandler("onVehicleExit", root, function(ped)
+    local leave = mission.demoLeave
+    if mission.running and mission.stage == "demo" and leave and source == leave.vehicle and ped == leave.ped then
+        leave.serverExited = true
+        outputDebugString(("[tagging-up-turf] Server observed Sweet leave vehicle for native leave-car #%d"):format(leave.id))
+        tryCompleteDemoLeave()
+    end
+
+    local departure = mission.ballasDeparture
+    if mission.running and mission.stage == "ballas_departure" and departure and source == departure.vehicle and isMissionPlayer(ped) then
+        outputDebugString(("[tagging-up-turf] Server observed Ballas departure vehicle exit for %s"):format(getPlayerName(ped)))
+        if departure.clientExitReports[ped] then
+            departure.exitedPlayers[ped] = true
+            tryStartBallasWander()
+        end
+    end
+end)
+
+addEvent("tagup:sweetReturnEnterResult", true)
+addEventHandler("tagup:sweetReturnEnterResult", resourceRoot, function(enterId, ped, vehicle, result, details)
+    local player = client
+    local enter = mission.demoEnter
+    if source ~= resourceRoot or not mission.running or (mission.stage ~= "tags_idlewood" and mission.stage ~= "return_car") or
+        player ~= mission.leader or not isMissionPlayer(player) or not enter or enter.id ~= tonumber(enterId) or enter.ped ~= ped or
+        enter.vehicle ~= vehicle or ped ~= mission.entities.sweet or vehicle ~= mission.entities.vehicle or not isElement(ped) or
+        not isElement(vehicle) then
+        outputDebugString("[tagging-up-turf] Rejected stale or unauthorized Sweet passenger-entry result", 2)
+        return
+    end
+
+    details = tostring(details or "")
+    outputDebugString(("[tagging-up-turf] Sweet native passenger entry #%d result=%s (%s)"):format(
+                          enter.id, tostring(result), details:sub(1, 240)))
+    if result ~= "entered" then
+        cancelDemoEnter("client_" .. tostring(result))
+        return failMission("L'entree passager native de Sweet a echoue: " .. tostring(result))
+    end
+    if getElementSyncer(ped) ~= player then
+        cancelDemoEnter("invalid_syncer")
+        return failMission("Le resultat d'entree passager de Sweet ne vient plus de son syncer.")
+    end
+
+    enter.clientObserved = true
+    tryCompleteSweetReturnEnter()
+end)
+
+addEventHandler("onVehicleEnter", root, function(ped, seat)
+    local enter = mission.demoEnter
+    if not mission.running or not enter or source ~= enter.vehicle or ped ~= enter.ped then
+        return
+    end
+
+    enter.serverEntered = tonumber(seat) == enter.seat
+    outputDebugString(("[tagging-up-turf] Server observed Sweet enter passenger seat %d for native entry #%d"):format(
+                          tonumber(seat) or -1, enter.id))
+    if not enter.serverEntered then
+        cancelDemoEnter("wrong_server_seat")
+        return failMission("Sweet est monte dans le mauvais siege.")
+    end
+    tryCompleteSweetReturnEnter()
+end)
+
 addEventHandler("onPedWasted", root, function()
     if not mission.running then
         return
@@ -810,10 +1237,14 @@ addEventHandler("onPedWasted", root, function()
 end)
 
 addEventHandler("onElementDestroy", root, function()
-    if mission.running and source == mission.entities.sweet and (mission.demoWalk or mission.demoShoot) then
+    if mission.running and (source == mission.entities.sweet or source == mission.entities.vehicle) and
+        (mission.demoLeave or mission.demoWalk or mission.demoShoot or mission.demoEnter or mission.ballasDeparture) then
+        cancelDemoLeave("ped_destroyed")
         cancelDemoWalk("ped_destroyed")
         cancelDemoShoot("ped_destroyed")
-        failMission("Sweet a ete detruit pendant sa demonstration native.")
+        cancelDemoEnter("ped_destroyed")
+        cancelBallasDeparture("ped_destroyed")
+        failMission("Sweet ou la Greenwood a ete detruit pendant sa demonstration native.")
     end
 end)
 
@@ -839,8 +1270,11 @@ addEventHandler("onPlayerQuit", root, function()
 end)
 
 addEventHandler("onResourceStop", resourceRoot, function()
+    cancelDemoLeave("resource_stopped")
     cancelDemoWalk("resource_stopped")
     cancelDemoShoot("resource_stopped")
+    cancelDemoEnter("resource_stopped")
+    cancelBallasDeparture("resource_stopped")
     clearMissionTimers()
     for _, player in ipairs(mission.party) do
         restorePlayer(player, mission.snapshots[player])

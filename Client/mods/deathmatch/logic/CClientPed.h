@@ -20,8 +20,10 @@ class CClientPed;
 #include "CClientPad.h"
 #include "CClientModel.h"
 #include <memory>
+#include <optional>
 
 #include <game/CPad.h>
+#include <game/CPed.h>
 #include <game/TaskTypes.h>
 
 class CAnimBlock;
@@ -412,6 +414,9 @@ public:
     bool IsUsingNativeWalkingStyle() const { return m_bUseNativeWalkingStyle; }
     void SetUseNativeWalkingStyle(bool bEnabled);
 
+    bool IsMissionActor() const noexcept { return m_bMissionActor; }
+    bool SetMissionActor(bool enabled);
+
     void                                    AddProjectile(CClientProjectile* pProjectile) { m_Projectiles.push_back(pProjectile); }
     void                                    RemoveProjectile(CClientProjectile* pProjectile) { m_Projectiles.remove(pProjectile); }
     std::list<CClientProjectile*>::iterator ProjectilesBegin() { return m_Projectiles.begin(); }
@@ -598,6 +603,7 @@ protected:
     void _DestroyModel();
     void _DestroyLocalModel();
     void _ChangeModel();
+    void ApplyMissionActorState();
 
     void ModelRequestCallback(CModelInfo* pModelInfo);
 
@@ -725,6 +731,8 @@ public:
     eFightingStyle                           m_FightingStyle;
     eMoveAnim                                m_MoveAnim;
     bool                                     m_bUseNativeWalkingStyle{false};
+    bool                                     m_bMissionActor{false};
+    std::optional<SPedCreatedByState>        m_missionActorNativeState;
     std::list<CClientProjectile*>            m_Projectiles;
     unsigned char                            m_ucAlpha;
     float                                    m_fTargetRotation;

@@ -22,6 +22,7 @@ class CTaskComplexEnterCarAsDriver;
 class CTaskComplexEnterCarAsPassenger;
 class CTaskComplexFacial;
 class CTaskComplexLeaveCar;
+class CTaskComplexCarDriveWander;
 class CTaskComplexGoToPointAndStandStill;
 class CTaskComplexSunbathe;
 class CTaskComplexUseMobilePhone;
@@ -86,6 +87,7 @@ public:
     virtual CTaskComplexEnterBoatAsDriver*      CreateTaskComplexEnterBoatAsDriver(CVehicle* pVehicle) = 0;
     virtual CTaskComplexLeaveCar*               CreateTaskComplexLeaveCar(CVehicle* pVehicle, const int iTargetDoor = 0xFF, const int iDelayTime = 0,
                                                                           const bool bSensibleLeaveCar = true, const bool bForceGetOut = false) = 0;
+    virtual CTaskComplexCarDriveWander*         CreateTaskComplexCarDriveWander(CVehicle* pVehicle, float fSpeed, int iDrivingStyle) = 0;
     virtual CTaskComplexUseMobilePhone*         CreateTaskComplexUseMobilePhone(const int iDuration = -1) = 0;
 
     virtual CTaskSimpleDuck*    CreateTaskSimpleDuck(eDuckControlTypes nDuckControl, unsigned short nLengthOfDuck = 0,

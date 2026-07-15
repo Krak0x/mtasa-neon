@@ -228,6 +228,9 @@ CTaskSA* CTaskManagementSystemSA::CreateAppropriateTask(CTaskSAInterface* pTaskI
         case TASK_COMPLEX_LEAVE_CAR:
             pTaskSA = new CTaskComplexLeaveCarSA;
             break;
+        case TASK_COMPLEX_CAR_DRIVE_WANDER:
+            pTaskSA = new CTaskComplexCarDriveWanderSA;
+            break;
 
         // GoTo
         case TASK_COMPLEX_WANDER:

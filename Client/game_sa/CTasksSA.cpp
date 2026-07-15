@@ -124,6 +124,13 @@ CTaskComplexLeaveCar* CTasksSA::CreateTaskComplexLeaveCar(CVehicle* pVehicle, co
     return pTask;
 }
 
+CTaskComplexCarDriveWander* CTasksSA::CreateTaskComplexCarDriveWander(CVehicle* pVehicle, float fSpeed, int iDrivingStyle)
+{
+    CTaskComplexCarDriveWanderSA* pTask = NewTask<CTaskComplexCarDriveWanderSA>(pVehicle, fSpeed, iDrivingStyle);
+    m_pTaskManagementSystem->AddTask(pTask);
+    return pTask;
+}
+
 CTaskComplexUseMobilePhone* CTasksSA::CreateTaskComplexUseMobilePhone(const int iDuration)
 {
     CTaskComplexUseMobilePhoneSA* pTask = NewTask<CTaskComplexUseMobilePhoneSA>(iDuration);

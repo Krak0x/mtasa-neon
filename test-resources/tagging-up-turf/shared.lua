@@ -6,6 +6,7 @@ TAGUP = {
     tagModel = 1490,
     vehicleModel = 492,
     sweetModel = 270,
+    missionActorData = "tagup.missionActor",
     start = {2508.16, -1666.47, 13.0, 16},
     sweetStart = {2518.07, -1668.82, 13.1, 90},
     idlewoodDestination = {2089.01, -1649.08, 12.54},
@@ -15,7 +16,6 @@ TAGUP = {
     -- that convention here: MTA yaw = (360 - raw IPL quaternion yaw) % 360.
     demoTag = {x = 2102.195313, y = -1648.757813, z = 13.585938, rotation = 0.3},
     sweetDemoWalk = {
-        start = {x = 2095.80, y = -1649.86, z = 12.70, heading = 277},
         target = {x = 2100.48, y = -1649.14, z = 12.47},
         movement = "walk",
         radius = 0.5,
@@ -23,6 +23,10 @@ TAGUP = {
         timeout = 20000,
         serverCompletionRadius = 1.25,
         guardTimeout = 27000,
+    },
+    sweetDemoLeave = {
+        observationTimeout = 5000,
+        guardTimeout = 15000,
     },
     sweetDemoShoot = {
         duration = 15000,
@@ -35,6 +39,21 @@ TAGUP = {
         guardTimeout = 23000,
         serverMaxDistance = 6,
     },
+    sweetReturnEnter = {
+        seat = 1,
+        observationTimeout = 5000,
+        scmTimeout = 15000,
+        guardTimeout = 20000,
+    },
+    ballasDeparture = {
+        speed = 20.0,
+        drivingStyle = "avoid_cars",
+        observationTimeout = 5000,
+        exitTimeout = 15000,
+        guardTimeout = 22000,
+        postStartWait = 1000,
+    },
+    sweetReturnPosition = {2385.44, -1529.33, 24.04, 90},
     tags = {
         {id = 1, group = "idlewood", x = 2066.429688, y = -1652.476563, z = 14.28125, rotation = 179.5},
         {id = 2, group = "idlewood", x = 2046.40625, y = -1635.84375, z = 13.585938, rotation = 359.5},
@@ -50,6 +69,7 @@ TAGUP = {
         tags_idlewood = {title = "Deux tags", objective = "Recouvrez les deux tags de Ballas avec la bombe."},
         return_car = {title = "On bouge", objective = "Retournez a la Greenwood de Sweet."},
         drive_ballas = {title = "Territoire Ballas", objective = "Conduisez jusque dans le territoire Ballas."},
+        ballas_departure = {title = "Sweet s'en va", objective = "Descendez. Sweet part marquer un autre quartier."},
         tags_ballas = {title = "Couvrez-vous", objective = "Recouvrez les deux tags. Les Ballas vont reagir."},
         rooftop = {title = "Dernier tag", objective = "Montez sur le toit et recouvrez le dernier tag."},
         return_after_roof = {title = "Retrouvez Sweet", objective = "Retournez a la Greenwood."},
