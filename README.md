@@ -14,7 +14,7 @@ Readers familiar with the historical [MTA:Eir](https://wiki.multitheftauto.com/w
 
 An in-game demonstration of Neon's resource-controlled native CULL-zone editing workflow.
 
-[![Watch the native CULL-zone editing demo](https://img.youtube.com/vi/17QrE21uDgM/hqdefault.jpg)](https://www.youtube.com/watch?v=17QrE21uDgM)
+[![Watch the native CULL-zone editing demo](docs/media/native-cull-zone-demo.png)](https://www.youtube.com/watch?v=17QrE21uDgM)
 
 [Watch on YouTube](https://www.youtube.com/watch?v=17QrE21uDgM)
 
