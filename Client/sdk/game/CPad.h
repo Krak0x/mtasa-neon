@@ -63,4 +63,10 @@ public:
     virtual void              Clear() = 0;
     virtual void              SetHornHistoryValue(bool value) = 0;
     virtual void              SetLastTimeTouched(DWORD dwTime) = 0;
+
+    // Scripted scenes need GTA to observe the same control-disable bit that
+    // drives its native vehicle braking. This deliberately does not invoke
+    // CPlayerInfo::MakePlayerSafe and its unrelated world/task side effects.
+    virtual bool IsPlayerSafeControlFlagSet() const = 0;
+    virtual void SetPlayerSafeControlFlag(bool enabled) = 0;
 };

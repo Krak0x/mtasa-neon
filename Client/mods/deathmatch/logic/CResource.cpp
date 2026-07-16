@@ -13,6 +13,7 @@
 #define DECLARE_PROFILER_SECTION_CResource
 #include "profiler/SharedUtil.Profiler.h"
 #include "CServerIdManager.h"
+#include "luadefs/CLuaAudioDefs.h"
 #include "luadefs/CLuaVehicleDefs.h"
 
 #include <limits>
@@ -106,6 +107,10 @@ CResource::~CResource()
         m_nativeWorldTransport.cancellation->store(true, std::memory_order_release);
     if (m_nativeWorldTransport.publication.valid())
         g_pClientGame->GetResourceManager()->RetireNativeWorldTransportPublication(std::move(m_nativeWorldTransport.publication));
+
+    // Mission-audio handles lease GTA-global hardware slots rather than child
+    // elements, so resource teardown must stop only this resource's sounds.
+    CLuaAudioDefs::ReleaseMissionAudioForResource(this);
 
     // Recorded-car buffers and active slots are native global state, not child
     // elements. Stop and release them before this resource's Lua VM disappears.

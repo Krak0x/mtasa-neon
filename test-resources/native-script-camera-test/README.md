@@ -8,6 +8,9 @@ The camera is local to the player running the command. No mission state or netwo
 
 - `/nativecam` runs the complete fixed → move+track → fade-out → fade-in → release sequence.
 - `/nativecamfixed` holds a fixed camera until `/nativecamabort` is used.
+- `/nativecambrake` gives the driver three seconds to accelerate, then acquires
+  a control-inhibiting lease and verifies GTA's native braking without freezing
+  the vehicle.
 - `/nativecamabort` releases the active lease explicitly.
 - `/nativecamrestart` acquires and modifies the camera, then restarts this resource without calling `releaseScriptCamera`.
 - `/nativecamstatus` prints the lease and native move/track/fade observations.
@@ -26,6 +29,13 @@ Expected sequence:
 4. The harness prints `PASS` and restores the original gameplay camera, near clip, widescreen state, and controls.
 
 Run `/nativecam` again and use `/nativecamabort` during the four-second travelling shot. Movement must stop immediately and every captured state must be restored. Starting a new run after that must still work.
+
+To validate the vehicle path independently, enter the driver seat, run
+`/nativecambrake`, and accelerate during the three-second countdown. Acquisition
+must cut throttle, apply GTA's brakes and handbrake, clamp excessive speed, and
+bring the vehicle below 1 km/h without `setElementFrozen`. The harness prints the
+starting speed and stopping time, then releases the lease so driving controls
+must work again.
 
 Run `/nativecamrestart`. The camera is deliberately left leased while the resource restarts. The native service—not this Lua script—must revoke the lease and restore the gameplay camera, near clip, widescreen state, and controls. After the `ready` line returns, `/nativecam` must work again. As a second cleanup variant, an administrator can run `restart native-script-camera-test` from the server console during any active phase.
 

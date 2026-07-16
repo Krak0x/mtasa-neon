@@ -60,6 +60,7 @@ public:
     virtual void          PreloadMissionAudio(unsigned short usAudioEvent, int slot = 1) = 0;
     virtual unsigned char GetMissionAudioLoadingStatus(int slot = 1) = 0;
     virtual bool          IsMissionAudioSampleFinished(int slot = 1) = 0;
+    virtual int           GetMissionAudioEvent(int slot = 1) = 0;
     virtual void          AttachMissionAudioToPhysical(CPhysical* physical, int slot = 1) = 0;
     virtual void          SetMissionAudioPosition(CVector* position, int slot = 1) = 0;
     virtual bool          PlayLoadedMissionAudio(int slot = 1) = 0;

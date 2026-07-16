@@ -79,3 +79,20 @@ void CPadSA::SetLastTimeTouched(DWORD dwTime)
 {
     internalInterface->LastTimeTouched = dwTime;
 }
+
+bool CPadSA::IsPlayerSafeControlFlagSet() const
+{
+    // GTA stores bPlayerSafe as bit 0x20 in the DisablePlayerControls word.
+    // Preserve every other native inhibitor owned by camera, phone, interiors,
+    // and other gameplay systems.
+    return (internalInterface->DisablePlayerControls & 0x20) != 0;
+}
+
+void CPadSA::SetPlayerSafeControlFlag(bool enabled)
+{
+    constexpr WORD PLAYER_SAFE_CONTROL_MASK = 0x20;
+    if (enabled)
+        internalInterface->DisablePlayerControls |= PLAYER_SAFE_CONTROL_MASK;
+    else
+        internalInterface->DisablePlayerControls &= ~PLAYER_SAFE_CONTROL_MASK;
+}

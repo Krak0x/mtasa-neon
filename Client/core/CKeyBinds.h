@@ -188,4 +188,6 @@ private:
     bool                   m_bLastStateRight{false};
     bool                   m_bMoveLeft{false};
     unsigned int           m_uiGameplayControlInhibitCount{0};
+    bool                   m_bNativePlayerSafeFlagCaptured{false};
+    bool                   m_bNativePlayerSafeFlagWasSet{false};
 };

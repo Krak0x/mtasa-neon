@@ -70,6 +70,7 @@ void CLuaCameraDefs::LoadFunctions()
 
         {"acquireScriptCamera", ArgumentParser<AcquireScriptCamera>},
         {"releaseScriptCamera", ArgumentParser<ReleaseScriptCamera>},
+        {"isScriptCameraLeaseActive", ArgumentParser<IsScriptCameraLeaseActive>},
         {"setScriptCameraFixed", ArgumentParser<SetScriptCameraFixed>},
         {"moveScriptCamera", ArgumentParser<MoveScriptCamera>},
         {"trackScriptCamera", ArgumentParser<TrackScriptCamera>},
@@ -662,11 +663,18 @@ std::variant<unsigned int, bool> CLuaCameraDefs::AcquireScriptCamera(lua_State* 
     return token;
 }
 
-bool CLuaCameraDefs::ReleaseScriptCamera(lua_State* luaVM, unsigned int token)
+bool CLuaCameraDefs::ReleaseScriptCamera(lua_State* luaVM, unsigned int token, std::optional<bool> preserveFade)
 {
     CResource*     owner = GetCallingResource(luaVM);
     CClientCamera* camera = g_pClientGame->GetManager()->GetCamera();
-    return camera && camera->ReleaseScriptCamera(owner, token);
+    return camera && camera->ReleaseScriptCamera(owner, token, preserveFade.value_or(false));
+}
+
+bool CLuaCameraDefs::IsScriptCameraLeaseActive(lua_State* luaVM, unsigned int token)
+{
+    // Scripted scenes need to detect an authoritative camera takeover before
+    // continuing a timeline that no longer owns the local camera or controls.
+    return GetOwnedScriptCamera(luaVM, token) != nullptr;
 }
 
 bool CLuaCameraDefs::SetScriptCameraFixed(lua_State* luaVM, unsigned int token, CVector position, CVector target, std::optional<CVector> upOffset,

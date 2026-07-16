@@ -48,7 +48,8 @@ public:
     static bool ResetShakeCamera() noexcept;
 
     static std::variant<unsigned int, bool> AcquireScriptCamera(lua_State* luaVM, std::optional<bool> inhibitControls);
-    static bool                             ReleaseScriptCamera(lua_State* luaVM, unsigned int token);
+    static bool                             ReleaseScriptCamera(lua_State* luaVM, unsigned int token, std::optional<bool> preserveFade);
+    static bool                             IsScriptCameraLeaseActive(lua_State* luaVM, unsigned int token);
     static bool SetScriptCameraFixed(lua_State* luaVM, unsigned int token, CVector position, CVector target, std::optional<CVector> upOffset,
                                      std::optional<bool> jumpCut);
     static bool MoveScriptCamera(lua_State* luaVM, unsigned int token, CVector from, CVector to, int durationMs, std::optional<bool> ease);

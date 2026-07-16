@@ -77,7 +77,7 @@ The first useful native task set is driven by the needs of `SWEET1`/Tagging Up T
 - Compose a sequence of tasks and cancel or replace it safely.
 - Report completion, interruption, timeout, entity destruction, and failure.
 
-Tags, mission cameras, and mission audio should also gain native Neon services. They do not need to masquerade as ped tasks, but opcode handlers must be able to invoke them through similarly well-defined APIs.
+Tags should also gain a synchronized native Neon service. Mission cameras and mission audio now have resource-owned client services; they do not masquerade as ped tasks, but opcode handlers can invoke them through similarly well-defined APIs.
 
 ### Why C++ is required
 
@@ -142,9 +142,9 @@ The resource in `test-resources/tagging-up-turf` is the current vertical slice. 
 
 It also exposed the limit of mission-specific Lua approximations:
 
-- Sweet's initial seating and later vehicle behavior still use temporary warps, but his post-demonstration return to the Greenwood now uses MTA's synchronized native passenger-entry lifecycle. His first leave/walk/spray/return sequence therefore no longer teleports him between those tasks.
+- Sweet's initial mission setup and the temporary driver/passenger seat changes around recording `207` still use authoritative seat placement. His demonstrated leave, walk, spray, return, passenger-entry, Ballas departure, and recorded-car movement otherwise use native tasks or playback without position teleports.
 - MTA disables GTA's single-player tag manager. The server still approximates tag hit/progress rules in Lua, while Neon now renders the verified per-object Grove material alpha natively.
-- The cutscene camera and actor lifecycle can conflict with other resource and streaming behavior.
+- Remaining actor and tag substitutes still need explicit syncer, streaming, and cleanup policy even though camera/audio ownership and Sweet's mission-actor classification are now resource-managed.
 
 The prototype should remain as a regression resource. Its ad-hoc actor and tag code should be replaced incrementally by the generic native APIs, making it the first end-to-end consumer of the new architecture.
 
@@ -218,17 +218,27 @@ The first gameplay trace exposed two omitted adjacent SCM commands rather than a
 
 The tag visual gate verified `CTagManager::SetupAtomic` (`0x49CE10`), its atomic alpha accessors (`0x49CD30`/`0x49CD40`), and `RenderTagForPC` (`0x49CE40`). Each tag model already contains both rival and `grove` materials; model `1524` is another tag site, not a painted replacement for model `1490`. The original renderer writes `floor(alpha * alpha / 255)` to material index `1`, a detail omitted by the candidate reverse's linear assignment. MTA globally forces this result to zero. Neon therefore keeps `IsTag` and the gameplay manager disabled, but `setObjectGangTagAlpha` lets explicitly opted-in MTA objects render a synchronized logical alpha through the verified material formula. The default path remains unchanged.
 
-`SWEET1` does not wait for the full `15000 ms` gun-task ceiling. It waits until sequence progress reaches the shoot step, then waits for the demonstration tag to reach 100%, interrupts the shoot task, and performs the following `WAIT 1000` before the checkout animation and dialogue. The regression resource now mirrors that control-flow distinction: it first observes the native gun task, advances a server-authoritative temporary tag percentage, cancels the task at 100%, and waits one second. The checkout animation, audio, and mission camera are still pending, so this is not yet a timing-perfect cutscene port.
+`SWEET1` does not wait for the full `15000 ms` gun-task ceiling. It waits until sequence progress reaches the shoot step, then waits for the demonstration tag to reach 100%, interrupts the shoot task, and performs the following `WAIT 1000` before the checkout animation and dialogue. The regression resource mirrors that control flow, then uses MTA's synchronized animation pipeline for the exact non-looped `GRAFFITI_CHKOUT` parameters and waits for the syncer to observe natural completion. A server-owned co-op timeline gates all three verified camera shots, the native position/target tracks, `SWE1_AR`, `SWE1_CA`, global leader skip, and final camera/audio cleanup. Facial talk remains the known fidelity gap because its secondary task request is not exposed yet.
 
 IPL rotations must follow GTA's loader rather than a raw quaternion-to-yaw conversion. GTA conjugates the stored quaternion, so yaw-only placements use `(360 - rawYaw) % 360`. The error was nearly invisible at headings around 0 and 180 degrees but turned the alley and rooftop tags by 180 degrees, leaving their painted faces against the wall and backface-culled.
 
 ## Current implementation slice: native script camera
 
-Neon now exposes GTA's verified fixed/look-at, vector position and target tracks, persistence, fade, widescreen, and scripted near-clip primitives through a client-side, resource-owned camera service. Acquisition returns a generation token, so delayed callbacks from an older run cannot control a later lease owned by the same resource. The service snapshots the previous MTA camera state and uses an independent, reference-counted gameplay-input inhibitor rather than changing resource-visible control binds.
+Neon now exposes GTA's verified fixed/look-at, vector position and target tracks, persistence, fade, widescreen, and scripted near-clip primitives through a client-side, resource-owned camera service. Acquisition returns a generation token, so delayed callbacks from an older run cannot control a later lease owned by the same resource. `isScriptCameraLeaseActive` lets a timeline detect that an authoritative camera takeover revoked that token. The service snapshots the previous MTA camera state and uses an independent, reference-counted gameplay-input inhibitor rather than changing resource-visible control binds. The outermost inhibitor also snapshots and sets only GTA pad bit `bPlayerSafe` (`0x20` in `DisablePlayerControls` at `CPad+0x10E`), then restores that bit on the final release. It never calls the patched-out `CPlayerInfo::MakePlayerSafe` and therefore does not inherit its task, invulnerability, explosion, projectile, or world-cleanup side effects.
 
-The lease is restored on explicit release, resource stop or restart, disconnect, and authoritative server camera takeover. Legacy client camera and near-clip setters are rejected while a lease is active, preventing MTA's fixed-camera hook from racing GTA's native vector processors. The isolated `test-resources/native-script-camera-test` harness validates fixed framing, simultaneous eased position and target tracks, fade out/in, explicit abort, and cleanup across resource restart. Manual validation completed the full sequence in `8620 ms`, including a `4267 ms` move/track and one-second native fades, then successfully restarted the resource after native lease cleanup.
+The lease is restored on explicit release, resource stop or restart, disconnect, and authoritative server camera takeover. Normal cleanup forces the screen visible; a successful timeline may explicitly preserve the current fade while restoring gameplay camera and controls, enabling the SCM pattern of staging a skip under black before fading back in. Legacy client camera and near-clip setters are rejected while a lease is active, preventing MTA's fixed-camera hook from racing GTA's native vector processors. The isolated `test-resources/native-script-camera-test` harness validates fixed framing, simultaneous eased position and target tracks, fade out/in, explicit abort, and cleanup across resource restart. Manual validation completed the full sequence in `8620 ms`, including a `4267 ms` move/track and one-second native fades, then successfully restarted the resource after native lease cleanup.
 
 The ASM gate also corrected `CCamera::VectorTrackRunning` in `gta-reversed-dryxio`: `0x474870` is the function entry, while the former `0x474891` annotation points to an internal parity branch. The camera service is generic and local to each player; cooperative mission code must synchronize only the timeline, readiness, and skip decision at the server layer.
+
+The cinematic vehicle slowdown was separately verified from `SWEET1` through the GTA SA 1.0 executable. The mission's grounded 4 m locate gate does not brake the Greenwood itself: opcode `SET_PLAYER_CONTROL OFF` reaches its handler at `0x47D3C8`, calls `CPlayerInfo::MakePlayerSafe(true, 10.0)` at `0x56E870`, and sets `bPlayerSafe` at `0x56E89D`. `CAutomobile::ProcessControlInputs` consumes the resulting nonzero `DisablePlayerControls` word at `0x6ADDCC`, applies full brake and handbrake, clears throttle, clamps velocity magnitude to `0.28`, and lets physics finish the stop. `SWEET1` does not use `APPLY_BRAKES_TO_PLAYERS_CAR`, zero velocity, or freeze the vehicle. The generic inhibitor now reproduces that native pad-to-vehicle path for every control-inhibiting camera lease; MTA continues to synchronize the locally simulated vehicle transform.
+
+`Tagging Up Turf` first consumes that generic service at the Ballas arrival. Each participant acquires a local lease and applies the `SWEET1` fixed camera, point-at target, widescreen state, and control inhibition. A server-owned readiness barrier prevents any participant from beginning `TASK_LEAVE_CAR` until every client has prepared the shot. The client enforces the SCM's minimum 100 ms camera lead-in, while the existing server flow waits for every exit, observes Sweet's native `TASK_CAR_DRIVE_WANDER`, and completes the following 1000 ms window from native task acceptance before releasing every lease. Explicit abort, failure, stage replacement, timeout, lease takeover, and resource shutdown all restore through the same owned lease. The arrival gate now uses the SCM's 4 m axis-aligned box plus MTA's grounded-vehicle predicate; that predicate is not yet the exact `IS_CAR_ON_ALL_WHEELS` opcode. `SWE1_AV` is not yet integrated into that particular arrival shot, so its total duration remains shorter than single-player even though the generic audio service now exists.
+
+## Current implementation slice: native mission audio
+
+Neon now leases GTA's four native mission-audio slots through opaque client-side handles. `requestMissionAudio` accepts only GTA's verified script-event families, refuses a slot with unknown native ownership, and confirms the event stored by GTA because native preload can fail silently. Load, one-shot play, natural-finish query, explicit release, and resource-stop cleanup all validate the calling resource and the handle generation before touching a slot.
+
+Audio remains local output rather than server state. Cooperative timelines preload on every participant, wait at a server readiness barrier, broadcast the play decision, and advance only after every client reports natural completion or the server guard expires. The isolated `test-resources/native-mission-audio-test` resource exercises individual `SWE1_AR`, `SWE1_CA`, and `SWE1_CB` events, the two-slot story sequence, invalid requests, pool exhaustion, mid-play clear, and resource-restart cleanup.
 
 ## Current implementation slice: recorded-car playback
 
@@ -268,8 +278,8 @@ Manual in-game validation completed the direct playback in `8040 ms`, reached th
 ### Phase 3: native story primitives
 
 - Add a synchronized tag service with native spray progress and tag replacement.
-- Integrate the generic native camera service into `SWEET1` and add its mission-audio primitives.
-- Replace Sweet's teleports and client control-state AI in the prototype with native tasks.
+- Finish the still-pending `SWEET1` camera/audio scenes around Ballas departure, recording `207`, Grove Street, and the introductory cutscene.
+- Replace the remaining setup/seat-placement and combat-control substitutes with verified native tasks or services.
 - Complete Tagging Up Turf end to end as the first conformance mission.
 
 ### Phase 4: minimal SCM runtime

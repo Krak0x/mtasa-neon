@@ -99,7 +99,7 @@ public:
     float   GetAccurateFOV() const;
 
     std::uint32_t AcquireScriptCamera(CResource* owner, bool inhibitControls);
-    bool          ReleaseScriptCamera(CResource* owner, std::uint32_t token);
+    bool          ReleaseScriptCamera(CResource* owner, std::uint32_t token, bool preserveFade = false);
     void          ReleaseScriptCamera(CResource* owner);
     void          AbortScriptCamera();
     bool          HasScriptCameraLease(const CResource* owner, std::uint32_t token) const;
@@ -116,7 +116,7 @@ private:
     void        SetGtaMatrix(const CMatrix& matInNew, CCam* pCam = NULL) const;
 
     void           SetFocusToLocalPlayerImpl();
-    void           RestoreScriptCameraLease();
+    void           RestoreScriptCameraLease(bool preserveFade = false);
     void           InvalidateCachedTransforms() const;
     void           SetCenterOfWorldCached(const CVector* pPosition, float fRotationRadians);
     void           UpdateCenterOfWorldFromFixedMatrix();

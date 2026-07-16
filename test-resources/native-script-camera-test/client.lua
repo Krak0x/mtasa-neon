@@ -3,6 +3,7 @@
 local API_NAMES = {
     acquire = "acquireScriptCamera",
     release = "releaseScriptCamera",
+    lease = "isScriptCameraLeaseActive",
     fixed = "setScriptCameraFixed",
     move = "moveScriptCamera",
     track = "trackScriptCamera",
@@ -51,6 +52,7 @@ local nextTestId = 0
 local REQUIRED_API = {
     "acquire",
     "release",
+    "lease",
     "fixed",
     "move",
     "track",
@@ -196,6 +198,11 @@ local function acquireAndPrepare(test)
     test.acquired = true
     test.token = details
 
+    ok, details = callLeaseApi(test, "lease")
+    if not ok then
+        fail(test, "lease", details)
+        return false
+    end
     ok, details = callLeaseApi(test, "reset")
     if not ok then
         fail(test, "reset", details)
@@ -349,9 +356,69 @@ local function startRestartTest()
     triggerServerEvent("nativeScriptCameraTest:restart", resourceRoot)
 end
 
+local function getVehicleSpeedKmh(vehicle)
+    local x, y, z = getElementVelocity(vehicle)
+    return math.sqrt(x * x + y * y + z * z) * 180
+end
+
+local function startNativeBrakeTest()
+    local vehicle = getPedOccupiedVehicle(localPlayer)
+    if not vehicle or getVehicleController(vehicle) ~= localPlayer then
+        log("/nativecambrake exige que le joueur conduise un vehicule", "warn")
+        return
+    end
+
+    local test = newTest("native_brake")
+    test.vehicle = vehicle
+    log("accelerez pendant 3 secondes; le lease va ensuite bloquer les controles et laisser GTA freiner", "info")
+    addTimer(test, function()
+        if not isElement(test.vehicle) or getVehicleController(test.vehicle) ~= localPlayer then
+            return fail(test, "native brake", "le joueur ne conduit plus le vehicule")
+        end
+
+        local initialSpeed = getVehicleSpeedKmh(test.vehicle)
+        if initialSpeed < 10 then
+            return fail(test, "native brake", ("vitesse initiale trop faible: %.1f km/h"):format(initialSpeed))
+        end
+
+        local ok, details = callApi("acquire", true)
+        if not ok then
+            return fail(test, "acquire", details)
+        end
+        test.acquired = true
+        test.token = details
+        test.brakeStartedAt = getTickCount()
+        log(("inhibition acquise a %.1f km/h; le vehicule doit rester non gele et s'arreter naturellement"):format(initialSpeed), "info")
+
+        local monitor
+        monitor = addTimer(test, function()
+            if not isElement(test.vehicle) then
+                return fail(test, "native brake", "vehicule detruit")
+            end
+            if isElementFrozen(test.vehicle) then
+                return fail(test, "native brake", "le vehicule a ete gele au lieu d'utiliser les freins GTA")
+            end
+
+            local speed = getVehicleSpeedKmh(test.vehicle)
+            local elapsed = getTickCount() - test.brakeStartedAt
+            if speed <= 1 then
+                if isTimer(monitor) then
+                    killTimer(monitor)
+                end
+                test.timers[monitor] = nil
+                return finishTest(test, "PASS", ("freinage GTA %.1f -> %.1f km/h en %d ms, sans freeze"):format(initialSpeed, speed, elapsed), true)
+            end
+            if elapsed >= 4000 then
+                fail(test, "native brake", ("encore a %.1f km/h apres %d ms"):format(speed, elapsed))
+            end
+        end, 50, 0)
+    end, 3000, 1)
+end
+
 addCommandHandler("nativecam", startFullTest)
 addCommandHandler("nativecamfixed", startFixedTest)
 addCommandHandler("nativecamrestart", startRestartTest)
+addCommandHandler("nativecambrake", startNativeBrakeTest)
 
 addCommandHandler("nativecamabort", function()
     if not activeTest then
@@ -377,7 +444,7 @@ addCommandHandler("nativecamstatus", function()
 end)
 
 addEventHandler("onClientResourceStart", resourceRoot, function()
-    log("ready: /nativecam, /nativecamfixed, /nativecamabort, /nativecamrestart, /nativecamstatus", "good")
+    log("ready: /nativecam, /nativecamfixed, /nativecambrake, /nativecamabort, /nativecamrestart, /nativecamstatus", "good")
 end)
 
 addEventHandler("onClientResourceStop", resourceRoot, function()

@@ -10,8 +10,151 @@
  *****************************************************************************/
 
 #include "StdInc.h"
+#include <game/CAudioEngine.h>
 #include <lua/CLuaFunctionParser.h>
+#include <CResource.h>
 #include "CBassAudio.h"
+
+namespace
+{
+    constexpr unsigned int MISSION_AUDIO_SLOT_COUNT = 4;
+    constexpr unsigned int SCRIPT_BANK_FIRST = 1800;
+    constexpr unsigned int SCRIPT_BANK_LAST = 1829;
+    constexpr unsigned int SCRIPT_SLOT_FIRST = 2000;
+    constexpr unsigned int SCRIPT_SLOT_LAST = 45400;
+
+    struct SMissionAudioSlot
+    {
+        CResource*   owner{};
+        unsigned int handle{};
+        unsigned int eventId{};
+        int          freeEventFingerprint{-1};
+        bool         inspected{};
+        bool         managed{};
+        bool         played{};
+    };
+
+    std::array<SMissionAudioSlot, MISSION_AUDIO_SLOT_COUNT> g_missionAudioSlots;
+    std::unordered_map<unsigned int, unsigned int>          g_missionAudioHandles;
+    unsigned int                                            g_nextMissionAudioHandle{};
+
+    CResource* GetCallingResource(lua_State* luaVM)
+    {
+        return luaVM ? g_pClientGame->GetResourceManager()->GetResourceFromLuaState(luaVM) : nullptr;
+    }
+
+    CAudioEngine* GetAudioEngine()
+    {
+        return g_pGame ? g_pGame->GetAudioEngine() : nullptr;
+    }
+
+    bool IsSupportedMissionAudioEvent(unsigned int eventId)
+    {
+        // GTA's native resolver has two valid families. Rejecting the gaps
+        // outside them avoids asking the audio hardware for arbitrary banks.
+        return (eventId >= SCRIPT_BANK_FIRST && eventId <= SCRIPT_BANK_LAST) || (eventId >= SCRIPT_SLOT_FIRST && eventId <= SCRIPT_SLOT_LAST);
+    }
+
+    unsigned int AllocateMissionAudioHandle()
+    {
+        do
+        {
+            ++g_nextMissionAudioHandle;
+            if (g_nextMissionAudioHandle == 0)
+                ++g_nextMissionAudioHandle;
+        } while (g_missionAudioHandles.contains(g_nextMissionAudioHandle));
+        return g_nextMissionAudioHandle;
+    }
+
+    bool IsSlotSafelyReusable(CAudioEngine* audio, unsigned int slotId)
+    {
+        auto& slot = g_missionAudioSlots[slotId];
+        if (slot.handle != 0)
+            return false;
+
+        const int  currentEvent = audio->GetMissionAudioEvent(slotId);
+        const bool finished = audio->IsMissionAudioSampleFinished(slotId);
+
+        if (!slot.inspected)
+        {
+            slot.inspected = true;
+            slot.managed = currentEvent == -1 && finished;
+            slot.freeEventFingerprint = currentEvent;
+        }
+
+        // A full native audio reset is the only unambiguous way an unmanaged
+        // slot becomes pristine again. A non-negative unknown event may be a
+        // preload owned by GTA or another subsystem and must not be stolen.
+        if (currentEvent == -1 && finished)
+        {
+            slot.managed = true;
+            slot.freeEventFingerprint = -1;
+            return true;
+        }
+
+        if (!slot.managed || !finished || currentEvent != slot.freeEventFingerprint)
+        {
+            if (slot.managed && currentEvent != slot.freeEventFingerprint)
+                slot.managed = false;
+            return false;
+        }
+        return true;
+    }
+
+    SMissionAudioSlot* GetOwnedMissionAudioSlot(lua_State* luaVM, unsigned int handle, unsigned int* outSlotId = nullptr)
+    {
+        const auto slotIndex = g_missionAudioHandles.find(handle);
+        if (slotIndex == g_missionAudioHandles.end() || slotIndex->second >= g_missionAudioSlots.size())
+            return nullptr;
+
+        auto& slot = g_missionAudioSlots[slotIndex->second];
+        if (slot.handle != handle || slot.owner != GetCallingResource(luaVM))
+            return nullptr;
+
+        if (outSlotId)
+            *outSlotId = slotIndex->second;
+        return &slot;
+    }
+
+    void ReleaseMissionAudioSlot(unsigned int slotId)
+    {
+        auto& slot = g_missionAudioSlots[slotId];
+        if (slot.handle == 0)
+            return;
+
+        if (CAudioEngine* audio = GetAudioEngine())
+        {
+            const int currentEvent = audio->GetMissionAudioEvent(slotId);
+            if (currentEvent == static_cast<int>(slot.eventId))
+            {
+                // Clear only while the native slot still carries our event.
+                // This prevents teardown from cancelling an obvious external
+                // takeover; identical-event takeovers are not distinguishable
+                // in GTA's slot data.
+                audio->ClearMissionAudio(slotId);
+                slot.managed = true;
+                slot.freeEventFingerprint = audio->GetMissionAudioEvent(slotId);
+            }
+            else
+            {
+                slot.managed = false;
+                slot.freeEventFingerprint = currentEvent;
+            }
+        }
+        else
+        {
+            slot.inspected = false;
+            slot.managed = false;
+            slot.freeEventFingerprint = -1;
+        }
+
+        g_missionAudioHandles.erase(slot.handle);
+        slot.owner = nullptr;
+        slot.handle = 0;
+        slot.eventId = 0;
+        slot.played = false;
+    }
+}  // namespace
 
 void CLuaAudioDefs::LoadFunctions()
 {
@@ -26,6 +169,11 @@ void CLuaAudioDefs::LoadFunctions()
                                                                              {"playSFX", PlaySFX},
                                                                              {"playSFX3D", PlaySFX3D},
                                                                              {"getSFXStatus", GetSFXStatus},
+                                                                             {"requestMissionAudio", ArgumentParser<RequestMissionAudio>},
+                                                                             {"isMissionAudioLoaded", ArgumentParser<IsMissionAudioLoaded>},
+                                                                             {"playMissionAudio", ArgumentParser<PlayMissionAudio>},
+                                                                             {"isMissionAudioFinished", ArgumentParser<IsMissionAudioFinished>},
+                                                                             {"releaseMissionAudio", ArgumentParser<ReleaseMissionAudio>},
 
                                                                              // Sound effects and synth funcs
                                                                              {"playSound", PlaySound},
@@ -142,6 +290,102 @@ void CLuaAudioDefs::AddClass(lua_State* luaVM)
     lua_classvariable(luaVM, "minDistance", "setSoundMinDistance", "getSoundMinDistance");
 
     lua_registerclass(luaVM, "Sound3D", "Sound");
+}
+
+std::variant<unsigned int, bool> CLuaAudioDefs::RequestMissionAudio(lua_State* luaVM, unsigned int eventId)
+{
+    CResource*    resource = GetCallingResource(luaVM);
+    CAudioEngine* audio = GetAudioEngine();
+    if (!resource || !audio || !IsSupportedMissionAudioEvent(eventId))
+        return false;
+
+    for (unsigned int slotId = 0; slotId < g_missionAudioSlots.size(); ++slotId)
+    {
+        if (!IsSlotSafelyReusable(audio, slotId))
+            continue;
+
+        auto& slot = g_missionAudioSlots[slotId];
+        audio->PreloadMissionAudio(static_cast<unsigned short>(eventId), slotId);
+
+        // Preload silently refuses busy slots, while GTA reports invalid slots
+        // as loaded. Matching the stored event is therefore the authoritative
+        // acceptance proof before a resource receives a handle.
+        const int currentEvent = audio->GetMissionAudioEvent(slotId);
+        if (currentEvent != static_cast<int>(eventId))
+        {
+            if (currentEvent != slot.freeEventFingerprint)
+                slot.managed = false;
+            continue;
+        }
+
+        const unsigned int handle = AllocateMissionAudioHandle();
+        slot.owner = resource;
+        slot.handle = handle;
+        slot.eventId = eventId;
+        slot.freeEventFingerprint = currentEvent;
+        slot.managed = true;
+        slot.played = false;
+        g_missionAudioHandles.emplace(handle, slotId);
+        return handle;
+    }
+    return false;
+}
+
+bool CLuaAudioDefs::IsMissionAudioLoaded(lua_State* luaVM, unsigned int handle)
+{
+    unsigned int       slotId{};
+    SMissionAudioSlot* slot = GetOwnedMissionAudioSlot(luaVM, handle, &slotId);
+    CAudioEngine*      audio = GetAudioEngine();
+    return slot && audio && audio->GetMissionAudioEvent(slotId) == static_cast<int>(slot->eventId) && audio->GetMissionAudioLoadingStatus(slotId) == 1;
+}
+
+bool CLuaAudioDefs::PlayMissionAudio(lua_State* luaVM, unsigned int handle)
+{
+    unsigned int       slotId{};
+    SMissionAudioSlot* slot = GetOwnedMissionAudioSlot(luaVM, handle, &slotId);
+    CAudioEngine*      audio = GetAudioEngine();
+    if (!slot || !audio || slot->played || audio->GetMissionAudioEvent(slotId) != static_cast<int>(slot->eventId) ||
+        audio->GetMissionAudioLoadingStatus(slotId) != 1)
+    {
+        return false;
+    }
+
+    if (!audio->PlayLoadedMissionAudio(slotId))
+        return false;
+
+    slot->played = true;
+    return true;
+}
+
+bool CLuaAudioDefs::IsMissionAudioFinished(lua_State* luaVM, unsigned int handle)
+{
+    unsigned int       slotId{};
+    SMissionAudioSlot* slot = GetOwnedMissionAudioSlot(luaVM, handle, &slotId);
+    CAudioEngine*      audio = GetAudioEngine();
+    return slot && audio && slot->played && audio->GetMissionAudioEvent(slotId) == static_cast<int>(slot->eventId) &&
+           audio->IsMissionAudioSampleFinished(slotId);
+}
+
+bool CLuaAudioDefs::ReleaseMissionAudio(lua_State* luaVM, unsigned int handle)
+{
+    unsigned int slotId{};
+    if (!GetOwnedMissionAudioSlot(luaVM, handle, &slotId))
+        return false;
+
+    ReleaseMissionAudioSlot(slotId);
+    return true;
+}
+
+void CLuaAudioDefs::ReleaseMissionAudioForResource(CResource* resource)
+{
+    if (!resource)
+        return;
+
+    for (unsigned int slotId = 0; slotId < g_missionAudioSlots.size(); ++slotId)
+    {
+        if (g_missionAudioSlots[slotId].owner == resource)
+            ReleaseMissionAudioSlot(slotId);
+    }
 }
 
 int CLuaAudioDefs::PlaySound(lua_State* luaVM)

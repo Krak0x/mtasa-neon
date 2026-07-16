@@ -1292,13 +1292,37 @@ void CKeyBinds::AcquireGameplayControlInhibit()
 {
     ++m_uiGameplayControlInhibitCount;
     if (m_uiGameplayControlInhibitCount == 1)
+    {
         CallAllGTAControlBinds(CONTROL_BOTH, false);
+
+        // Vanilla SET_PLAYER_CONTROL OFF sets bPlayerSafe in GTA's native pad.
+        // Vehicle controllers consume the surrounding DisablePlayerControls
+        // word to apply full brake, handbrake, zero throttle, and the 0.28 speed
+        // clamp. Snapshot only our bit so nested leases preserve other systems.
+        if (CPad* pad = m_pCore->GetGame()->GetPad())
+        {
+            m_bNativePlayerSafeFlagWasSet = pad->IsPlayerSafeControlFlagSet();
+            m_bNativePlayerSafeFlagCaptured = true;
+            pad->SetPlayerSafeControlFlag(true);
+        }
+    }
 }
 
 void CKeyBinds::ReleaseGameplayControlInhibit()
 {
     if (m_uiGameplayControlInhibitCount != 0)
+    {
         --m_uiGameplayControlInhibitCount;
+        if (m_uiGameplayControlInhibitCount == 0)
+        {
+            if (m_bNativePlayerSafeFlagCaptured)
+            {
+                if (CPad* pad = m_pCore->GetGame()->GetPad())
+                    pad->SetPlayerSafeControlFlag(m_bNativePlayerSafeFlagWasSet);
+            }
+            m_bNativePlayerSafeFlagCaptured = false;
+        }
+    }
 }
 
 void CKeyBinds::ResetGTAControlState(SBindableGTAControl* pControl)
@@ -1812,9 +1836,13 @@ unsigned int CKeyBinds::Count(KeyBindType bindType)
 
 void CKeyBinds::DoPreFramePulse()
 {
+    CPad* pad = m_pCore->GetGame()->GetPad();
+    if (m_uiGameplayControlInhibitCount != 0 && m_bNativePlayerSafeFlagCaptured)
+        pad->SetPlayerSafeControlFlag(true);
+
     CControllerState cs;
-    m_pCore->GetGame()->GetPad()->GetCurrentControllerState(&cs);
-    m_pCore->GetGame()->GetPad()->SetLastControllerState(&cs);
+    pad->GetCurrentControllerState(&cs);
+    pad->SetLastControllerState(&cs);
 
     // HACK: chatbox binds
     if (m_pChatBoxBind)

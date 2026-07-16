@@ -11,6 +11,7 @@
 
 #pragma once
 
+#include <cstddef>
 #include <game/CPad.h>
 
 #define MAX_HORN_HISTORY     5
@@ -58,6 +59,8 @@ public:
     BYTE  NoShakeFreq;
 };
 
+static_assert(offsetof(CPadSAInterface, DisablePlayerControls) == 0x10E, "Invalid native control-disable offset for CPadSAInterface");
+
 class CPadSA : public CPad
 {
 private:
@@ -79,4 +82,6 @@ public:
     CPadSAInterface*  GetInterface() { return internalInterface; };
     void              SetHornHistoryValue(bool value);
     void              SetLastTimeTouched(DWORD dwTime);
+    bool              IsPlayerSafeControlFlagSet() const override;
+    void              SetPlayerSafeControlFlag(bool enabled) override;
 };

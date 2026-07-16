@@ -654,12 +654,12 @@ std::uint32_t CClientCamera::AcquireScriptCamera(CResource* owner, bool inhibitC
     return m_uiScriptCameraToken;
 }
 
-bool CClientCamera::ReleaseScriptCamera(CResource* owner, std::uint32_t token)
+bool CClientCamera::ReleaseScriptCamera(CResource* owner, std::uint32_t token, bool preserveFade)
 {
     if (!HasScriptCameraLease(owner, token))
         return false;
 
-    RestoreScriptCameraLease();
+    RestoreScriptCameraLease(preserveFade);
     return true;
 }
 
@@ -680,7 +680,7 @@ bool CClientCamera::HasScriptCameraLease(const CResource* owner, std::uint32_t t
     return owner && owner == m_pScriptCameraOwner && token != 0 && token == m_uiScriptCameraToken;
 }
 
-void CClientCamera::RestoreScriptCameraLease()
+void CClientCamera::RestoreScriptCameraLease(bool preserveFade)
 {
     if (!m_pScriptCameraOwner)
         return;
@@ -704,8 +704,11 @@ void CClientCamera::RestoreScriptCameraLease()
     if (g_pMultiplayer)
         g_pMultiplayer->SetNearClipDistance(m_fScriptCameraPreviousMtaNearClip);
 
-    // A cutscene abort must never strand the client behind a black overlay.
-    FadeIn(0.0f);
+    // Successful scene transitions may intentionally hand control back while
+    // the screen is black, then fade into gameplay. Safety-driven cleanup uses
+    // the default path so an abort can never strand the client behind a fade.
+    if (!preserveFade)
+        FadeIn(0.0f);
     if (m_bScriptCameraPreviousFixed)
     {
         SetMatrix(m_matScriptCameraPrevious);

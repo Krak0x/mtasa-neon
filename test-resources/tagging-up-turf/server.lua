@@ -16,10 +16,15 @@ local mission = {
     demoWalk = nil,
     demoShootSerial = 0,
     demoShoot = nil,
+    demoSceneSerial = 0,
+    demoScene = nil,
     demoEnterSerial = 0,
     demoEnter = nil,
     ballasDepartureSerial = 0,
     ballasDeparture = nil,
+    ballasGangSceneSerial = 0,
+    ballasGangScene = nil,
+    ballasGangSceneCompleted = false,
     vehiclePlaybackSerial = 0,
     vehiclePlayback = nil,
 }
@@ -240,6 +245,26 @@ local function cancelDemoEnter(reason)
     end
 end
 
+local function cancelDemoScene(reason)
+    local scene = mission.demoScene
+    if not scene then
+        return
+    end
+
+    mission.demoScene = nil
+    for _, timerName in ipairs({"readyGuardTimer", "playerExitTimer", "fadeTimer", "stageTimer", "skipArmTimer", "audioGuardTimer", "animationGuardTimer",
+                                "finalCheckGuardTimer", "releaseGuardTimer"}) do
+        if isTimer(scene[timerName]) then
+            killTimer(scene[timerName])
+        end
+    end
+    for _, player in ipairs(scene.players) do
+        if isElement(player) then
+            triggerClientEvent(player, "tagup:sweetDemoSceneCancel", resourceRoot, scene.id, reason or "server_cancelled")
+        end
+    end
+end
+
 local function cancelBallasDeparture(reason)
     local departure = mission.ballasDeparture
     if not departure then
@@ -250,12 +275,47 @@ local function cancelBallasDeparture(reason)
     if isTimer(departure.guardTimer) then
         killTimer(departure.guardTimer)
     end
+    if isTimer(departure.cameraGuardTimer) then
+        killTimer(departure.cameraGuardTimer)
+    end
+    if isTimer(departure.finalCheckGuardTimer) then
+        killTimer(departure.finalCheckGuardTimer)
+    end
     if isTimer(departure.postStartTimer) then
         killTimer(departure.postStartTimer)
     end
     for _, player in ipairs(mission.party) do
         if isElement(player) then
             triggerClientEvent(player, "tagup:ballasDepartureCancel", resourceRoot, departure.id, reason or "server_cancelled")
+        end
+    end
+end
+
+local function cancelBallasGangScene(reason)
+    local scene = mission.ballasGangScene
+    if not scene then
+        return
+    end
+
+    mission.ballasGangScene = nil
+    if isTimer(scene.readyGuardTimer) then
+        killTimer(scene.readyGuardTimer)
+    end
+    if isTimer(scene.preSkipTimer) then
+        killTimer(scene.preSkipTimer)
+    end
+    if isTimer(scene.completionTimer) then
+        killTimer(scene.completionTimer)
+    end
+    if isTimer(scene.finalCheckGuardTimer) then
+        killTimer(scene.finalCheckGuardTimer)
+    end
+    if isTimer(scene.releaseGuardTimer) then
+        killTimer(scene.releaseGuardTimer)
+    end
+    for _, player in ipairs(scene.players) do
+        if isElement(player) then
+            triggerClientEvent(player, "tagup:ballasGangSceneCancel", resourceRoot, scene.id, reason or "server_cancelled")
         end
     end
 end
@@ -323,10 +383,27 @@ local function replaceTagObject(tagId)
     end
 end
 
+local failMission
+
+local function setBallasActive(active)
+    for index = 1, 2 do
+        local ped = mission.entities["enemy" .. index]
+        if isElement(ped) and not isPedDead(ped) then
+            setElementData(ped, "tagup.active", active == true, true)
+        end
+    end
+end
+
 local function spawnBallas()
+    if isElement(mission.entities.enemy1) and isElement(mission.entities.enemy2) then
+        return true
+    end
+    if isElement(mission.entities.enemy1) or isElement(mission.entities.enemy2) then
+        return failMission("La creation des deux Ballas est dans un etat partiel.")
+    end
     local positions = {
-        {2401.0, -1471.0, 24.2, 230, 102, 22},
-        {2398.0, -1465.0, 24.2, 210, 103, 5},
+        {2400.45, -1470.39, 22.97, 82.40, 102, 22},
+        {2396.48, -1469.90, 22.99, 262.64, 103, 5},
     }
     local enemies = {}
     for index, data in ipairs(positions) do
@@ -335,7 +412,11 @@ local function spawnBallas()
             setElementDimension(ped, TAGUP.dimension)
             giveWeapon(ped, data[6], data[6] == 22 and 500 or 1, true)
             setElementData(ped, "tagup.enemy", true, true)
-            setElementData(ped, "tagup.active", true, true)
+            setElementData(ped, TAGUP.missionActorData, true, true)
+            -- SWEET1 keeps both Flats passive through the 500 + 6500 ms
+            -- camera scene. Activating their syncer-owned AI only after every
+            -- client releases its lease prevents immobilized players being shot.
+            setElementData(ped, "tagup.active", false, true)
             setPedStat(ped, 76, 700)
             if isElement(mission.leader) then
                 setElementSyncer(ped, mission.leader)
@@ -344,7 +425,19 @@ local function spawnBallas()
             table.insert(enemies, ped)
         end
     end
-    broadcastState({enemies = enemies, message = "Ballas: Get that fool!"})
+    if #enemies ~= 2 then
+        for _, ped in ipairs(enemies) do
+            if isElement(ped) then
+                destroyElement(ped)
+            end
+        end
+        mission.entities.enemy1 = nil
+        mission.entities.enemy2 = nil
+        failMission("Les deux Ballas requis n'ont pas pu etre crees.")
+        return false
+    end
+    broadcastState({enemies = enemies, message = "Deux Ballas vous ont reperes."})
+    return true
 end
 
 local function activeTagIds()
@@ -366,8 +459,6 @@ local function currentGroupComplete()
     end
     return true
 end
-
-local failMission
 
 local function startVehiclePlaybackReturn(extra)
     local sweet, vehicle = mission.entities.sweet, mission.entities.vehicle
@@ -404,7 +495,7 @@ end
 local function advanceAfterTags(extra)
     if mission.stage == "tags_idlewood" then
         setStage("return_car", extra)
-    elseif mission.stage == "tags_ballas" then
+    elseif mission.stage == "tags_ballas" and mission.ballasGangSceneCompleted then
         setStage("rooftop", extra)
     elseif mission.stage == "rooftop" then
         startVehiclePlaybackReturn(extra)
@@ -417,6 +508,14 @@ failMission = function(reason)
     if not mission.running or mission.finishing or mission.stage == "failed" then
         return
     end
+    -- A failure must not leave a resource-owned control inhibitor alive during
+    -- the failure banner. The scene cancel restores every local camera lease.
+    cancelDemoLeave("mission_failed")
+    cancelDemoWalk("mission_failed")
+    cancelDemoShoot("mission_failed")
+    cancelDemoEnter("mission_failed")
+    cancelDemoScene("mission_failed")
+    cancelBallasGangScene("mission_failed")
     mission.stage = "failed"
     broadcastState({failureReason = reason or "La mission a echoue."})
     outputDebugString("[tagging-up-turf] Failed: " .. tostring(reason))
@@ -529,7 +628,9 @@ finishMission = function(passed, traceExtra)
     cancelDemoWalk("mission_finished")
     cancelDemoShoot("mission_finished")
     cancelDemoEnter("mission_finished")
+    cancelDemoScene("mission_finished")
     cancelBallasDeparture("mission_finished")
+    cancelBallasGangScene("mission_finished")
     cancelVehiclePlayback("mission_finished")
     clearMissionTimers()
     if passed then
@@ -569,7 +670,10 @@ finishMission = function(passed, traceExtra)
         mission.demoWalk = nil
         mission.demoShoot = nil
         mission.demoEnter = nil
+        mission.demoScene = nil
         mission.ballasDeparture = nil
+        mission.ballasGangScene = nil
+        mission.ballasGangSceneCompleted = false
         mission.vehiclePlayback = nil
     end, delay, 1)
 end
@@ -602,6 +706,7 @@ local function startMission(requester)
     end
 
     mission.running = true
+    mission.ballasGangSceneCompleted = false
     mission.leader = requester
     mission.party = {requester}
     for _, player in ipairs(getElementsByType("player")) do
@@ -657,6 +762,285 @@ local function startMission(requester)
     end, 7000, 1))
 end
 
+local function allBallasGangScenePlayersReady(scene, field)
+    for _, player in ipairs(scene.players) do
+        if not isElement(player) or not scene[field][player] then
+            return false
+        end
+    end
+    return true
+end
+
+local function completeBallasGangScene(scene)
+    if mission.ballasGangScene ~= scene then
+        return
+    end
+
+    local reason = scene.skipped and "skipped" or "completed"
+    mission.ballasGangSceneCompleted = true
+    outputDebugString(("[tagging-up-turf] Ballas gang scene #%d %s after %d ms; all camera leases acknowledged"):format(
+                          scene.id, reason, getTickCount() - scene.startedAt))
+    cancelBallasGangScene(reason)
+    setBallasActive(true)
+    broadcastState({message = "Ballas: Get that fool!", ballasGangSceneCompleted = true})
+    if currentGroupComplete() then
+        rememberTimer(setTimer(advanceAfterTags, 900, 1))
+    end
+end
+
+local function releaseBallasGangSceneLeases(scene)
+    if mission.ballasGangScene ~= scene or scene.releasing then
+        return
+    end
+
+    scene.releasing = true
+    scene.releasedPlayers = {}
+    if isTimer(scene.finalCheckGuardTimer) then
+        killTimer(scene.finalCheckGuardTimer)
+    end
+    scene.releaseGuardTimer = rememberTimer(setTimer(function(expectedId)
+        local active = mission.ballasGangScene
+        if not mission.running or mission.stage ~= "tags_ballas" or not active or active.id ~= expectedId then
+            return
+        end
+        cancelBallasGangScene("camera_release_timeout")
+        failMission("La restauration de la camera Ballas a depasse le delai de garde.")
+    end, TAGUP.ballasGangScene.finalCheckTimeout, 1, scene.id))
+
+    local reason = scene.skipped and "skipped" or "completed"
+    for _, player in ipairs(scene.players) do
+        if isElement(player) then
+            triggerClientEvent(player, "tagup:ballasGangSceneRelease", resourceRoot, scene.id, reason)
+        end
+    end
+end
+
+local function requestBallasGangSceneFinalCheck(scene, skipped)
+    if mission.ballasGangScene ~= scene or scene.finalCheckRequested then
+        return
+    end
+
+    scene.finalCheckRequested = true
+    scene.skipped = skipped == true
+    scene.finalReadyPlayers = {}
+    if isTimer(scene.preSkipTimer) then
+        killTimer(scene.preSkipTimer)
+    end
+    if isTimer(scene.completionTimer) then
+        killTimer(scene.completionTimer)
+    end
+    scene.finalCheckGuardTimer = rememberTimer(setTimer(function(expectedId)
+        local active = mission.ballasGangScene
+        if not mission.running or mission.stage ~= "tags_ballas" or not active or active.id ~= expectedId then
+            return
+        end
+        cancelBallasGangScene("camera_final_check_timeout")
+        failMission("La verification finale de la mini-scene Ballas a depasse le delai de garde.")
+    end, TAGUP.ballasGangScene.finalCheckTimeout, 1, scene.id))
+
+    for _, player in ipairs(scene.players) do
+        if isElement(player) then
+            triggerClientEvent(player, "tagup:ballasGangSceneFinalCheck", resourceRoot, scene.id)
+        end
+    end
+end
+
+local function startBallasGangSceneTimeline(scene)
+    if mission.ballasGangScene ~= scene or scene.started or not allBallasGangScenePlayersReady(scene, "readyPlayers") then
+        return
+    end
+
+    scene.started = true
+    scene.startedAt = getTickCount()
+    if isTimer(scene.readyGuardTimer) then
+        killTimer(scene.readyGuardTimer)
+    end
+    outputDebugString(("[tagging-up-turf] Ballas gang camera barrier #%d passed for %d participant(s)"):format(scene.id,
+                                                                                                               #scene.players))
+    for _, player in ipairs(scene.players) do
+        if isElement(player) then
+            triggerClientEvent(player, "tagup:ballasGangSceneStart", resourceRoot, scene.id)
+        end
+    end
+
+    -- SKIP_CUTSCENE_START follows the SCM's initial WAIT 500. The server owns
+    -- the window so one co-op client cannot resume while the others stay frozen.
+    scene.preSkipTimer = rememberTimer(setTimer(function(expectedId)
+        local active = mission.ballasGangScene
+        if not active or active.id ~= expectedId or active.finalCheckRequested then
+            return
+        end
+        active.skippable = true
+        for _, player in ipairs(active.players) do
+            if isElement(player) then
+                triggerClientEvent(player, "tagup:ballasGangSceneSkippable", resourceRoot, active.id,
+                                   player == mission.leader)
+            end
+        end
+        active.completionTimer = rememberTimer(setTimer(function(completionId)
+            local completing = mission.ballasGangScene
+            if completing and completing.id == completionId then
+                requestBallasGangSceneFinalCheck(completing, false)
+            end
+        end, TAGUP.ballasGangScene.skippableDuration, 1, active.id))
+    end, TAGUP.ballasGangScene.preSkipWait, 1, scene.id))
+end
+
+local function beginBallasGangScene()
+    if not mission.running or mission.stage ~= "tags_ballas" or mission.ballasGangScene or mission.ballasGangSceneCompleted then
+        return
+    end
+
+    local enemies = {mission.entities.enemy1, mission.entities.enemy2}
+    for _, ped in ipairs(enemies) do
+        if not isElement(ped) then
+            return failMission("Les deux Ballas requis pour la mini-scene n'ont pas pu etre crees.")
+        end
+        if isPedDead(ped) then
+            -- The SCM consumes gang_hassle even when either alive check fails:
+            -- the shot is skipped once and the tag loop continues.
+            mission.ballasGangSceneCompleted = true
+            setBallasActive(false)
+            outputDebugString("[tagging-up-turf] Ballas gang scene skipped because one Flat is dead")
+            broadcastState({ballasGangSceneCompleted = true})
+            if currentGroupComplete() then
+                rememberTimer(setTimer(advanceAfterTags, 900, 1))
+            end
+            return
+        end
+    end
+
+    mission.ballasGangSceneSerial = mission.ballasGangSceneSerial + 1
+    local scene = {
+        id = mission.ballasGangSceneSerial,
+        enemies = enemies,
+        players = {unpack(mission.party)},
+        readyPlayers = {},
+        requestedAt = getTickCount(),
+    }
+    mission.ballasGangScene = scene
+    setBallasActive(false)
+    scene.readyGuardTimer = rememberTimer(setTimer(function(expectedId)
+        local active = mission.ballasGangScene
+        if not mission.running or mission.stage ~= "tags_ballas" or not active or active.id ~= expectedId then
+            return
+        end
+        cancelBallasGangScene("camera_ready_timeout")
+        failMission("La mini-scene Ballas n'est pas prete sur tous les clients.")
+    end, TAGUP.ballasGangScene.readyTimeout, 1, scene.id))
+
+    outputDebugString(("[tagging-up-turf] Preparing Ballas gang scene #%d at SCM trigger %.2f, %.2f"):format(
+                          scene.id, TAGUP.ballasGangScene.trigger.x, TAGUP.ballasGangScene.trigger.y))
+    for _, player in ipairs(scene.players) do
+        if isElement(player) then
+            triggerClientEvent(player, "tagup:ballasGangScenePrepare", resourceRoot, scene.id, enemies)
+        end
+    end
+end
+
+addEvent("tagup:ballasGangTrigger", true)
+addEventHandler("tagup:ballasGangTrigger", resourceRoot, function()
+    local player = client
+    if source ~= resourceRoot or player ~= mission.leader or not isMissionPlayer(player) or not mission.running or
+        mission.stage ~= "tags_ballas" or mission.ballasGangScene or mission.ballasGangSceneCompleted then
+        return
+    end
+
+    local x, y = getElementPosition(player)
+    local trigger = TAGUP.ballasGangScene.trigger
+    if not isElement(mission.entities.enemy1) and math.abs(x - trigger.x) <= trigger.spawnRadiusX and
+        math.abs(y - trigger.y) <= trigger.spawnRadiusY then
+        spawnBallas()
+    end
+    if math.abs(x - trigger.x) <= trigger.radiusX and math.abs(y - trigger.y) <= trigger.radiusY then
+        beginBallasGangScene()
+    end
+end)
+
+addEvent("tagup:ballasGangSceneReady", true)
+addEventHandler("tagup:ballasGangSceneReady", resourceRoot, function(sceneId, result, details)
+    local player = client
+    local scene = mission.ballasGangScene
+    if source ~= resourceRoot or not mission.running or mission.stage ~= "tags_ballas" or not isMissionPlayer(player) or not scene or
+        scene.id ~= tonumber(sceneId) or scene.started or scene.readyPlayers[player] then
+        outputDebugString("[tagging-up-turf] Rejected stale or unauthorized Ballas gang camera result", 2)
+        return
+    end
+
+    outputDebugString(("[tagging-up-turf] Ballas gang camera #%d player=%s result=%s (%s)"):format(
+                          scene.id, getPlayerName(player), tostring(result), tostring(details or ""):sub(1, 180)))
+    if result ~= "ready" then
+        cancelBallasGangScene("client_camera_" .. tostring(result))
+        return failMission("La camera native de la mini-scene Ballas a echoue: " .. tostring(result))
+    end
+    scene.readyPlayers[player] = true
+    startBallasGangSceneTimeline(scene)
+end)
+
+addEvent("tagup:ballasGangSceneLeaseLost", true)
+addEventHandler("tagup:ballasGangSceneLeaseLost", resourceRoot, function(sceneId)
+    local player = client
+    local scene = mission.ballasGangScene
+    if source ~= resourceRoot or not mission.running or mission.stage ~= "tags_ballas" or not isMissionPlayer(player) or not scene or
+        scene.id ~= tonumber(sceneId) then
+        return
+    end
+    outputDebugString(("[tagging-up-turf] Ballas gang camera #%d lease lost on %s"):format(scene.id, getPlayerName(player)), 2)
+    cancelBallasGangScene("client_camera_lease_lost")
+    failMission("Un client a perdu la camera native pendant la mini-scene Ballas.")
+end)
+
+addEvent("tagup:ballasGangSceneSkipRequest", true)
+addEventHandler("tagup:ballasGangSceneSkipRequest", resourceRoot, function(sceneId)
+    local player = client
+    local scene = mission.ballasGangScene
+    if source ~= resourceRoot or player ~= mission.leader or not isMissionPlayer(player) or not scene or scene.id ~= tonumber(sceneId) or
+        not scene.skippable or scene.finalCheckRequested then
+        return
+    end
+    outputDebugString(("[tagging-up-turf] Ballas gang scene #%d global skip accepted from leader %s"):format(scene.id,
+                                                                                                              getPlayerName(player)))
+    requestBallasGangSceneFinalCheck(scene, true)
+end)
+
+addEvent("tagup:ballasGangSceneFinalResult", true)
+addEventHandler("tagup:ballasGangSceneFinalResult", resourceRoot, function(sceneId, result)
+    local player = client
+    local scene = mission.ballasGangScene
+    if source ~= resourceRoot or not mission.running or mission.stage ~= "tags_ballas" or not isMissionPlayer(player) or not scene or
+        scene.id ~= tonumber(sceneId) or not scene.finalCheckRequested or scene.finalReadyPlayers[player] then
+        outputDebugString("[tagging-up-turf] Rejected stale or unauthorized Ballas gang final camera result", 2)
+        return
+    end
+    if result ~= "ready" then
+        cancelBallasGangScene("client_camera_final_" .. tostring(result))
+        return failMission("Un client a perdu la camera avant la fin de la mini-scene Ballas.")
+    end
+    scene.finalReadyPlayers[player] = true
+    if allBallasGangScenePlayersReady(scene, "finalReadyPlayers") then
+        releaseBallasGangSceneLeases(scene)
+    end
+end)
+
+addEvent("tagup:ballasGangSceneReleased", true)
+addEventHandler("tagup:ballasGangSceneReleased", resourceRoot, function(sceneId, result)
+    local player = client
+    local scene = mission.ballasGangScene
+    if source ~= resourceRoot or not mission.running or mission.stage ~= "tags_ballas" or not isMissionPlayer(player) or not scene or
+        scene.id ~= tonumber(sceneId) or not scene.releasing or scene.releasedPlayers[player] then
+        outputDebugString("[tagging-up-turf] Rejected stale or unauthorized Ballas gang release result", 2)
+        return
+    end
+    if result ~= "released" then
+        cancelBallasGangScene("client_camera_release_" .. tostring(result))
+        return failMission("Un client n'a pas pu restaurer sa camera apres la mini-scene Ballas.")
+    end
+    scene.releasedPlayers[player] = true
+    if allBallasGangScenePlayersReady(scene, "releasedPlayers") then
+        completeBallasGangScene(scene)
+    end
+end)
+
 addCommandHandler("tagup", function(player)
     if not player then
         return
@@ -688,6 +1072,7 @@ addCommandHandler("tagupskip", function(player)
         setStage("demo", {traceSkipped = true})
         triggerEvent("tagup:beginDemo", resourceRoot)
     elseif mission.stage == "demo" then
+        cancelDemoScene("stage_skipped")
         cancelDemoLeave("stage_skipped")
         cancelDemoWalk("stage_skipped")
         cancelDemoShoot("stage_skipped")
@@ -699,7 +1084,15 @@ addCommandHandler("tagupskip", function(player)
         -- so later skip stages remain usable without weakening the real path.
         warpSweetIntoFirstFreeSeat()
         setStage("tags_idlewood", {traceSkipped = true})
+    elseif mission.stage == "tags_ballas" and mission.ballasGangScene then
+        if mission.ballasGangScene.skippable and not mission.ballasGangScene.finalCheckRequested then
+            requestBallasGangSceneFinalCheck(mission.ballasGangScene, true)
+        end
     elseif mission.stage == "tags_idlewood" or mission.stage == "tags_ballas" or mission.stage == "rooftop" then
+        if mission.stage == "tags_ballas" then
+            mission.ballasGangSceneCompleted = true
+            setBallasActive(false)
+        end
         for _, id in ipairs(activeTagIds()) do
             mission.completedTags[id] = true
             mission.tagProgress[id] = 1
@@ -710,14 +1103,12 @@ addCommandHandler("tagupskip", function(player)
         setStage("drive_ballas", {traceSkipped = true})
     elseif mission.stage == "drive_ballas" then
         setStage("tags_ballas", {traceSkipped = true})
-        spawnBallas()
     elseif mission.stage == "ballas_departure" then
         cancelBallasDeparture("stage_skipped")
         for _, member in ipairs(mission.party) do
             removePedFromVehicle(member)
         end
         setStage("tags_ballas", {traceSkipped = true})
-        spawnBallas()
     elseif mission.stage == "return_after_roof" then
         setStage("drive_home", {traceSkipped = true})
     elseif mission.stage == "drive_home" then
@@ -725,8 +1116,8 @@ addCommandHandler("tagupskip", function(player)
     end
 end)
 
-local function startDemoWalk(sweet)
-    local profile = TAGUP.sweetDemoWalk
+local function startDemoWalk(sweet, kind, overrideProfile)
+    local profile = overrideProfile or TAGUP.sweetDemoWalk
     local exitX, exitY, exitZ = getElementPosition(sweet)
     local _, _, exitHeading = getElementRotation(sweet)
     local deltaX, deltaY = profile.target.x - exitX, profile.target.y - exitY
@@ -739,7 +1130,7 @@ local function startDemoWalk(sweet)
     setElementSyncer(sweet, mission.leader)
 
     mission.demoWalkSerial = mission.demoWalkSerial + 1
-    local walk = {id = mission.demoWalkSerial, ped = sweet}
+    local walk = {id = mission.demoWalkSerial, ped = sweet, kind = kind or "spray", profile = profile}
     mission.demoWalk = walk
     walk.guardTimer = rememberTimer(setTimer(function(expectedId)
         if not mission.running or mission.stage ~= "demo" or not mission.demoWalk or mission.demoWalk.id ~= expectedId then
@@ -771,8 +1162,7 @@ local function tryCompleteDemoLeave()
     startDemoWalk(ped)
 end
 
-addEvent("tagup:beginDemo", false)
-addEventHandler("tagup:beginDemo", resourceRoot, function()
+local function startDemoLeave()
     if not mission.running or mission.stage ~= "demo" then
         return
     end
@@ -811,6 +1201,394 @@ addEventHandler("tagup:beginDemo", resourceRoot, function()
 
     outputDebugString(("[tagging-up-turf] Requesting Sweet native leave-car #%d from syncer %s"):format(leave.id, getPlayerName(mission.leader)))
     triggerClientEvent(mission.leader, "tagup:sweetDemoLeaveStart", resourceRoot, leave.id, sweet, vehicle, TAGUP.sweetDemoLeave)
+end
+
+local startSweetReturnEnter
+
+local function allDemoScenePlayersReported(scene, field)
+    for _, player in ipairs(scene.players) do
+        if not isElement(player) or not scene[field][player] then
+            return false
+        end
+    end
+    return true
+end
+
+local function releaseDemoScene(scene, skipped)
+    if mission.demoScene ~= scene or scene.releasing then
+        return
+    end
+    scene.releasing = true
+    scene.skipped = skipped == true
+    scene.releasedPlayers = {}
+    scene.releaseGuardTimer = rememberTimer(setTimer(function(expectedId)
+        local active = mission.demoScene
+        if active and active.id == expectedId then
+            cancelDemoScene("release_timeout")
+            failMission("La restauration de la camera de demonstration a depasse le delai de garde.")
+        end
+    end, TAGUP.sweetDemoScene.finalCheckTimeout, 1, scene.id))
+    for _, player in ipairs(scene.players) do
+        if isElement(player) then
+            triggerClientEvent(player, "tagup:sweetDemoSceneRelease", resourceRoot, scene.id, scene.skipped)
+        end
+    end
+end
+
+local function finishDemoScene(scene)
+    if mission.demoScene ~= scene then
+        return
+    end
+    local skipped = scene.skipped
+    local ped = mission.entities.sweet
+    outputDebugString(("[tagging-up-turf] Sweet demonstration scene #%d %s after %d ms; camera/audio cleanup acknowledged by every participant")
+                          :format(scene.id, skipped and "skipped" or "completed", getTickCount() - scene.startedAt))
+    cancelDemoScene(skipped and "skipped" or "completed")
+    setStage("tags_idlewood", {deferTraceStep = not skipped, traceSkipped = skipped})
+    startSweetReturnEnter(ped)
+end
+
+local function requestDemoSceneFinalCheck(scene)
+    if mission.demoScene ~= scene or scene.finalCheckRequested then
+        return
+    end
+    scene.finalCheckRequested = true
+    scene.finalReadyPlayers = {}
+    scene.finalCheckGuardTimer = rememberTimer(setTimer(function(expectedId)
+        local active = mission.demoScene
+        if active and active.id == expectedId then
+            cancelDemoScene("final_check_timeout")
+            failMission("La verification finale de la camera de demonstration a depasse le delai de garde.")
+        end
+    end, TAGUP.sweetDemoScene.finalCheckTimeout, 1, scene.id))
+    for _, player in ipairs(scene.players) do
+        if isElement(player) then
+            triggerClientEvent(player, "tagup:sweetDemoSceneFinalCheck", resourceRoot, scene.id)
+        end
+    end
+end
+
+local function playDemoCheckoutAudio(scene)
+    if mission.demoScene ~= scene or scene.checkoutStarted then
+        return
+    end
+    scene.checkoutStarted = true
+    scene.checkoutFinishedPlayers = {}
+    scene.audioGuardTimer = rememberTimer(setTimer(function(expectedId)
+        local active = mission.demoScene
+        if active and active.id == expectedId and not active.finalCheckRequested then
+            cancelDemoScene("checkout_audio_timeout")
+            failMission("La replique SWE1_CA n'a pas termine dans le delai attendu.")
+        end
+    end, TAGUP.sweetDemoScene.audioTimeout, 1, scene.id))
+    for _, player in ipairs(scene.players) do
+        if isElement(player) then
+            triggerClientEvent(player, "tagup:sweetDemoScenePlayAudio", resourceRoot, scene.id, "checkout")
+        end
+    end
+end
+
+local function startDemoReturnWalk(ped)
+    startDemoWalk(ped, "return", TAGUP.sweetDemoScene.sweetReturn)
+end
+
+local function startDemoCheckoutAnimation(scene)
+    if mission.demoScene ~= scene or scene.checkoutAnimationStarted or not isElement(mission.entities.sweet) then
+        return
+    end
+    scene.checkoutAnimationStarted = true
+    local sweet = mission.entities.sweet
+    setElementRotation(sweet, 0, 0, 280)
+    if not setPedAnimation(sweet, "GRAFFITI", "graffiti_Chkout", -1, false, false, true, false, 250, false) then
+        return failMission("GRAFFITI_CHKOUT a ete refusee par le pipeline d'animation synchronise.")
+    end
+    scene.animationGuardTimer = rememberTimer(setTimer(function(expectedId)
+        local active = mission.demoScene
+        if active and active.id == expectedId and not active.checkoutAnimationFinished then
+            cancelDemoScene("checkout_animation_timeout")
+            failMission("GRAFFITI_CHKOUT n'a pas termine dans le delai attendu.")
+        end
+    end, TAGUP.sweetDemoScene.animationTimeout, 1, scene.id))
+    triggerClientEvent(mission.leader, "tagup:sweetDemoCheckoutObserve", resourceRoot, scene.id, sweet)
+end
+
+local function tryStartDemoSprayCamera(scene)
+    if mission.demoScene ~= scene or scene.sprayCameraStarted or not scene.approachAudioFinished or not scene.shootObserved then
+        return
+    end
+    scene.sprayCameraStarted = true
+    for _, player in ipairs(scene.players) do
+        if isElement(player) then
+            triggerClientEvent(player, "tagup:sweetDemoSceneSprayCamera", resourceRoot, scene.id)
+        end
+    end
+end
+
+local function stageDemoActors(scene)
+    if mission.demoScene ~= scene or not isElement(mission.entities.sweet) then
+        return
+    end
+    local profile = TAGUP.sweetDemoScene
+    for index, player in ipairs(scene.players) do
+        if isElement(player) then
+            removePedFromVehicle(player)
+            local offset = profile.partyOffsets[index - 1]
+            setElementPosition(player, profile.leaderStage.x + (offset and offset.x or 0), profile.leaderStage.y + (offset and offset.y or 0),
+                               profile.leaderStage.z)
+            setElementRotation(player, 0, 0, profile.leaderStage.heading)
+        end
+    end
+    setElementPosition(mission.entities.sweet, profile.sweetStage.x, profile.sweetStage.y, profile.sweetStage.z)
+    setElementRotation(mission.entities.sweet, 0, 0, profile.sweetStage.heading)
+    setElementSyncer(mission.entities.sweet, mission.leader)
+    for _, player in ipairs(scene.players) do
+        if isElement(player) then
+            triggerClientEvent(player, "tagup:sweetDemoSceneStaged", resourceRoot, scene.id)
+        end
+    end
+end
+
+local function startDemoSceneTimeline(scene)
+    if mission.demoScene ~= scene or scene.started or not allDemoScenePlayersReported(scene, "readyPlayers") then
+        return
+    end
+    local profile = TAGUP.sweetDemoScene
+    scene.started = true
+    scene.startedAt = getTickCount()
+    if isTimer(scene.readyGuardTimer) then
+        killTimer(scene.readyGuardTimer)
+    end
+    for _, player in ipairs(scene.players) do
+        triggerClientEvent(player, "tagup:sweetDemoSceneStart", resourceRoot, scene.id)
+    end
+    startDemoLeave()
+
+    scene.playerExitTimer = rememberTimer(setTimer(function(expectedId)
+        local active = mission.demoScene
+        if not active or active.id ~= expectedId then
+            return
+        end
+        for _, player in ipairs(active.players) do
+            if isElement(player) then
+                removePedFromVehicle(player)
+            end
+        end
+    end, profile.sweetLeaveLead, 1, scene.id))
+    scene.fadeTimer = rememberTimer(setTimer(function(expectedId)
+        local active = mission.demoScene
+        if not active or active.id ~= expectedId then
+            return
+        end
+        for _, player in ipairs(active.players) do
+            if isElement(player) then
+                triggerClientEvent(player, "tagup:sweetDemoSceneFadeOut", resourceRoot, active.id)
+            end
+        end
+        active.stageTimer = rememberTimer(setTimer(function(stageId)
+            local staging = mission.demoScene
+            if not staging or staging.id ~= stageId then
+                return
+            end
+            stageDemoActors(staging)
+            staging.skipArmTimer = rememberTimer(setTimer(function(dialogueId)
+                local dialogue = mission.demoScene
+                if not dialogue or dialogue.id ~= dialogueId then
+                    return
+                end
+                dialogue.skippable = true
+                dialogue.approachFinishedPlayers = {}
+                dialogue.audioGuardTimer = rememberTimer(setTimer(function(audioId)
+                    local activeAudio = mission.demoScene
+                    if activeAudio and activeAudio.id == audioId and not activeAudio.approachAudioFinished then
+                        cancelDemoScene("approach_audio_timeout")
+                        failMission("La replique SWE1_AR n'a pas termine dans le delai attendu.")
+                    end
+                end, TAGUP.sweetDemoScene.audioTimeout, 1, dialogue.id))
+                for _, player in ipairs(dialogue.players) do
+                    if isElement(player) then
+                        triggerClientEvent(player, "tagup:sweetDemoSceneDialogue", resourceRoot, dialogue.id, player == mission.leader)
+                    end
+                end
+            end, profile.blackHold + profile.skipArmDelay, 1, staging.id))
+        end, profile.blackStageDelay, 1, active.id))
+    end, profile.sweetLeaveLead + profile.fadeOutDelay, 1, scene.id))
+end
+
+local function beginDemoScene()
+    if not mission.running or mission.stage ~= "demo" or mission.demoScene then
+        return
+    end
+    local sweet, vehicle = mission.entities.sweet, mission.entities.vehicle
+    if not isElement(sweet) or not isElement(vehicle) or not isElement(mission.leader) then
+        return failMission("Sweet, la Greenwood ou le leader est indisponible avant la scene de demonstration.")
+    end
+    mission.demoSceneSerial = mission.demoSceneSerial + 1
+    local scene = {id = mission.demoSceneSerial, players = {}, readyPlayers = {}, requestedAt = getTickCount()}
+    mission.demoScene = scene
+    for _, player in ipairs(mission.party) do
+        if isElement(player) then
+            table.insert(scene.players, player)
+        end
+    end
+    scene.readyGuardTimer = rememberTimer(setTimer(function(expectedId)
+        local active = mission.demoScene
+        if active and active.id == expectedId and not active.started then
+            cancelDemoScene("ready_timeout")
+            failMission("La camera ou l'audio de demonstration n'est pas pret sur tous les clients.")
+        end
+    end, TAGUP.sweetDemoScene.readyTimeout, 1, scene.id))
+    for _, player in ipairs(scene.players) do
+        triggerClientEvent(player, "tagup:sweetDemoScenePrepare", resourceRoot, scene.id, sweet)
+    end
+end
+
+addEvent("tagup:beginDemo", false)
+addEventHandler("tagup:beginDemo", resourceRoot, beginDemoScene)
+
+addEvent("tagup:sweetDemoSceneReady", true)
+addEventHandler("tagup:sweetDemoSceneReady", resourceRoot, function(sceneId, result, details)
+    local player, scene = client, mission.demoScene
+    if source ~= resourceRoot or not scene or scene.id ~= tonumber(sceneId) or not isMissionPlayer(player) or scene.started or scene.readyPlayers[player] then
+        return
+    end
+    outputDebugString(("[tagging-up-turf] Sweet demo scene #%d player=%s ready=%s (%s)"):format(
+                          scene.id, getPlayerName(player), tostring(result), tostring(details or ""):sub(1, 180)))
+    if result ~= "ready" then
+        cancelDemoScene("client_prepare_" .. tostring(result))
+        return failMission("La preparation native de la demonstration a echoue: " .. tostring(result))
+    end
+    scene.readyPlayers[player] = true
+    startDemoSceneTimeline(scene)
+end)
+
+addEvent("tagup:sweetDemoSceneLeaseLost", true)
+addEventHandler("tagup:sweetDemoSceneLeaseLost", resourceRoot, function(sceneId)
+    local scene = mission.demoScene
+    if source ~= resourceRoot or not scene or scene.id ~= tonumber(sceneId) or not isMissionPlayer(client) then
+        return
+    end
+    outputDebugString(("[tagging-up-turf] Sweet demo scene #%d lease lost on %s"):format(scene.id, getPlayerName(client)), 2)
+    cancelDemoScene("camera_lease_lost")
+    failMission("Un client a perdu la camera native pendant la demonstration de Sweet.")
+end)
+
+addEvent("tagup:sweetDemoSceneAudioFinished", true)
+addEventHandler("tagup:sweetDemoSceneAudioFinished", resourceRoot, function(sceneId, cue, result)
+    local player, scene = client, mission.demoScene
+    if source ~= resourceRoot or not scene or scene.id ~= tonumber(sceneId) or not isMissionPlayer(player) or result ~= "finished" then
+        return
+    end
+    local field = cue == "approach" and "approachFinishedPlayers" or cue == "checkout" and "checkoutFinishedPlayers" or nil
+    if not field or not scene[field] or scene[field][player] then
+        return
+    end
+    scene[field][player] = true
+    if not allDemoScenePlayersReported(scene, field) then
+        return
+    end
+    if cue == "approach" then
+        if isTimer(scene.audioGuardTimer) then
+            killTimer(scene.audioGuardTimer)
+            scene.audioGuardTimer = nil
+        end
+        scene.approachAudioFinished = true
+        tryStartDemoSprayCamera(scene)
+    else
+        if isTimer(scene.audioGuardTimer) then
+            killTimer(scene.audioGuardTimer)
+            scene.audioGuardTimer = nil
+        end
+        local profile = TAGUP.sweetDemoScene
+        for index, member in ipairs(scene.players) do
+            if isElement(member) then
+                local offset = profile.partyOffsets[index - 1]
+                setElementPosition(member, profile.leaderFinal.x + (offset and offset.x or 0),
+                                   profile.leaderFinal.y + (offset and offset.y or 0), profile.leaderFinal.z)
+                setElementRotation(member, 0, 0, profile.leaderFinal.heading)
+            end
+        end
+        requestDemoSceneFinalCheck(scene)
+    end
+end)
+
+addEvent("tagup:sweetDemoCheckoutResult", true)
+addEventHandler("tagup:sweetDemoCheckoutResult", resourceRoot, function(sceneId, ped, result, details)
+    local scene = mission.demoScene
+    if source ~= resourceRoot or client ~= mission.leader or not scene or scene.id ~= tonumber(sceneId) or ped ~= mission.entities.sweet or
+        not scene.checkoutAnimationStarted or scene.checkoutAnimationFinished then
+        return
+    end
+    if result ~= "finished" then
+        cancelDemoScene("checkout_" .. tostring(result))
+        return failMission("GRAFFITI_CHKOUT a ete interrompue: " .. tostring(details or result))
+    end
+    scene.checkoutAnimationFinished = true
+    if isTimer(scene.animationGuardTimer) then
+        killTimer(scene.animationGuardTimer)
+    end
+    setPedAnimation(ped, false)
+    startDemoReturnWalk(ped)
+end)
+
+addEvent("tagup:sweetDemoSceneFinalResult", true)
+addEventHandler("tagup:sweetDemoSceneFinalResult", resourceRoot, function(sceneId, result)
+    local player, scene = client, mission.demoScene
+    if source ~= resourceRoot or not scene or scene.id ~= tonumber(sceneId) or not scene.finalCheckRequested or
+        not isMissionPlayer(player) or scene.finalReadyPlayers[player] then
+        return
+    end
+    if result ~= "ready" then
+        cancelDemoScene("camera_final_" .. tostring(result))
+        return failMission("Un client a perdu la camera avant la fin de la demonstration.")
+    end
+    scene.finalReadyPlayers[player] = true
+    if allDemoScenePlayersReported(scene, "finalReadyPlayers") then
+        releaseDemoScene(scene, false)
+    end
+end)
+
+addEvent("tagup:sweetDemoSceneReleased", true)
+addEventHandler("tagup:sweetDemoSceneReleased", resourceRoot, function(sceneId, result)
+    local player, scene = client, mission.demoScene
+    if source ~= resourceRoot or not scene or scene.id ~= tonumber(sceneId) or not scene.releasing or not isMissionPlayer(player) or
+        scene.releasedPlayers[player] then
+        return
+    end
+    if result ~= "released" then
+        cancelDemoScene("release_" .. tostring(result))
+        return failMission("Un client n'a pas restaure la demonstration correctement.")
+    end
+    scene.releasedPlayers[player] = true
+    if allDemoScenePlayersReported(scene, "releasedPlayers") then
+        finishDemoScene(scene)
+    end
+end)
+
+addEvent("tagup:sweetDemoSceneSkipRequest", true)
+addEventHandler("tagup:sweetDemoSceneSkipRequest", resourceRoot, function(sceneId)
+    local scene = mission.demoScene
+    if source ~= resourceRoot or client ~= mission.leader or not scene or scene.id ~= tonumber(sceneId) or not scene.skippable or scene.releasing then
+        return
+    end
+    scene.skippable = false
+    scene.skipped = true
+    cancelDemoLeave("scene_skipped")
+    cancelDemoWalk("scene_skipped")
+    cancelDemoShoot("scene_skipped")
+    setPedAnimation(mission.entities.sweet, false)
+    setElementData(mission.entities.demoTag, "tagup.paintAlpha", 255, true)
+    local profile = TAGUP.sweetDemoScene
+    for index, player in ipairs(scene.players) do
+        if isElement(player) then
+            local offset = profile.partyOffsets[index - 1]
+            setElementPosition(player, profile.leaderFinal.x + (offset and offset.x or 0), profile.leaderFinal.y + (offset and offset.y or 0),
+                               profile.leaderFinal.z)
+            setElementRotation(player, 0, 0, profile.leaderFinal.heading)
+        end
+    end
+    setElementPosition(mission.entities.sweet, profile.sweetFinal.x, profile.sweetFinal.y, profile.sweetFinal.z)
+    setElementRotation(mission.entities.sweet, 0, 0, profile.sweetFinal.heading)
+    releaseDemoScene(scene, true)
 end)
 
 addEvent("tagup:sweetDemoLeaveResult", true)
@@ -881,7 +1659,7 @@ local function tryCompleteSweetReturnEnter()
     broadcastState({message = "Sweet est remonte dans la Greenwood."})
 end
 
-local function startSweetReturnEnter(ped)
+startSweetReturnEnter = function(ped)
     local vehicle = mission.entities.vehicle
     local profile = TAGUP.sweetReturnEnter
     if not isElement(ped) or not isElement(vehicle) or not isElement(mission.leader) then
@@ -942,15 +1720,26 @@ addEventHandler("tagup:sweetDemoWalkResult", resourceRoot, function(walkId, ped,
     end
 
     local x, y = getElementPosition(ped)
-    local target = TAGUP.sweetDemoWalk.target
+    local profile = walk.profile or TAGUP.sweetDemoWalk
+    local target = profile.target
     local distance = getDistanceBetweenPoints2D(x, y, target.x, target.y)
-    if distance > TAGUP.sweetDemoWalk.serverCompletionRadius then
+    if distance > profile.serverCompletionRadius then
         cancelDemoWalk("invalid_completion_position")
         return failMission(("Sweet a termine sa marche trop loin du tag (%.2f m)."):format(distance))
     end
 
+    local kind = walk.kind
     cancelDemoWalk("completed")
-    startDemoShoot(ped, distance)
+    if kind == "return" then
+        local scene = mission.demoScene
+        if not scene then
+            return
+        end
+        setElementRotation(ped, 0, 0, TAGUP.sweetDemoScene.sweetFinal.heading)
+        playDemoCheckoutAudio(scene)
+    else
+        startDemoShoot(ped, distance)
+    end
 end)
 
 addEvent("tagup:sweetDemoShootResult", true)
@@ -1006,6 +1795,11 @@ addEventHandler("tagup:sweetDemoShootObserved", resourceRoot, function(shootId, 
 
     shoot.observedAt = getTickCount()
     shoot.progress = 0
+    local demoScene = mission.demoScene
+    if demoScene then
+        demoScene.shootObserved = true
+        tryStartDemoSprayCamera(demoScene)
+    end
     outputDebugString(("[tagging-up-turf] Sweet native shoot #%d observed after %d ms; starting authoritative demo-tag progress (task ceiling=%d ms)"):format(
         shoot.id, shoot.observedAt - shoot.requestedAt, profile.duration))
 
@@ -1057,12 +1851,13 @@ addEventHandler("tagup:sweetDemoShootObserved", resourceRoot, function(shootId, 
                 return failMission("Sweet ou le tag a disparu pendant l'attente de fin de demonstration.")
             end
 
+            local scene = mission.demoScene
             cancelDemoShoot("completed_after_scm_wait")
-            outputDebugString("[tagging-up-turf] SCM WAIT 1000 complete; advancing without the not-yet-ported checkout animation, audio, or camera")
-            -- SWEET1 releases the player to spray the two tags while Sweet walks
-            -- back to the Greenwood. Keep both operations concurrent.
-            setStage("tags_idlewood", {deferTraceStep = true})
-            startSweetReturnEnter(completed.ped)
+            if not scene then
+                return failMission("La scene de demonstration a disparu avant GRAFFITI_CHKOUT.")
+            end
+            outputDebugString("[tagging-up-turf] SCM WAIT 1000 complete; starting synchronized GRAFFITI_CHKOUT")
+            startDemoCheckoutAnimation(scene)
         end, profile.postCompletionWait, 1, active.id))
     end, profile.progressInterval, 0, shoot.id))
 end)
@@ -1074,6 +1869,77 @@ local function allMissionPlayersExitedBallasVehicle(departure)
         end
     end
     return true
+end
+
+local function allMissionPlayersCameraReady(departure)
+    for _, player in ipairs(mission.party) do
+        if isElement(player) and not departure.cameraReadyPlayers[player] then
+            return false
+        end
+    end
+    return true
+end
+
+local function allMissionPlayersCameraFinalReady(departure)
+    for _, player in ipairs(mission.party) do
+        if isElement(player) and not departure.cameraFinalReadyPlayers[player] then
+            return false
+        end
+    end
+    return true
+end
+
+local function requestBallasCameraFinalCheck(departure)
+    if departure.finalCheckRequested or not departure.wanderObserved or not departure.postWaitElapsed then
+        return
+    end
+
+    departure.finalCheckRequested = true
+    departure.cameraFinalReadyPlayers = {}
+    departure.finalCheckGuardTimer = rememberTimer(setTimer(function(expectedId)
+        local active = mission.ballasDeparture
+        if not mission.running or mission.stage ~= "ballas_departure" or not active or active.id ~= expectedId then
+            return
+        end
+        cancelBallasDeparture("camera_final_check_timeout")
+        failMission("La verification finale de la camera Ballas a depasse le delai de garde.")
+    end, TAGUP.ballasDeparture.camera.finalCheckTimeout, 1, departure.id))
+
+    for _, player in ipairs(mission.party) do
+        if isElement(player) then
+            triggerClientEvent(player, "tagup:ballasCameraFinalCheck", resourceRoot, departure.id, departure.vehicle)
+        end
+    end
+end
+
+local function startBallasDepartureScene(departure)
+    if departure.cameraStarted or not allMissionPlayersCameraReady(departure) then
+        return
+    end
+
+    -- Cameras are local state. This barrier gives every participant the same
+    -- authoritative scene boundary before any native leave-car task can start.
+    departure.cameraStarted = true
+    departure.requestedAt = getTickCount()
+    if isTimer(departure.cameraGuardTimer) then
+        killTimer(departure.cameraGuardTimer)
+    end
+    departure.guardTimer = rememberTimer(setTimer(function(expectedId)
+        local active = mission.ballasDeparture
+        if not mission.running or mission.stage ~= "ballas_departure" or not active or active.id ~= expectedId then
+            return
+        end
+        cancelBallasDeparture("server_timeout")
+        failMission("La sequence native de depart de Sweet a depasse le delai de garde.")
+    end, TAGUP.ballasDeparture.guardTimeout, 1, departure.id))
+
+    outputDebugString(("[tagging-up-turf] Ballas camera barrier #%d passed for %d participant(s); starting native exits"):format(
+                          departure.id, #mission.party))
+    for _, player in ipairs(mission.party) do
+        if isElement(player) then
+            triggerClientEvent(player, "tagup:ballasPlayerExitStart", resourceRoot, departure.id, departure.vehicle)
+        end
+    end
 end
 
 local function tryStartBallasWander()
@@ -1112,32 +1978,95 @@ local function startBallasDeparture()
         ped = sweet,
         exitedPlayers = {},
         clientExitReports = {},
+        cameraReadyPlayers = {},
         requestedAt = getTickCount(),
     }
     mission.ballasDeparture = departure
     setStage("ballas_departure", {deferTraceStep = true})
 
-    departure.guardTimer = rememberTimer(setTimer(function(expectedId)
+    departure.cameraGuardTimer = rememberTimer(setTimer(function(expectedId)
         local active = mission.ballasDeparture
         if not mission.running or mission.stage ~= "ballas_departure" or not active or active.id ~= expectedId then
             return
         end
-        cancelBallasDeparture("server_timeout")
-        failMission("La sequence native de depart de Sweet a depasse le delai de garde.")
-    end, TAGUP.ballasDeparture.guardTimeout, 1, departure.id))
+        cancelBallasDeparture("camera_ready_timeout")
+        failMission("La camera d'arrivee Ballas n'est pas prete sur tous les clients.")
+    end, TAGUP.ballasDeparture.camera.readyTimeout, 1, departure.id))
 
     for _, player in ipairs(mission.party) do
         if isElement(player) then
-            triggerClientEvent(player, "tagup:ballasPlayerExitStart", resourceRoot, departure.id, vehicle, TAGUP.ballasDeparture)
+            triggerClientEvent(player, "tagup:ballasCameraPrepare", resourceRoot, departure.id, vehicle)
         end
     end
 end
+
+addEvent("tagup:ballasCameraReady", true)
+addEventHandler("tagup:ballasCameraReady", resourceRoot, function(departureId, vehicle, result, details)
+    local player = client
+    local departure = mission.ballasDeparture
+    if source ~= resourceRoot or not mission.running or mission.stage ~= "ballas_departure" or not departure or departure.cameraStarted or
+        departure.id ~= tonumber(departureId) or departure.vehicle ~= vehicle or vehicle ~= mission.entities.vehicle or not isMissionPlayer(player) then
+        outputDebugString("[tagging-up-turf] Rejected stale or unauthorized Ballas camera result", 2)
+        return
+    end
+    if departure.cameraReadyPlayers[player] then
+        return
+    end
+
+    outputDebugString(("[tagging-up-turf] Ballas camera #%d player=%s result=%s (%s)"):format(
+                          departure.id, getPlayerName(player), tostring(result), tostring(details or ""):sub(1, 180)))
+    if result ~= "ready" then
+        cancelBallasDeparture("client_camera_" .. tostring(result))
+        return failMission("La camera native d'un membre de l'equipe a echoue: " .. tostring(result))
+    end
+    departure.cameraReadyPlayers[player] = true
+    startBallasDepartureScene(departure)
+end)
+
+addEvent("tagup:ballasCameraLeaseLost", true)
+addEventHandler("tagup:ballasCameraLeaseLost", resourceRoot, function(departureId, vehicle)
+    local player = client
+    local departure = mission.ballasDeparture
+    if source ~= resourceRoot or not mission.running or mission.stage ~= "ballas_departure" or not departure or
+        departure.id ~= tonumber(departureId) or departure.vehicle ~= vehicle or vehicle ~= mission.entities.vehicle or not isMissionPlayer(player) then
+        outputDebugString("[tagging-up-turf] Rejected stale or unauthorized Ballas camera lease-loss report", 2)
+        return
+    end
+
+    outputDebugString(("[tagging-up-turf] Ballas camera #%d lease lost on %s"):format(departure.id, getPlayerName(player)), 2)
+    cancelBallasDeparture("client_camera_lease_lost")
+    failMission("Un client a perdu le controle de la camera native pendant la scene Ballas.")
+end)
+
+addEvent("tagup:ballasCameraFinalResult", true)
+addEventHandler("tagup:ballasCameraFinalResult", resourceRoot, function(departureId, vehicle, result)
+    local player = client
+    local departure = mission.ballasDeparture
+    if source ~= resourceRoot or not mission.running or mission.stage ~= "ballas_departure" or not departure or not departure.finalCheckRequested or
+        departure.id ~= tonumber(departureId) or departure.vehicle ~= vehicle or vehicle ~= mission.entities.vehicle or not isMissionPlayer(player) then
+        outputDebugString("[tagging-up-turf] Rejected stale or unauthorized Ballas final camera result", 2)
+        return
+    end
+    if departure.cameraFinalReadyPlayers[player] then
+        return
+    end
+    if result ~= "ready" then
+        cancelBallasDeparture("client_camera_final_" .. tostring(result))
+        return failMission("Un client a perdu la camera native avant la fin de la scene Ballas.")
+    end
+
+    departure.cameraFinalReadyPlayers[player] = true
+    if allMissionPlayersCameraFinalReady(departure) then
+        cancelBallasDeparture("keep_wandering")
+        setStage("tags_ballas")
+    end
+end)
 
 addEvent("tagup:ballasPlayerExitResult", true)
 addEventHandler("tagup:ballasPlayerExitResult", resourceRoot, function(departureId, vehicle, result, details)
     local player = client
     local departure = mission.ballasDeparture
-    if source ~= resourceRoot or not mission.running or mission.stage ~= "ballas_departure" or not departure or
+    if source ~= resourceRoot or not mission.running or mission.stage ~= "ballas_departure" or not departure or not departure.cameraStarted or
         departure.id ~= tonumber(departureId) or departure.vehicle ~= vehicle or vehicle ~= mission.entities.vehicle or not isMissionPlayer(player) then
         outputDebugString("[tagging-up-turf] Rejected stale or unauthorized Ballas exit result", 2)
         return
@@ -1175,20 +2104,40 @@ addEventHandler("tagup:ballasDriveWanderResult", resourceRoot, function(departur
         cancelBallasDeparture("client_wander_" .. tostring(result))
         return failMission("Le depart natif de Sweet a echoue: " .. tostring(result))
     end
-    if departure.wanderObserved or getElementSyncer(ped) ~= player or getElementSyncer(vehicle) ~= player or getVehicleController(vehicle) then
+    if not departure.wanderAccepted or departure.wanderObserved or getElementSyncer(ped) ~= player or getElementSyncer(vehicle) ~= player or
+        getVehicleController(vehicle) then
         cancelBallasDeparture("invalid_wander_observation")
         return failMission("L'observation 05D2 ne vient pas du double syncer attendu.")
     end
 
     departure.wanderObserved = true
+    if departure.postWaitElapsed then
+        requestBallasCameraFinalCheck(departure)
+    end
+end)
+
+addEvent("tagup:ballasDriveWanderAccepted", true)
+addEventHandler("tagup:ballasDriveWanderAccepted", resourceRoot, function(departureId, ped, vehicle)
+    local player = client
+    local departure = mission.ballasDeparture
+    if source ~= resourceRoot or not mission.running or mission.stage ~= "ballas_departure" or player ~= mission.leader or not departure or
+        departure.id ~= tonumber(departureId) or departure.ped ~= ped or departure.vehicle ~= vehicle or ped ~= mission.entities.sweet or
+        vehicle ~= mission.entities.vehicle or not departure.wanderRequested or departure.wanderAccepted or getElementSyncer(ped) ~= player or
+        getElementSyncer(vehicle) ~= player or getVehicleController(vehicle) then
+        outputDebugString("[tagging-up-turf] Rejected stale or unauthorized DriveWander acceptance", 2)
+        return
+    end
+
+    departure.wanderAccepted = true
     departure.postStartTimer = rememberTimer(setTimer(function(expectedId)
         local active = mission.ballasDeparture
         if not mission.running or mission.stage ~= "ballas_departure" or not active or active.id ~= expectedId then
             return
         end
-        cancelBallasDeparture("keep_wandering")
-        setStage("tags_ballas")
-        spawnBallas()
+        active.postWaitElapsed = true
+        if active.wanderObserved then
+            requestBallasCameraFinalCheck(active)
+        end
     end, TAGUP.ballasDeparture.postStartWait, 1, departure.id))
 end)
 
@@ -1211,7 +2160,11 @@ addEventHandler("tagup:vehicleReady", resourceRoot, function(kind)
         end
     elseif kind == "idlewood" and mission.stage == "drive_idlewood" then
         local x, y, z = getElementPosition(vehicle)
-        if tagupDistance3D(x, y, z, unpack(TAGUP.idlewoodDestination)) < 11 then
+        local target, gate = TAGUP.idlewoodDestination, TAGUP.idlewoodArrival
+        if math.abs(x - target[1]) <= gate.radiusX and math.abs(y - target[2]) <= gate.radiusY and math.abs(z - target[3]) <= gate.radiusZ then
+            -- The camera lease inhibits controls immediately. Neon mirrors the
+            -- native bPlayerSafe pad flag, so GTA brakes the synchronized car
+            -- exactly as it does after SWEET1 SET_PLAYER_CONTROL OFF.
             setStage("demo")
             triggerEvent("tagup:beginDemo", resourceRoot)
         end
@@ -1225,7 +2178,8 @@ addEventHandler("tagup:vehicleReady", resourceRoot, function(kind)
         end
     elseif kind == "ballas" and mission.stage == "drive_ballas" then
         local x, y, z = getElementPosition(vehicle)
-        if tagupDistance3D(x, y, z, unpack(TAGUP.ballasDestination)) < 13 then
+        local target = TAGUP.ballasDestination
+        if math.abs(x - target[1]) <= 4 and math.abs(y - target[2]) <= 4 and math.abs(z - target[3]) <= 4 then
             startBallasDeparture()
         end
     elseif kind == "roof_return" and mission.stage == "return_after_roof" and isPartyInVehicle() then
@@ -1243,7 +2197,7 @@ addEvent("tagup:spray", true)
 addEventHandler("tagup:spray", resourceRoot, function(tagId)
     local player = client
     tagId = tonumber(tagId)
-    if not mission.running or not isMissionPlayer(player) or not tagId or mission.completedTags[tagId] then
+    if not mission.running or not isMissionPlayer(player) or not tagId or mission.completedTags[tagId] or mission.ballasGangScene then
         return
     end
 
@@ -1372,7 +2326,8 @@ end)
 
 addEventHandler("onElementDestroy", root, function()
     if mission.running and (source == mission.entities.sweet or source == mission.entities.vehicle) and
-        (mission.demoLeave or mission.demoWalk or mission.demoShoot or mission.demoEnter or mission.ballasDeparture) then
+        (mission.demoScene or mission.demoLeave or mission.demoWalk or mission.demoShoot or mission.demoEnter or mission.ballasDeparture) then
+        cancelDemoScene("ped_destroyed")
         cancelDemoLeave("ped_destroyed")
         cancelDemoWalk("ped_destroyed")
         cancelDemoShoot("ped_destroyed")
@@ -1384,6 +2339,10 @@ end)
 
 addEventHandler("onPlayerWasted", root, function()
     if mission.running and isMissionPlayer(source) then
+        if mission.demoScene or mission.ballasGangScene then
+            failMission("Un membre de l'equipe est mort pendant une scene de mission.")
+            return
+        end
         local alive = false
         for _, player in ipairs(mission.party) do
             if isElement(player) and not isPedDead(player) then
@@ -1408,7 +2367,9 @@ addEventHandler("onResourceStop", resourceRoot, function()
     cancelDemoWalk("resource_stopped")
     cancelDemoShoot("resource_stopped")
     cancelDemoEnter("resource_stopped")
+    cancelDemoScene("resource_stopped")
     cancelBallasDeparture("resource_stopped")
+    cancelBallasGangScene("resource_stopped")
     clearMissionTimers()
     for _, player in ipairs(mission.party) do
         restorePlayer(player, mission.snapshots[player])

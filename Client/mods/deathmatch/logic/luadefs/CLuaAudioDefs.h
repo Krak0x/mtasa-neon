@@ -30,6 +30,13 @@ public:
     LUA_DECLARE(PlaySFX3D);
     LUA_DECLARE(GetSFXStatus);
 
+    static std::variant<unsigned int, bool> RequestMissionAudio(lua_State* luaVM, unsigned int eventId);
+    static bool                             IsMissionAudioLoaded(lua_State* luaVM, unsigned int handle);
+    static bool                             PlayMissionAudio(lua_State* luaVM, unsigned int handle);
+    static bool                             IsMissionAudioFinished(lua_State* luaVM, unsigned int handle);
+    static bool                             ReleaseMissionAudio(lua_State* luaVM, unsigned int handle);
+    static void                             ReleaseMissionAudioForResource(class CResource* resource);
+
     // Sound effects and synth functions
     LUA_DECLARE(PlaySound);
     LUA_DECLARE(PlaySound3D);

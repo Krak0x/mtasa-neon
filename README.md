@@ -8,16 +8,6 @@ The repository preserves the complete upstream history and adds proof-of-concept
 
 Readers familiar with the historical [MTA:Eir](https://wiki.multitheftauto.com/wiki/MTA:Eir) project may recognize a related ambition: using an independent MTA:BLUE-derived codebase as a laboratory for deeper GTA:SA engine integration, expanded streaming and IMG workflows, reverse-engineered native features, and new scripting APIs. Neon is not a continuation of or affiliated with MTA:Eir; the comparison is about scope and experimental spirit.
 
-## Demos and media
-
-### Native CULL-zone editing
-
-An in-game demonstration of Neon's resource-controlled native CULL-zone editing workflow.
-
-[![Watch the native CULL-zone editing demo](docs/media/native-cull-zone-demo.png)](https://www.youtube.com/watch?v=17QrE21uDgM)
-
-[Watch on YouTube](https://www.youtube.com/watch?v=17QrE21uDgM)
-
 ## MTA:SA vs MTA:SA Neon
 
 Neon keeps MTA:SA's resource model and default gameplay behavior while lifting selected GTA:SA engine limits and exposing new opt-in features to resources. The figures below describe the currently implemented Neon client/server patches and resource workflows.
@@ -65,6 +55,16 @@ Project2DFX support currently covers distant static coronas and timed traffic li
 The repository includes reproducible resource pipelines that demonstrate the generic extended-world systems with concrete maps. A Perry Island slice validates terrain around X=9,000, while imported Liberty City, Vice City, Carcer City, and Bullworth resources exercise large IMG-backed map residency, per-client slot reuse, extended radar catalogs, and dynamic F11 composition.
 
 These maps are test cases, not built-in Neon worlds or engine dependencies. Their generated game assets are intentionally excluded from Git and must be produced locally from legitimately obtained source material.
+
+## Demos and media
+
+### Native CULL-zone editing
+
+An in-game demonstration of Neon's resource-controlled native CULL-zone editing workflow.
+
+[![Watch the native CULL-zone editing demo](docs/media/native-cull-zone-demo.png)](https://www.youtube.com/watch?v=17QrE21uDgM)
+
+[Watch on YouTube](https://www.youtube.com/watch?v=17QrE21uDgM)
 
 ## Neon Lua API additions
 
@@ -165,8 +165,9 @@ The task calls do not yet provide resource-owned handles, completion events, or 
 
 | Function | Side | Description |
 | --- | --- | --- |
-| `acquireScriptCamera([inhibitControls])` | Client | Acquires the resource-exclusive GTA script camera and returns a generation token. |
-| `releaseScriptCamera(token)` | Client | Restores the captured gameplay camera, near clip, widescreen, fade visibility, and optional input inhibition. |
+| `acquireScriptCamera([inhibitControls])` | Client | Acquires the resource-exclusive GTA script camera and returns a generation token. When inhibition is requested, Neon also raises GTA's native player-safe control bit so driven vehicles brake like `SET_PLAYER_CONTROL OFF`. |
+| `releaseScriptCamera(token [, preserveFade])` | Client | Restores the captured gameplay camera, near clip, widescreen, and optional input inhibition. By default it also forces a visible screen; `preserveFade=true` lets a successful scene restore gameplay while still black and fade in afterward. |
+| `isScriptCameraLeaseActive(token)` | Client | Reports whether the calling resource still owns the current camera generation. |
 | `setScriptCameraFixed(token, position, target [, upOffset, jumpCut])` | Client | Activates GTA's fixed camera and native point-at control. |
 | `moveScriptCamera(token, from, to, durationMs [, ease])` | Client | Starts GTA's native linear/eased camera-position track. |
 | `trackScriptCamera(token, from, to, durationMs [, ease])` | Client | Starts GTA's native linear/eased look-at track. |
@@ -179,7 +180,19 @@ The task calls do not yet provide resource-owned handles, completion events, or 
 | `setScriptCameraWidescreen(token, enabled)` | Client | Uses GTA's native widescreen transition. |
 | `setScriptCameraNearClip(token, distanceOrFalse)` | Client | Sets GTA's scripted near clip, or clears it with `false`. |
 
-The token prevents delayed callbacks from an older run in the same resource from controlling a newer camera lease. A resource stop, restart, or disconnect revokes its lease automatically. Gameplay input inhibition is independent from `toggleAllControls`, so cleanup does not overwrite control restrictions owned by other resources. Legacy client camera setters are rejected while the lease is active; an authoritative server camera RPC revokes the lease before taking control.
+The token prevents delayed callbacks from an older run in the same resource from controlling a newer camera lease. A resource stop, restart, or disconnect revokes its lease automatically. Gameplay input inhibition is independent from `toggleAllControls`, so cleanup does not overwrite control restrictions owned by other resources. Its reference-counted native pad bit is also restored to the state captured by the outermost inhibitor. GTA consumes that bit for its standard vehicle slowdown: zero throttle, full brake, handbrake, and a `0.28` speed clamp before physics completes the stop. Neon intentionally does not call the broader `CPlayerInfo::MakePlayerSafe`, which would also clear tasks, grant protection, and mutate world systems. Legacy client camera setters are rejected while the lease is active; an authoritative server camera RPC revokes the lease before taking control.
+
+### Native mission audio
+
+| Function | Side | Description |
+| --- | --- | --- |
+| `requestMissionAudio(eventId)` | Client | Preloads a supported GTA script-audio event and returns an opaque, resource-owned handle. |
+| `isMissionAudioLoaded(handle)` | Client | Reports whether the handle's native event has finished loading. |
+| `playMissionAudio(handle)` | Client | Starts one loaded handle once through GTA's mission-audio player. |
+| `isMissionAudioFinished(handle)` | Client | Reports natural completion after playback has started. |
+| `releaseMissionAudio(handle)` | Client | Clears the owned native event and releases its physical slot. |
+
+Mission audio is local to each client: a co-op resource should preload on every participant, cross a server readiness barrier, then broadcast play and wait for every completion acknowledgement. Handles are generation-scoped to the calling resource and cannot query, play, or release another resource's slot. Resource shutdown releases its handles automatically. The service never preempts an occupied native slot and verifies the stored event after preload because GTA can silently refuse a request. Supported event IDs are the two native script-audio families (`1800..1829` and `2000..45400`); custom event `65535` is intentionally excluded.
 
 ### Native recorded-car playback
 

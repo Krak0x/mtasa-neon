@@ -316,6 +316,22 @@ bool CAudioEngineSA::IsMissionAudioSampleFinished(int slot)
     return cret;
 }
 
+int CAudioEngineSA::GetMissionAudioEvent(int slot)
+{
+    DWORD dwFunc = 0x5072D0;  // CAudioEngine::GetMissionAudioEvent(unsigned char)
+    int   event = -1;
+    // clang-format off
+    __asm
+    {
+        mov     ecx, CLASS_CAudioEngine
+        push    slot
+        call    dwFunc
+        mov     event, eax
+    }
+    // clang-format on
+    return event;
+}
+
 void CAudioEngineSA::PreloadMissionAudio(unsigned short usAudioEvent, int slot)
 {
     DWORD dwFunc = 0x507290;  // CAudioEngine__PreloadMissionAudio

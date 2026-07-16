@@ -124,6 +124,7 @@ public:
     void          PreloadMissionAudio(unsigned short usAudioEvent, int slot = 1);
     unsigned char GetMissionAudioLoadingStatus(int slot = 1);
     bool          IsMissionAudioSampleFinished(int slot = 1);
+    int           GetMissionAudioEvent(int slot = 1);
     void          AttachMissionAudioToPhysical(CPhysical* physical, int slot = 1);
     void          SetMissionAudioPosition(CVector* position, int slot = 1);
     bool          PlayLoadedMissionAudio(int slot = 1);
