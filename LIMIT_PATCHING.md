@@ -568,6 +568,29 @@ and server must support the new bitstream version to synchronize the extended
 range. Unit tests cover new and legacy round trips, boundary positions,
 low-precision positions, and camera serialization.
 
+#### Recipient-versioned server RPC payloads
+
+`CPlayerManager` groups recipients by bitstream version and asks each packet to
+serialize into that group's destination stream. A packet containing a
+versioned position must therefore retain semantic values until `Write`; it must
+not serialize them first into a default/version-zero `CBitStream` and then copy
+the raw bits into the destination. Such a copy keeps the legacy 14-bit XY
+layout while a current client reads the 15-bit layout, shifting every trailing
+field.
+
+This affected the `moveObject`, `setColPolygonPointPosition`, and both
+`addColPolygonPoint` server RPC paths. `CObjectMoveRPCPacket` and
+`CColPolygonPointRPCPacket` now write their copied animation or point directly
+into the recipient-versioned stream. The RPC IDs, element IDs, reliability
+flags, optional polygon index, and legacy layout remain unchanged.
+
+`Tests/client/SyncMovement_Tests.cpp` protects the legacy/current wire widths
+and the raw-copy failure mode. The live `world-sync-regression-test` resource
+checks all four affected call paths. On 2026-07-17 the pre-fix build reproduced
+all four failures; the fixed build then passed at ordinary San Andreas
+coordinates, X=+9500, and X=-9990. In each fixed `MOVE` run the client observed
+35-36 intermediate samples, no regression or overshoot, and zero final error.
+
 ### Validation performed
 
 The patch was built as `Game SA.vcxproj Release|Win32` and exercised against the

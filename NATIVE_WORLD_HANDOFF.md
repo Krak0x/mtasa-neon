@@ -1,6 +1,6 @@
 # Native world streaming handoff
 
-Last updated: 2026-07-16
+Last updated: 2026-07-17
 
 This file is the operational handoff for the native extended-world project
 started from [Dryxio/mtasa-neon issue #1](https://github.com/Dryxio/mtasa-neon/issues/1).
@@ -67,18 +67,16 @@ At the time of this handoff:
 ```text
 Canonical tree  /Users/salimtrouve/Documents/GitHub/mtasa-neon
 Branch          master
-Checkpoint base 3dc633a89 Improve native SWEET1 mission fidelity
-origin/master   3dc633a89 (before the local Checkpoint A commits)
+Fix baseline    33b8fb453 feat(story): drive gang tags from native spray hits
+origin/master   33b8fb453 before the local world-sync compatibility commit
 VM              Windows 11
 VM build tree   C:\dev\mtasa-vm-custom
 ```
 
 Always re-run `git status --short` and `git log -5 --oneline --decorate`; the
-user and other agents work in this repository concurrently. During Checkpoint A
-another actor advanced and pushed `master` from `27a7c34f3` to `3dc633a89` with
-the SWEET1 mission work. That committed work was preserved. Checkpoint A and
-the VM-helper marker repair described below were then committed locally as two
-separate changes and were not pushed. Untracked `.claude`, `Tools`,
+user and other agents work in this repository concurrently. Checkpoint A is
+commit `b9ce96d3c`; the VM-helper marker repair is `3c8d608e5`. Both are now in
+the history reachable from `origin/master`. Untracked `.claude`, `Tools`,
 `game-resources`, and `out.dff` remain unrelated and must not be staged.
 Re-establish ownership from the current diff before every later commit rather
 than relying on this list.
@@ -96,10 +94,8 @@ Read the commit bodies as design records. The core sequence is:
 | `5d43f18e5` | Immutable ProgramData cache with semantic content IDs, locked quarantine, atomic publication, reparse/path protections, guarded revalidation, and activation leases. |
 | `7c38a9278` | Version-gated server resource transport, bounded HTTP streaming, asynchronous full audit, quotas, safe cancellation, atomic publish-only cache insertion, and legacy-client omission. |
 
-Checkpoint A, the inert authorization record, is implemented and passed both
-non-game validation and the user-only live gate recorded below. Use the current
-local `git log` to identify its commit after the checkpoint base; it was kept
-separate from the VM-helper repair and was not pushed.
+Checkpoint A, the inert authorization record, is implemented in `b9ce96d3c`
+and passed both non-game validation and the user-only live gate recorded below.
 
 Relevant earlier extended-world foundations include the enlarged world sectors,
 coordinate/network ranges, water bounds, renderer capacity, radar composition,
@@ -335,6 +331,19 @@ one-frame-per-several-seconds stall after a Bullworth teleport. Their observed
 test cases stopped reproducing after the corresponding fixes, but future
 multi-pack or activation changes could reopen the same lifetime/capacity class
 of bugs.
+
+A server RPC wire regression was also reproduced and fixed on 2026-07-17.
+`moveObject`, `setColPolygonPointPosition`, and both `addColPolygonPoint` forms
+serialized versioned positions into an intermediate version-zero bitstream,
+then copied those legacy-width bits into current recipient streams. The result
+was a stationary/snap-teleporting object and corrupted polygon coordinates or
+indices. Dedicated semantic packets now serialize into each destination stream
+inside `Write`, preserving both legacy and current layouts. The tracked
+`test-resources/world-sync-regression-test` is the live regression gate. The
+user confirmed all four checks at ordinary coordinates, X=+9500, and X=-9990;
+all movement runs had continuous intermediate samples, no regression or
+overshoot, and zero final error. Retain this three-position matrix before later
+protocol, activation, or multi-pack checkpoints are called complete.
 
 The tracked `test-resources/native-world-transport-test` contains metadata and
 instructions only. Its large audited Bullworth payload is intentionally copied

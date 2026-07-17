@@ -133,6 +133,145 @@ TEST(SPosition2DSync, RoundTrip_ExtendedWorldBoundary)
     EXPECT_NEAR(-9500.0f, out.data.vecPosition.fY, 0.01f);
 }
 
+TEST(SPosition2DSync, LegacyVersionPreservesOldWireWidth)
+{
+    MockBitStream   bs(static_cast<unsigned short>(eBitStreamVersion::Unk));
+    SPosition2DSync sync(false);
+    sync.data.vecPosition.fX = 2392.977f;
+    sync.data.vecPosition.fY = -1467.968f;
+    sync.Write(bs);
+    EXPECT_EQ(2 * (14 + POSITION_SYNC_FRACTIONAL_BITS), bs.GetNumberOfBitsUsed());
+    bs.ResetReadPointer();
+    SPosition2DSync out(false);
+    EXPECT_TRUE(out.Read(bs));
+    EXPECT_NEAR(sync.data.vecPosition.fX, out.data.vecPosition.fX, 0.01f);
+    EXPECT_NEAR(sync.data.vecPosition.fY, out.data.vecPosition.fY, 0.01f);
+}
+
+// These tests protect the destination-version wire contract and document why
+// pre-serializing into a version-zero stream is invalid. The server packet
+// callsites are covered end-to-end by world-sync-regression-test.
+TEST(VersionedPositionWireInvariant, ColPolygonPointAndIndexUseDestinationVersion)
+{
+    constexpr unsigned int pointIndex = 3;
+
+    for (const auto version : {eBitStreamVersion::Unk, eBitStreamVersion::Latest})
+    {
+        MockBitStream   bs(static_cast<unsigned short>(version));
+        SPosition2DSync position(false);
+        position.data.vecPosition.fX = 2392.977f;
+        position.data.vecPosition.fY = -1467.968f;
+        bs.Write(&position);
+        bs.Write(pointIndex);
+
+        const int componentBits = version == eBitStreamVersion::Unk ? 14 : POSITION_SYNC_INTEGER_BITS;
+        EXPECT_EQ(2 * (componentBits + POSITION_SYNC_FRACTIONAL_BITS) + 32, bs.GetNumberOfBitsUsed());
+
+        bs.ResetReadPointer();
+        SPosition2DSync decoded(false);
+        unsigned int    decodedIndex = 0;
+        ASSERT_TRUE(bs.Read(&decoded));
+        ASSERT_TRUE(bs.Read(decodedIndex));
+        EXPECT_NEAR(position.data.vecPosition.fX, decoded.data.vecPosition.fX, 0.01f);
+        EXPECT_NEAR(position.data.vecPosition.fY, decoded.data.vecPosition.fY, 0.01f);
+        EXPECT_EQ(pointIndex, decodedIndex);
+    }
+}
+
+TEST(VersionedPositionWireInvariant, ColPolygonPointWithoutIndexEndsAfterPosition)
+{
+    for (const auto version : {eBitStreamVersion::Unk, eBitStreamVersion::Latest})
+    {
+        MockBitStream   bs(static_cast<unsigned short>(version));
+        SPosition2DSync position(false);
+        position.data.vecPosition.fX = 2392.977f;
+        position.data.vecPosition.fY = -1467.968f;
+        bs.Write(&position);
+
+        bs.ResetReadPointer();
+        SPosition2DSync decoded(false);
+        unsigned int    unexpectedIndex = 0;
+        ASSERT_TRUE(bs.Read(&decoded));
+        EXPECT_FALSE(bs.Read(unexpectedIndex));
+    }
+}
+
+TEST(VersionedPositionWireInvariant, ObjectPositionPairUsesDestinationVersion)
+{
+    constexpr unsigned char sentinel = 0xA5;
+
+    for (const auto version : {eBitStreamVersion::Unk, eBitStreamVersion::Latest})
+    {
+        MockBitStream bs(static_cast<unsigned short>(version));
+        SPositionSync source(false);
+        source.data.vecPosition = CVector(2392.977f, -1467.968f, 12.5f);
+        SPositionSync target(false);
+        target.data.vecPosition = CVector(2412.977f, -1467.968f, 12.5f);
+        bs.Write(&source);
+        bs.Write(&target);
+        bs.Write(sentinel);
+
+        const int componentBits = version == eBitStreamVersion::Unk ? 14 : POSITION_SYNC_INTEGER_BITS;
+        EXPECT_EQ(2 * (2 * (componentBits + POSITION_SYNC_FRACTIONAL_BITS) + 32) + 8, bs.GetNumberOfBitsUsed());
+
+        bs.ResetReadPointer();
+        SPositionSync decodedSource(false);
+        SPositionSync decodedTarget(false);
+        unsigned char decodedSentinel = 0;
+        ASSERT_TRUE(bs.Read(&decodedSource));
+        ASSERT_TRUE(bs.Read(&decodedTarget));
+        ASSERT_TRUE(bs.Read(decodedSentinel));
+        EXPECT_NEAR(source.data.vecPosition.fX, decodedSource.data.vecPosition.fX, 0.01f);
+        EXPECT_NEAR(target.data.vecPosition.fX, decodedTarget.data.vecPosition.fX, 0.01f);
+        EXPECT_EQ(sentinel, decodedSentinel);
+    }
+}
+
+TEST(VersionedPositionWireInvariant, ColPolygonRawCopyFromLegacyIntoLatestCannotPreserveTrailingFields)
+{
+    MockBitStream   legacy(static_cast<unsigned short>(eBitStreamVersion::Unk));
+    SPosition2DSync position(false);
+    position.data.vecPosition.fX = 2392.977f;
+    position.data.vecPosition.fY = -1467.968f;
+    legacy.Write(&position);
+    legacy.Write(static_cast<unsigned int>(3));
+
+    MockBitStream latest(static_cast<unsigned short>(eBitStreamVersion::Latest));
+    latest.WriteBits(reinterpret_cast<const char*>(legacy.GetData()), legacy.GetNumberOfBitsUsed());
+    latest.ResetReadPointer();
+
+    SPosition2DSync decoded(false);
+    unsigned int    decodedIndex = 0;
+    ASSERT_TRUE(latest.Read(&decoded));
+    EXPECT_FALSE(latest.Read(decodedIndex));
+}
+
+TEST(VersionedPositionWireInvariant, ObjectRawCopyFromLegacyIntoLatestCannotPreserveTrailingFields)
+{
+    constexpr unsigned char sentinel = 0xA5;
+
+    MockBitStream legacy(static_cast<unsigned short>(eBitStreamVersion::Unk));
+    SPositionSync source(false);
+    source.data.vecPosition = CVector(2392.977f, -1467.968f, 12.5f);
+    SPositionSync target(false);
+    target.data.vecPosition = CVector(2412.977f, -1467.968f, 12.5f);
+    legacy.Write(&source);
+    legacy.Write(&target);
+    legacy.Write(sentinel);
+
+    MockBitStream latest(static_cast<unsigned short>(eBitStreamVersion::Latest));
+    latest.WriteBits(reinterpret_cast<const char*>(legacy.GetData()), legacy.GetNumberOfBitsUsed());
+    constexpr int latestPacketBits = 2 * (2 * (POSITION_SYNC_INTEGER_BITS + POSITION_SYNC_FRACTIONAL_BITS) + 32) + 8;
+    EXPECT_LT(latest.GetNumberOfBitsUsed(), latestPacketBits);
+    latest.ResetReadPointer();
+
+    SPositionSync decodedSource(false);
+    SPositionSync decodedTarget(false);
+    unsigned char decodedSentinel = 0;
+    const bool    decodedCompletePacket = latest.Read(&decodedSource) && latest.Read(&decodedTarget) && latest.Read(decodedSentinel);
+    EXPECT_FALSE(decodedCompletePacket);
+}
+
 // Low-precision position: X/Y use 16-bit over [-10000, 10000] (step ~0.31),
 // Z uses an 11-bit integer offset by -110 (step = 1). Used for lightweight
 // sync where exact position is less critical.

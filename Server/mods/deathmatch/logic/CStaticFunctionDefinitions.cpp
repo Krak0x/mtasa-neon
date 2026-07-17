@@ -59,6 +59,8 @@
 #include "lua/CLuaFunctionParseHelpers.h"
 #include "packets/CLuaPacket.h"
 #include "packets/CElementRPCPacket.h"
+#include "packets/CObjectMoveRPCPacket.h"
+#include "packets/CColPolygonPointRPCPacket.h"
 #include "packets/CVehicleSpawnPacket.h"
 #include "packets/CEntityAddPacket.h"
 #include "packets/CPlayerChangeNickPacket.h"
@@ -8621,12 +8623,7 @@ bool CStaticFunctionDefinitions::MoveObject(CResource* pResource, CElement* pEle
         // Has this resource started for the client?
         if (pResource->IsClientSynced())
         {
-            // Tell the players
-            CBitStream BitStream;
-
-            moveAnimation.ToBitStream(*BitStream.pBitStream, false);
-
-            m_pPlayerManager->BroadcastOnlyJoined(CElementRPCPacket(pObject, MOVE_OBJECT, *BitStream.pBitStream));
+            m_pPlayerManager->BroadcastOnlyJoined(CObjectMoveRPCPacket(*pObject, moveAnimation));
         }
         return true;
     }
@@ -10177,12 +10174,7 @@ bool CStaticFunctionDefinitions::SetColPolygonPointPosition(CColPolygon* pColPol
     {
         RefreshColShapeColliders(pColPolygon);
 
-        CBitStream      BitStream;
-        SPosition2DSync size(false);
-        size.data.vecPosition = vecPoint;
-        BitStream.pBitStream->Write(&size);
-        BitStream.pBitStream->Write(uiPointIndex);
-        m_pPlayerManager->BroadcastOnlyJoined(CElementRPCPacket(pColPolygon, UPDATE_COLPOLYGON_POINT, *BitStream.pBitStream));
+        m_pPlayerManager->BroadcastOnlyJoined(CColPolygonPointRPCPacket(*pColPolygon, CColPolygonPointRPCPacket::Action::Update, vecPoint, uiPointIndex));
         return true;
     }
 
@@ -10195,11 +10187,7 @@ bool CStaticFunctionDefinitions::AddColPolygonPoint(CColPolygon* pColPolygon, co
     {
         RefreshColShapeColliders(pColPolygon);
 
-        CBitStream      BitStream;
-        SPosition2DSync size(false);
-        size.data.vecPosition = vecPoint;
-        BitStream.pBitStream->Write(&size);
-        m_pPlayerManager->BroadcastOnlyJoined(CElementRPCPacket(pColPolygon, ADD_COLPOLYGON_POINT, *BitStream.pBitStream));
+        m_pPlayerManager->BroadcastOnlyJoined(CColPolygonPointRPCPacket(*pColPolygon, CColPolygonPointRPCPacket::Action::Add, vecPoint));
         return true;
     }
 
@@ -10212,12 +10200,7 @@ bool CStaticFunctionDefinitions::AddColPolygonPoint(CColPolygon* pColPolygon, ui
     {
         RefreshColShapeColliders(pColPolygon);
 
-        CBitStream      BitStream;
-        SPosition2DSync size(false);
-        size.data.vecPosition = vecPoint;
-        BitStream.pBitStream->Write(&size);
-        BitStream.pBitStream->Write(uiPointIndex);
-        m_pPlayerManager->BroadcastOnlyJoined(CElementRPCPacket(pColPolygon, ADD_COLPOLYGON_POINT, *BitStream.pBitStream));
+        m_pPlayerManager->BroadcastOnlyJoined(CColPolygonPointRPCPacket(*pColPolygon, CColPolygonPointRPCPacket::Action::Add, vecPoint, uiPointIndex));
         return true;
     }
 
