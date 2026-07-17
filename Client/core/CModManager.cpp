@@ -277,6 +277,7 @@ void CModManager::TryStop()
     // Reset the modules
     CCore::GetSingleton().GetGame()->Reset();
     CCore::GetSingleton().GetMultiplayer()->Reset();
+    CCore::GetSingleton().AdvanceNetworkConnectionGeneration();
     CCore::GetSingleton().GetNetwork()->Reset();
     assert(CCore::GetSingleton().GetNetwork()->GetServerBitStreamVersion() == 0);
 

@@ -10,6 +10,8 @@
  *****************************************************************************/
 
 #include "StdInc.h"
+#include "CNativeWorldAuthorizationStore.h"
+#include "SharedUtil.Hash.h"
 #include <game/CGame.h>
 #include <game/CSettings.h>
 #include <Accctrl.h>
@@ -18,6 +20,7 @@
 #include <fstream>
 #include <array>
 #include <algorithm>
+#include <limits>
 #include "Userenv.h"  // This will enable SharedUtil::ExpandEnvString
 #define ALLOC_STATS_MODULE_NAME "core"
 #include "SharedUtil.hpp"
@@ -332,6 +335,141 @@ CGUI* CCore::GetGUI()
 CNet* CCore::GetNetwork()
 {
     return m_pNet;
+}
+
+void CCore::AdvanceNetworkConnectionGeneration()
+{
+    // Zero is reserved for snapshots captured before any connection attempt.
+    ++m_networkConnectionGeneration;
+    if (m_networkConnectionGeneration == 0)
+        ++m_networkConnectionGeneration;
+}
+
+bool CCore::CaptureNativeWorldStartupAuthorization(unsigned char wireVersion, unsigned char startupMode, unsigned char policy, unsigned char packFormat,
+                                                   const std::string& resourceName, unsigned short resourceNetId, unsigned int resourceStartCounter,
+                                                   SNativeWorldStartupAuthorization& authorization, std::string& error)
+{
+    const bool canonicalResourceName = !resourceName.empty() && resourceName.size() <= 64 &&
+                                       std::all_of(resourceName.begin(), resourceName.end(),
+                                                   [](unsigned char character)
+                                                   {
+                                                       return (character >= 'a' && character <= 'z') || (character >= 'A' && character <= 'Z') ||
+                                                              (character >= '0' && character <= '9') || character == '_' || character == '-' ||
+                                                              character == '.';
+                                                   });
+    if (wireVersion != 1 || startupMode != 1 || policy != 1 || packFormat != 1 || !canonicalResourceName || resourceNetId == 0xFFFF ||
+        resourceStartCounter == 0 || m_networkConnectionGeneration == 0 || m_nativeWorldAuthorizationEpoch == 0 || !m_pNet || !m_pNet->IsConnected())
+    {
+        error = "native-world authorization cannot capture the current session";
+        return false;
+    }
+
+    const char*       serverIdValue = m_pNet->GetCurrentServerId(false);
+    const std::string serverId = serverIdValue ? serverIdValue : "";
+    const char*       numericServerValue = m_pNet->GetConnectedServer(false);
+    const std::string numericServer = numericServerValue ? numericServerValue : "";
+    const char*       numericEndpointValue = m_pNet->GetConnectedServer(true);
+    const std::string numericEndpoint = numericEndpointValue ? numericEndpointValue : "";
+    if (serverId.size() < 10 || serverId.size() > 4096 || numericServer.empty() || numericEndpoint.empty())
+    {
+        error = "native-world authorization server identity or endpoint is unavailable";
+        return false;
+    }
+
+    in_addr             address{};
+    const unsigned long addressValue = inet_addr(numericServer.c_str());
+    address.s_addr = addressValue;
+    const char* canonicalAddress = addressValue == INADDR_NONE || addressValue == INADDR_ANY ? nullptr : inet_ntoa(address);
+    if (!canonicalAddress || numericServer != canonicalAddress)
+    {
+        error = "native-world authorization endpoint is not numeric IPv4";
+        return false;
+    }
+    const std::string endpoint = numericEndpoint;
+    const std::string addressText = numericServer;
+    if (endpoint.size() <= addressText.size() + 1 || endpoint.compare(0, addressText.size(), addressText) != 0 || endpoint[addressText.size()] != ':')
+    {
+        error = "native-world authorization endpoint is not canonical";
+        return false;
+    }
+    char*               portEnd = nullptr;
+    const char*         portText = endpoint.c_str() + addressText.size() + 1;
+    const unsigned long port = strtoul(portText, &portEnd, 10);
+    if (!portText[0] || !portEnd || portEnd[0] || port == 0 || port > std::numeric_limits<unsigned short>::max())
+    {
+        error = "native-world authorization port is invalid";
+        return false;
+    }
+
+    std::string serverIdentity = "mta-native-world-server-id-v1\n";
+    serverIdentity += serverId;
+    authorization = {};
+    authorization.present = true;
+    authorization.wireVersion = wireVersion;
+    authorization.startupMode = startupMode;
+    authorization.policy = policy;
+    authorization.packFormat = packFormat;
+    SharedUtil::GenerateSha256(serverIdentity.data(), static_cast<uint>(serverIdentity.size()), authorization.serverIdDigest.data());
+    memcpy(authorization.serverIpv4.data(), &address.s_addr, authorization.serverIpv4.size());
+    authorization.serverPort = static_cast<unsigned short>(port);
+    authorization.resourceNetId = resourceNetId;
+    authorization.resourceStartCounter = resourceStartCounter;
+    authorization.bitstreamVersion = m_pNet->GetServerBitStreamVersion();
+    authorization.connectionGeneration = m_networkConnectionGeneration;
+    authorization.authorizationEpoch = m_nativeWorldAuthorizationEpoch;
+    authorization.resourceName = resourceName;
+    return true;
+}
+
+SNativeWorldAuthorizationRecordResult CCore::PersistNativeWorldStartupAuthorization(const SNativeWorldStartupAuthorization&     authorization,
+                                                                                    const SNativeWorldAuthorizationPublication& publication)
+{
+    SNativeWorldAuthorizationRecordResult result;
+    SNativeWorldStartupAuthorization      current;
+    if (!CaptureNativeWorldStartupAuthorization(authorization.wireVersion, authorization.startupMode, authorization.policy, authorization.packFormat,
+                                                authorization.resourceName, authorization.resourceNetId, authorization.resourceStartCounter, current,
+                                                result.error))
+        return result;
+    if (current.serverIdDigest != authorization.serverIdDigest || current.serverIpv4 != authorization.serverIpv4 ||
+        current.serverPort != authorization.serverPort || current.bitstreamVersion != authorization.bitstreamVersion ||
+        current.connectionGeneration != authorization.connectionGeneration || current.authorizationEpoch != authorization.authorizationEpoch)
+    {
+        result.error = "native-world authorization session changed before durable publication";
+        return result;
+    }
+    return NativeWorldAuthorizationStore::Persist(authorization, publication);
+}
+
+SNativeWorldAuthorizationRecordResult CCore::InspectNativeWorldStartupAuthorization()
+{
+    return NativeWorldAuthorizationStore::Inspect();
+}
+
+SNativeWorldAuthorizationRecordResult CCore::ClearNativeWorldStartupAuthorization()
+{
+    ++m_nativeWorldAuthorizationEpoch;
+    if (m_nativeWorldAuthorizationEpoch == 0)
+        ++m_nativeWorldAuthorizationEpoch;
+    return NativeWorldAuthorizationStore::Clear();
+}
+
+SNativeWorldAuthorizationRecordResult CCore::RevokeNativeWorldStartupAuthorization(const SNativeWorldStartupAuthorization& authorization,
+                                                                                   const std::string&                      contentId)
+{
+    SNativeWorldAuthorizationRecordResult result;
+    SNativeWorldStartupAuthorization      current;
+    if (!CaptureNativeWorldStartupAuthorization(authorization.wireVersion, authorization.startupMode, authorization.policy, authorization.packFormat,
+                                                authorization.resourceName, authorization.resourceNetId, authorization.resourceStartCounter, current,
+                                                result.error))
+        return result;
+    if (current.serverIdDigest != authorization.serverIdDigest || current.serverIpv4 != authorization.serverIpv4 ||
+        current.serverPort != authorization.serverPort || current.bitstreamVersion != authorization.bitstreamVersion ||
+        current.connectionGeneration != authorization.connectionGeneration)
+    {
+        result.error = "native-world authorization session changed before revocation";
+        return result;
+    }
+    return NativeWorldAuthorizationStore::Revoke(authorization, contentId);
 }
 
 CKeyBindsInterface* CCore::GetKeyBinds()
@@ -1524,6 +1662,7 @@ void CCore::RegisterCommands()
     m_pCommands->Add("showmemstat", _("shows the memory statistics"), CCommandFuncs::ShowMemStat);
     m_pCommands->Add("showframegraph", _("shows the frame timing graph"), CCommandFuncs::ShowFrameGraph);
     m_pCommands->Add("timingdebug", "enables or disables native timing checkpoints", CCommandFuncs::TimingDebug);
+    m_pCommands->Add("nativeworldauth", "inspects or clears the inert native-world authorization record", CCommandFuncs::NativeWorldAuthorization);
     m_pCommands->Add("jinglebells", "", CCommandFuncs::JingleBells);
     m_pCommands->Add("fakelag", "", CCommandFuncs::FakeLag);
 

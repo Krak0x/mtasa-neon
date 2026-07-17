@@ -334,14 +334,6 @@ public:
     void ClearMissionText(const char* key, bool big) override;
     void ClearMissionHelp() override;
 
-    unsigned long long GetNativeWorldStartupAuthorizationEpoch() const override;
-    SNativeWorldAuthorizationRecordResult PersistNativeWorldStartupAuthorization(
-        const SNativeWorldStartupAuthorization& authorization, const SNativeWorldTransportPublishResult& publication) override;
-    SNativeWorldAuthorizationRecordResult InspectNativeWorldStartupAuthorization() override;
-    SNativeWorldAuthorizationRecordResult ClearNativeWorldStartupAuthorization() override;
-    SNativeWorldAuthorizationRecordResult RevokeNativeWorldStartupAuthorization(const SNativeWorldStartupAuthorization& authorization,
-                                                                                  const std::string& contentId) override;
-
 private:
     std::unique_ptr<CPools>           m_Pools;
     CPlayerInfo*                      m_pPlayerInfo;

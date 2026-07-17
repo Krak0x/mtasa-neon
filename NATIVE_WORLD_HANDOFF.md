@@ -41,6 +41,12 @@ code and update both documents rather than silently trusting this snapshot.
   research/exploration/planning agent and an independent implementation/review
   agent where their work is useful. Keep file ownership clear and prefer
   read-only parallel work when edits would overlap.
+- The primary orchestrator owns the implementation and final decisions. Work in
+  short review loops: implement one coherent slice, obtain independent focused
+  feedback, verify each finding against the actual code, apply only justified
+  corrections, and request a second review of security- or lifecycle-sensitive
+  fixes before formatting, tests, and VM builds. Sub-agents are
+  counter-reviewers, not automatic decision makers.
 - Define explicit checkpoints. Tell the user when a build is ready, what to do
   in game, what result to report, and when the client must be closed.
 - Do not commit a gameplay-affecting checkpoint until the user has supplied the
@@ -61,23 +67,21 @@ At the time of this handoff:
 ```text
 Canonical tree  /Users/salimtrouve/Documents/GitHub/mtasa-neon
 Branch          master
-HEAD            7c38a9278 feat(streaming): publish native world packs from resources
-origin/master   7c38a9278
+Checkpoint base 3dc633a89 Improve native SWEET1 mission fidelity
+origin/master   3dc633a89 (before the local Checkpoint A commits)
 VM              Windows 11
 VM build tree   C:\dev\mtasa-vm-custom
 ```
 
 Always re-run `git status --short` and `git log -5 --oneline --decorate`; the
-user and other agents work in this repository concurrently. On 2026-07-16 the
-tree contained unrelated, uncommitted story/camera/input/audio/tagging changes,
-including changes below `Client/core`, `Client/game_sa`, Client Deathmatch Lua
-definitions, `README.md`, `STORY_RUNTIME.md`, native script-camera/tagging test
-resources, and untracked `.claude`, `Tools`, `game-resources`, `out.dff`, and a
-native mission-audio test resource. None belongs to the native-world checkpoint
-unless a later diff proves otherwise. In particular,
-`Client/mods/deathmatch/logic/CResource.cpp` is shared with the transport work
-but currently has unrelated lifecycle edits in the working tree; inspect and
-stage its hunks explicitly.
+user and other agents work in this repository concurrently. During Checkpoint A
+another actor advanced and pushed `master` from `27a7c34f3` to `3dc633a89` with
+the SWEET1 mission work. That committed work was preserved. Checkpoint A and
+the VM-helper marker repair described below were then committed locally as two
+separate changes and were not pushed. Untracked `.claude`, `Tools`,
+`game-resources`, and `out.dff` remain unrelated and must not be staged.
+Re-establish ownership from the current diff before every later commit rather
+than relying on this list.
 
 ## Implemented native-world checkpoints
 
@@ -91,6 +95,11 @@ Read the commit bodies as design records. The core sequence is:
 | `d65e8eee0` | Closed structural and semantic validation for RenderWare DFF/TXD, COL, IMG, IDE, and binary IPL payloads. |
 | `5d43f18e5` | Immutable ProgramData cache with semantic content IDs, locked quarantine, atomic publication, reparse/path protections, guarded revalidation, and activation leases. |
 | `7c38a9278` | Version-gated server resource transport, bounded HTTP streaming, asynchronous full audit, quotas, safe cancellation, atomic publish-only cache insertion, and legacy-client omission. |
+
+Checkpoint A, the inert authorization record, is implemented and passed both
+non-game validation and the user-only live gate recorded below. Use the current
+local `git log` to identify its commit after the checkpoint base; it was kept
+separate from the VM-helper repair and was not pushed.
 
 Relevant earlier extended-world foundations include the enlarged world sectors,
 coordinate/network ranges, water bounds, renderer capacity, radar composition,
@@ -108,7 +117,14 @@ placements through a different lifecycle.
 - Client Deathmatch `CPacketHandler.cpp`, `CResource.*`,
   `CResourceFileDownloadManager.cpp`, and `CResourceManager.*` parse the
   versioned offer, enforce download identity, run/retire the asynchronous audit,
-  and report its result.
+  and report its result. The resource captures the authorization offer on the
+  main thread, carries an immutable snapshot through the worker, and asks Core
+  to persist only after the exact audit/publication succeeds and the connection
+  is still current.
+- `Client/core/CNativeWorldAuthorizationStore.*`, Core connection management,
+  and `Client/sdk/core/CNativeWorldAuthorization.h` own the connection epoch,
+  opaque server/session identity capture, DPAPI-protected authorization store,
+  inspection, clear/revoke operations, and console diagnostics.
 - Server Deathmatch `CResource.*`, `CResourceFile.*`,
   `packets/CResourceStartPacket.cpp`, and `CHTTPD.cpp` validate metadata,
   version-gate the group and stream the files.
@@ -135,14 +151,22 @@ selector manifest is still required. Successful registration is process-global
 and intentionally survives resource stops and reconnects; changing packs
 requires a clean client restart.
 
-### Server transport path
+### Server transport and authorization-offer path
 
 A resource declares exactly one format-1 `<native_world>` descriptor and
 exactly three tagged automatic-download files: `native-world.json`, one IDE,
-and one IMG. The version-gated ResourceStart packet advertises the descriptor
-and tagged-file metadata to capable clients; normal resource HTTP carries the
-file bodies. Legacy clients receive neither the descriptor nor the tagged-file
-metadata and therefore do not request those bodies.
+and one IMG. The inert legacy descriptor remains valid. The only authorization
+opt-in is exactly `startup="true" policy="bullworth"`; partial, unknown, or
+contradictory authorization metadata is rejected.
+
+The version-gated ResourceStart packet now has two closed wire forms. Clients
+through protocol capability `0x35` receive the original `N` group byte-for-byte.
+Clients advertising the appended authorization capability `0x36` receive the
+distinct complete `A` group only for an opted-in resource. `A` contains the
+common descriptor and file metadata, then the fixed startup/policy values;
+truncation, duplicates, bad placement, unknown groups, and unknown values are
+fatal. Older clients receive no native-world group and do not request the
+tagged bodies.
 
 The built-in HTTP server streams file bodies through a 64 KiB buffer. After the
 normal download size and checksum checks, a cancellable worker performs the
@@ -151,13 +175,16 @@ quarantine, audits the copy, atomically renames the directory, and revalidates
 the final immutable object. A cache hit follows the same guarded validation
 path.
 
-Transport deliberately does not authorize or activate the object. Successful
-diagnostics contain:
+Transport alone still does not authorize or activate the object. An opted-in
+offer may publish an inert authorization record after the exact object is
+cached. Successful diagnostics contain:
 
 ```text
 [NativeWorldTransport] state=audit-started ... activation=no lease=no
 [NativeWorldTransport] state=cached ... disposition=published|hit ...
     audit=closed-bullworth publish=atomic activation=no lease=no
+    restart-required=yes
+[NativeWorldAuthorization] state=pending ... activation=no lease=no
     restart-required=yes
 ```
 
@@ -168,6 +195,34 @@ downloaded bytes -> checksum -> closed semantic audit -> immutable cache
 immutable cache  != trusted server authorization
 trusted authorization + exact cached content + clean startup -> activation
 ```
+
+### Inert authorization store
+
+Core owns the record rather than `CGame` or the resource worker. It captures
+the external network module's opaque server ID, numeric IPv4 endpoint, exact
+resource identity, policy/content identity, connection generation, and
+authorization epoch before asynchronous work starts, then revalidates the
+snapshot before persistence. The full opaque server ID is hashed into the
+record; diagnostics expose only bounded correlation data, including the first
+eight ticket hex digits.
+
+Records use a canonical manually encoded little-endian format protected with
+current-user DPAPI and purpose entropy. The store rejects reparse/ownership
+violations, uses a cross-process transaction lock, CSPRNG tickets, a 15-minute
+TTL with a bounded 120-second rollback allowance, explicit pending/revoked/spent
+states, a live-record cap of 64 and hard enumeration cap of 256, and verified
+atomic temp/flush/reopen/rename/final-reopen publication. Verified ambiguity and
+terminalization markers prevent a crash or failed rename from silently turning
+an uncertain record into an activatable one.
+
+Connection generation and epoch are persisted only as launch-local audit
+provenance. Checkpoint B must not compare them with counters from the next
+process. A reconnect to the exact same durable identity attaches to the
+existing fresh pending record without refreshing its ticket or timestamps;
+conflicting identities refuse. Disconnect and normal destruction preserve the
+record, while an explicit resource-stop packet revokes it. Console commands are
+`nativeworldauth status` and `nativeworldauth clear`. No Lua API, cache lease,
+startup selection, or GTA activation exists in Checkpoint A.
 
 ### Cache policy
 
@@ -200,10 +255,55 @@ as a possible future net-module/ABI improvement, not as implemented behavior.
 ## Validation already completed
 
 Agents performed builds, static checks, log inspection, cache inspection, and
-hash comparisons. The user performed all gameplay checks.
+hash comparisons. The user performed every in-game action, including the
+Checkpoint A live authorization lifecycle below.
 
 Confirmed checkpoints include:
 
+- The current Checkpoint A tree was formatted with the pinned VM
+  `clang-format.exe` 21.1.7 on the exact changed C++ files. PowerShell 7 was not
+  available on the host or VM, so the repository wrapper could not be used.
+- `python3 -m unittest discover -s utils/extended-world/tests -p 'test_*.py'`
+  now reports 53 passing tests and two optional environment-dependent skips.
+  The added deterministic model covers golden plaintext/wire records, every
+  truncation boundary, trailing/unknown data, capability gating, TTL/bounds,
+  publication/teardown, and reconnect attachment without ticket/time refresh.
+- The regenerated VM build completed successfully for `Game SA`, `Client Core`,
+  `Client Deathmatch`, `Multiplayer SA`, and `Client Webbrowser` as
+  `Release|Win32`, plus server `Deathmatch` as `Release|x64`. MSBuild reported
+  zero errors and the helper verified all expected outputs, including
+  `Bin\server\x64\deathmatch.dll`.
+- Independent store/security, wire/test/documentation, and compile/ABI review
+  loops found no remaining actionable issue after the orchestrator verified and
+  corrected their findings. The final re-reviews were clean.
+- The VM runtime resource still contains the known 169.5 MB Bullworth payload;
+  only its 437-byte opt-in `meta.xml` was synchronized and SHA-256 verified.
+- The freshly built server was started from the VM-local `Bin\server` tree,
+  loaded 239 resources with zero failures, and listened as one process on
+  `22003/UDP` and `22005/TCP`. `ug-bw` was configured with `startup="0"` and
+  `native-world-transport-test` with `startup="1"`. The user launched the
+  client only after this non-game preparation was complete.
+- The user live gate first cleared the store and observed `state=absent`, then
+  connected and published ticket `601ba255` for the exact known Bullworth
+  content with `activation=no lease=no`. A complete client process restart and
+  reconnect produced `disposition=attached` with unchanged issued/expires
+  values, proving that reconnect did not refresh the 15-minute lifetime.
+- An explicit server-console resource stop produced client `state=revoked` for
+  ticket `601ba255`; `pending.bin` was replaced by the ticket-qualified revoked
+  ledger entry and F8 status reported absent. Restarting the resource produced
+  the distinct ticket `3b76cf5b` with `disposition=published`; the user then
+  observed `state=cleared removed=yes` followed by `state=absent`. Every line
+  retained `activation=no lease=no`, and no refusal, crash, hang, native
+  registration, or Bullworth activation appeared in the inspected logs.
+- The server confirmed both connection/join cycles and the user authorized the
+  checkpoint commit. A separate respawn result was not explicitly reported, so
+  respawn remains a prescribed general regression case rather than claimed
+  evidence for Checkpoint A.
+- `utils/vm-build.ps1` was repaired to recognize the stable CEF 147
+  `libcef_dll\CMakeLists.txt` marker. CEF 147 removed the prior
+  `wrapper\cef_helpers.cc` path, although the pinned package was complete. The
+  reviewed bootstrap then restored the missing VM-local CEF dependency and the
+  helper completed normally.
 - `Game SA` and `Client Deathmatch` built as `Release|Win32` for the latest
   transport checkpoint.
 - `python3 -m unittest discover -s utils/extended-world/tests -p 'test_*.py'`
@@ -245,9 +345,13 @@ generated city assets.
 
 - Bullworth is still the only compiled policy; the transport is not arbitrary
   IDE support.
-- A server can supply and cache bytes but cannot yet authorize or activate them.
+- An opted-in server can cause a strictly bound inert authorization record to
+  be persisted after publication, but no code consumes it for startup selection
+  or activates native GTA state yet.
 - Startup still depends on the local selector manifest and environment flag.
-- There is no authenticated/session-bound activation ticket.
+- The record is bound to the opaque server ID exposed by the established MTA
+  session and the numeric endpoint. This is not a claim of PKI, authenticated
+  DNS ownership, or any guarantee beyond the external network module.
 - There is no aggregate multi-pack allocation or transactional registration of
   several cities.
 - Native registration cannot currently be safely hot-unloaded. Treat active
@@ -263,14 +367,68 @@ generated city assets.
   pointer nodes, request lists, streaming memory/channels, LODs, and any
   optional city subsystem.
 
-## Immediate next checkpoint: authorized startup activation
+## Authorized startup research checkpoint
 
-The next phase removes the last preinstalled selector dependency and binds one
-exact audited cache object to a server-authorized startup. Do not begin by
-simply loading the most recently downloaded cache entry: content identity is
-not authorization.
+The read-only lifecycle, identity, persistence, replay, cache-lease, and
+failure-boundary design checkpoint is complete. Its authoritative result is:
 
-Start with a read-only design/research checkpoint:
+```text
+utils/extended-world/NATIVE_WORLD_ACTIVATION.md
+```
+
+The review found no actionable P0-P2 issue in the publish-only path because it
+was inert. Checkpoint A now supplies the explicit server/session binding,
+separate protocol capability, DPAPI-protected pending record, and conflicting
+cross-server refusal. Exact-cache startup lookup, a transaction-typed lease,
+atomic claim, and startup endpoint pinning remain Checkpoint B work and still
+block activation.
+
+The server config initializes an identity facility from a private key, and the
+client's opaque server ID is the strongest available continuity input. The
+mapping and handshake live in the external network module, so the visible tree
+does not prove key possession. Describe the record as bound to the opaque ID
+exposed by the established MTA session, not as PKI, authenticated DNS
+ownership, or a stronger guarantee than the external module documents.
+
+The key lifecycle decision is that record/cache/executable preparation happens
+before GTA initialization, while the native pack hook waits for the second
+session to reproduce the exact server ID and numeric endpoint immediately
+before `StartGame`. This narrows the unavoidable two-launch trust gap without
+claiming that the second server can be contacted before early model-store
+preparation.
+
+## Completed checkpoint: inert authorization record
+
+Checkpoint A implementation, non-game validation, and the user-only live gate
+are complete. Persistence, exact reconnect attachment, explicit resource-stop
+revocation, fresh republish, and explicit clear all behaved as designed. Every
+observed line retained `activation=no lease=no`; no native registration or
+automatic activation occurred.
+
+The completed sequence, retained as the reproducible regression recipe, is:
+
+1. Launch the exact custom `Multi Theft Auto.exe`, open F8 at the main menu,
+   run `nativeworldauth clear`, then `nativeworldauth status`; expect
+   `state=cleared ...` followed by `state=absent`.
+2. Run `connect 127.0.0.1 22003`, wait for publication, and record the complete
+   transport and authorization lines. Expect cached `published|hit`, pending
+   authorization `disposition=published`, and restart-required yes, always with
+   activation/lease no.
+3. Run `nativeworldauth status`, record ticket prefix/issued/expires, then close
+   the client completely without stopping the resource. Reopen it within the
+   15-minute TTL and check status before connecting; expect the same record.
+4. Reconnect to the same endpoint. Expect `disposition=attached`, with the same
+   ticket prefix and unchanged issued/expires rather than a refreshed record.
+5. While connected, type `stop native-world-transport-test` in the server
+   console. Expect `state=revoked`; client status must then be absent.
+6. Type `start native-world-transport-test` in the server console, wait for a
+   fresh pending record, clear it from F8, and verify status is absent.
+7. Confirm GTA reaches spawn and record whether movement/respawn was exercised;
+   the connect/close/reconnect/resource-stop sequence must have no crash, hang,
+   native registration, Bullworth activation, or stock-world regression.
+   Preserve the exact client/server logs for orchestrator inspection.
+
+The completed read-only design/research checkpoint covered:
 
 1. Trace the precise MTA connection, server identity, resource-start, game
    startup, reconnect, and shutdown sequence.
@@ -288,16 +446,20 @@ Start with a read-only design/research checkpoint:
    server.
 6. Define fail-soft behavior before IDE commit and fatal behavior after an
    irreversible partial native commit.
-7. Produce an implementation plan and independent security/lifecycle review
-   before editing activation code.
+7. An implementation plan and independent security/lifecycle review before
+   editing activation code.
 
-Implement progressively:
+Continue progressively from Checkpoint B:
 
-- **Checkpoint A — inert authorization record:** receive, validate, persist,
-  inspect, expire, and clear the record, but always log `activation=no`.
-- **Checkpoint B — startup selection:** consume the record at clean startup,
-  locate and fully revalidate the exact immutable object, and acquire the
-  pending activation lease without committing GTA state.
+- **Checkpoint A — inert authorization record (complete):** receive, validate,
+  persist, inspect, expire, attach on exact
+  reconnect, revoke on explicit resource stop, and clear the record, while
+  always logging `activation=no lease=no`.
+- **Checkpoint B — startup selection (next code checkpoint):** validate the
+  record at clean startup, locate and fully revalidate the exact immutable
+  object, acquire the pending
+  activation lease, complete the read-only executable preflight, and only then
+  claim the record atomically without committing GTA state.
 - **Checkpoint C — native activation:** feed the selected object into the
   existing preflight/commit path, remove the environment/local-selector
   requirement for this route, and keep rollback/fatal boundaries intact.
@@ -368,6 +530,10 @@ HTTP endpoint           127.0.0.1:22005 TCP
   client/server set appropriate to the checkpoint.
 - Run focused Python tests and `git diff --check` before requesting gameplay
   validation.
+- For the current authorization/ABI checkpoint, the reviewed complete build set
+  is `Game SA`, `Client Core`, `Client Deathmatch`, `Multiplayer SA`, and
+  `Client Webbrowser` as `Release|Win32`, plus `Deathmatch` as `Release|x64`;
+  regenerate because the compiled-source/protocol definitions changed.
 - GUI launches through `prlctl exec` require `--current-user`; otherwise a
   command can report success without opening a visible client.
 - Never replace the current custom `netc.dll` with the older MTA 1.6 module.
@@ -379,10 +545,10 @@ Read AGENTS.md, LIMIT_PATCHING.md, NATIVE_WORLD_HANDOFF.md,
 utils/extended-world/NATIVE_BW_PACK.md, and the recent native-world commit
 bodies completely. Recheck HEAD and the dirty tree before touching files.
 
-Continue with the authorized startup activation research checkpoint described
-in NATIVE_WORLD_HANDOFF.md. Orchestrate research/planning and independent
-implementation/review agents, define explicit checkpoints, preserve unrelated
-changes, and use the canonical macOS-to-VM workflow. Never perform in-game
-tests yourself: prepare the build and exact test instructions, then wait for me
-to test and report feedback.
+Resume with Checkpoint B, startup selection without native mutation, in
+NATIVE_WORLD_HANDOFF.md and NATIVE_WORLD_ACTIVATION.md. Recheck the current
+local commits, dirty tree, Checkpoint A evidence, and exact-cache/typed-lease
+contract before editing. Preserve unrelated changes, keep the
+orchestrator/independent-review loop and VM workflow, and never perform in-game
+tests yourself: prepare exact instructions and wait for my feedback.
 ```

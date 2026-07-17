@@ -5266,7 +5266,7 @@ void CPacketHandler::Packet_ResourceStart(NetBitStreamInterface& bitStream)
 
         while (bitStream.Read(ucChunkType))
         {
-            if ((nativeWorldFilesRemaining != 0 && ucChunkType != 'F') || (ucChunkType == 'N' && sawResourceChunk))
+            if ((nativeWorldFilesRemaining != 0 && ucChunkType != 'F') || ((ucChunkType == 'N' || ucChunkType == 'A') && sawResourceChunk))
             {
                 bFatalError = true;
                 AddReportLog(2081, "Interrupted or misplaced native world transport descriptor");
@@ -5276,13 +5276,16 @@ void CPacketHandler::Packet_ResourceStart(NetBitStreamInterface& bitStream)
 
             switch (ucChunkType)
             {
+                case 'A':  // Engine-owned native world transport plus inert startup authorization
                 case 'N':  // Engine-owned native world transport descriptor
                 {
+                    const bool    startupAuthorization = ucChunkType == 'A';
                     unsigned char format = 0;
                     unsigned char fileCount = 0;
                     unsigned char manifestLength = 0;
-                    if (pResource->HasNativeWorldTransport() || !bitStream.Read(format) || !bitStream.Read(fileCount) || !bitStream.Read(manifestLength) ||
-                        format != 1 || fileCount != 3 || manifestLength == 0)
+                    if (pResource->HasNativeWorldTransport() ||
+                        (startupAuthorization && !g_pNet->CanServerBitStream(eBitStreamVersion::NativeWorldStartupAuthorization)) || !bitStream.Read(format) ||
+                        !bitStream.Read(fileCount) || !bitStream.Read(manifestLength) || format != 1 || fileCount != 3 || manifestLength == 0)
                     {
                         bFatalError = true;
                         AddReportLog(2081, "Malformed or duplicate native world transport descriptor");
@@ -5296,6 +5299,20 @@ void CPacketHandler::Packet_ResourceStart(NetBitStreamInterface& bitStream)
                         bFatalError = true;
                         AddReportLog(2081, "Invalid native world transport manifest path");
                         break;
+                    }
+
+                    if (startupAuthorization)
+                    {
+                        unsigned char wireVersion = 0;
+                        unsigned char startupMode = 0;
+                        unsigned char policy = 0;
+                        if (!bitStream.Read(wireVersion) || !bitStream.Read(startupMode) || !bitStream.Read(policy) || wireVersion != 1 || startupMode != 1 ||
+                            policy != 1 || !pResource->SetNativeWorldStartupAuthorization(wireVersion, startupMode, policy))
+                        {
+                            bFatalError = true;
+                            AddReportLog(2081, "Malformed or unsupported native world startup authorization");
+                            break;
+                        }
                     }
 
                     nativeWorldFilesRemaining = fileCount;
@@ -5464,6 +5481,10 @@ void CPacketHandler::Packet_ResourceStart(NetBitStreamInterface& bitStream)
                     }
 
                     break;
+                default:
+                    bFatalError = true;
+                    AddReportLog(2081, "Unknown resource-start chunk type");
+                    break;
             }
 
             // Does the chunk data exist
@@ -5521,6 +5542,8 @@ void CPacketHandler::Packet_ResourceStop(NetBitStreamInterface& bitStream)
     unsigned short usNetID;
     if (bitStream.Read(usNetID))
     {
+        if (CResource* resource = g_pClientGame->m_pResourceManager->GetResourceFromNetID(usNetID))
+            resource->RevokeNativeWorldStartupAuthorization();
         // Delete the resource
         g_pClientGame->m_pResourceManager->RemoveResource(usNetID);
     }

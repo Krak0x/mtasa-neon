@@ -1834,7 +1834,12 @@ bool CResource::ReadNativeWorldPack(CXMLNode* pRoot)
     CXMLAttributes& attributes = descriptor->GetAttributes();
     CXMLAttribute*  formatAttribute = attributes.Find("format");
     CXMLAttribute*  manifestAttribute = attributes.Find("manifest");
-    if (attributes.Count() != 2 || !formatAttribute || formatAttribute->GetValue() != "1" || !manifestAttribute)
+    CXMLAttribute*  startupAttribute = attributes.Find("startup");
+    CXMLAttribute*  policyAttribute = attributes.Find("policy");
+    const bool      requestsStartupAuthorization = startupAttribute && startupAttribute->GetValue() == "true";
+    const bool      validStartupAuthorization = requestsStartupAuthorization && policyAttribute && policyAttribute->GetValue() == "bullworth";
+    const bool      validAttributeSet = attributes.Count() == 2 || (attributes.Count() == 4 && validStartupAuthorization);
+    if (!validAttributeSet || !formatAttribute || formatAttribute->GetValue() != "1" || !manifestAttribute || (!!startupAttribute != !!policyAttribute))
     {
         m_strFailureReason = SString("Resource '%s' has an invalid native_world descriptor\n", m_strResourceName.c_str());
         CLogger::ErrorPrintf(m_strFailureReason);
@@ -1854,7 +1859,10 @@ bool CResource::ReadNativeWorldPack(CXMLNode* pRoot)
 
     // The descriptor is engine-owned: scripts cannot mutate this immutable snapshot after the resource has loaded.
     m_nativeWorldPackTransport.present = true;
+    m_nativeWorldPackTransport.startupAuthorization = requestsStartupAuthorization;
     m_nativeWorldPackTransport.format = 1;
+    m_nativeWorldPackTransport.authorizationVersion = requestsStartupAuthorization ? 1 : 0;
+    m_nativeWorldPackTransport.authorizationPolicy = requestsStartupAuthorization ? 1 : 0;
     m_nativeWorldPackTransport.manifestPath = manifestPath;
     m_nativeWorldPackTransport.files = taggedFiles;
     return true;

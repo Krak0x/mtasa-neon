@@ -95,6 +95,7 @@ bool CConnectManager::Connect(const char* szHost, unsigned short usPort, const c
     pNet->SetFakeLag(0, 0, 0, 0);
 
     // Reset the network
+    CCore::GetSingleton().AdvanceNetworkConnectionGeneration();
     pNet->Reset();
     assert(pNet->GetServerBitStreamVersion() == 0);
 
@@ -129,6 +130,7 @@ bool CConnectManager::Connect(const char* szHost, unsigned short usPort, const c
     SString strAddress = inet_ntoa(m_Address);
     if (m_usPort && !pNet->StartNetwork(strAddress, m_usPort, CVARS_GET_VALUE<bool>("packet_tag")))
     {
+        CCore::GetSingleton().AdvanceNetworkConnectionGeneration();
         SString strBuffer(_("Connecting to %s at port %u failed!"), m_strHost.c_str(), m_usPort);
         CCore::GetSingleton().ShowMessageBox(_("Error") + _E("CC22"), strBuffer, MB_BUTTON_OK | MB_ICON_ERROR);  // Failed to connect
         return false;
@@ -209,6 +211,7 @@ bool CConnectManager::Event_OnCancelClick(CGUIElement* pElement)
 bool CConnectManager::Abort()
 {
     // Stop the attempt
+    CCore::GetSingleton().AdvanceNetworkConnectionGeneration();
     CNet* pNet = CCore::GetSingleton().GetNetwork();
     pNet->StopNetwork();
     pNet->Reset();

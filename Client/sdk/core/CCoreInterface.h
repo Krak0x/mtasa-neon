@@ -25,6 +25,7 @@
 #include "CChatInterface.h"
 #include "CDiscordInterface.h"
 #include "FPSLimiterInterface.h"
+#include "CNativeWorldAuthorization.h"
 #include "xml/CXML.h"
 #include <gui/CGUI.h>
 
@@ -191,6 +192,21 @@ public:
     virtual void           SetLastConnectedServerName(const SString& strServerName) = 0;
 
     virtual void OnPostColorFilterRender() = 0;
+
+    // Process-lifetime generation used to reject stale authorization snapshots
+    // when a Client Deathmatch instance or endpoint is recycled.
+    virtual unsigned long long GetNetworkConnectionGeneration() const = 0;
+    virtual void               AdvanceNetworkConnectionGeneration() = 0;
+    virtual unsigned long long GetNativeWorldStartupAuthorizationEpoch() const = 0;
+    virtual bool CaptureNativeWorldStartupAuthorization(unsigned char wireVersion, unsigned char startupMode, unsigned char policy, unsigned char packFormat,
+                                                        const std::string& resourceName, unsigned short resourceNetId, unsigned int resourceStartCounter,
+                                                        SNativeWorldStartupAuthorization& authorization, std::string& error) = 0;
+    virtual SNativeWorldAuthorizationRecordResult PersistNativeWorldStartupAuthorization(const SNativeWorldStartupAuthorization&     authorization,
+                                                                                         const SNativeWorldAuthorizationPublication& publication) = 0;
+    virtual SNativeWorldAuthorizationRecordResult InspectNativeWorldStartupAuthorization() = 0;
+    virtual SNativeWorldAuthorizationRecordResult ClearNativeWorldStartupAuthorization() = 0;
+    virtual SNativeWorldAuthorizationRecordResult RevokeNativeWorldStartupAuthorization(const SNativeWorldStartupAuthorization& authorization,
+                                                                                        const std::string&                      contentId) = 0;
 };
 
 class CClientTime

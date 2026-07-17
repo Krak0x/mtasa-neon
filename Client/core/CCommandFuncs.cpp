@@ -176,6 +176,26 @@ void CCommandFuncs::TimingDebug(const char* szParameters)
     g_pCore->GetConsole()->Printf("timingdebug: %s", enabled ? "on" : "off");
 }
 
+void CCommandFuncs::NativeWorldAuthorization(const char* szParameters)
+{
+    const SString                         operation = SString("%s", szParameters ? szParameters : "").TrimStart(" \t\r\n").TrimEnd(" \t\r\n").ToLower();
+    SNativeWorldAuthorizationRecordResult result;
+    if (operation.empty() || operation == "status")
+        result = g_pCore->InspectNativeWorldStartupAuthorization();
+    else if (operation == "clear")
+        result = g_pCore->ClearNativeWorldStartupAuthorization();
+    else
+    {
+        g_pCore->GetConsole()->Print("nativeworldauth: syntax: nativeworldauth [status|clear]");
+        return;
+    }
+
+    if (result.success)
+        g_pCore->GetConsole()->Printf("[NativeWorldAuthorization] %s", result.diagnostic.c_str());
+    else
+        g_pCore->GetConsole()->Printf("[NativeWorldAuthorization] state=refused reason=%s activation=no lease=no", result.error.c_str());
+}
+
 // this fails randomly, see comments in CConsole
 void CCommandFuncs::Clear(const char* szParameters)
 {

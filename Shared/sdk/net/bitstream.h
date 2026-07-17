@@ -60,6 +60,10 @@ enum class eBitStreamVersion : unsigned short
     // 2026-07-16
     NativeWorldPackTransport,
 
+    // Adds an explicit, inert startup-authorization request to native world transport.
+    // 2026-07-16
+    NativeWorldStartupAuthorization,
+
     // This allows us to automatically increment the BitStreamVersion when things are added to this enum.
     // Make sure you only add things above this comment.
     Next,

@@ -1277,7 +1277,8 @@ void CClientGame::DoPulses()
                 g_pCore->ShowMessageBox(_("Local Server"), _("Connecting to local server..."), MB_ICON_INFO);
 
                 // Connect
-                if (g_pNet->StartNetwork("localhost", 22010))
+                g_pCore->AdvanceNetworkConnectionGeneration();
+                if (g_pNet->StartNetwork("127.0.0.1", 22010))
                 {
                     // We're waiting for connection
                     m_iLocalConnectAttempts = 1;
@@ -1285,6 +1286,7 @@ void CClientGame::DoPulses()
                 }
                 else
                 {
+                    g_pCore->AdvanceNetworkConnectionGeneration();
                     g_pCore->ShowNetErrorMessageBox(_("Error") + _E("CD06"), _("Error connecting to server."));
                     g_pCore->GetModManager()->RequestUnload();
                     return;

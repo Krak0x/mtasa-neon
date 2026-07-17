@@ -1,0 +1,359 @@
+#!/usr/bin/env python3
+"""Deterministic model of the inert native-world authorization record.
+
+The production envelope is protected by Windows DPAPI.  This module models the
+canonical plaintext only so its field order, bounds, freshness, and one-shot
+identity rules can be tested on non-Windows hosts.
+"""
+
+from __future__ import annotations
+
+from dataclasses import dataclass
+import posixpath
+import struct
+
+RECORD_MAGIC = b"MTANWAR1"
+RECORD_FORMAT = 1
+WIRE_VERSION = 1
+STARTUP_MODE = 1
+PACK_FORMAT = 1
+POLICY_BULLWORTH = 1
+RECORD_LIFETIME_SECONDS = 900
+CLOCK_ROLLBACK_TOLERANCE_SECONDS = 120
+TRANSPORT_BITSTREAM_VERSION = 0x35
+AUTHORIZATION_BITSTREAM_VERSION = 0x36
+
+
+class RecordError(ValueError):
+    pass
+
+
+@dataclass(frozen=True)
+class TransportDescriptor:
+    manifest_path: str
+    authorization_requested: bool
+    format: int = PACK_FORMAT
+    file_count: int = 3
+    wire_version: int = WIRE_VERSION
+    startup_mode: int = STARTUP_MODE
+    policy: int = POLICY_BULLWORTH
+
+
+def _canonical_manifest(value: str) -> bytes:
+    try:
+        encoded = value.encode("utf-8")
+    except UnicodeEncodeError as exc:
+        raise RecordError("manifest path must be UTF-8") from exc
+    if (
+        not 1 <= len(encoded) <= 255
+        or value.startswith("/")
+        or value.endswith("/")
+        or "\\" in value
+        or any(character in value for character in ':*?"<>|')
+        or any(ord(character) < 0x20 or ord(character) == 0x7F for character in value)
+        or any(component == ".." for component in value.split("/"))
+        or posixpath.normpath(value) != value
+    ):
+        raise RecordError("manifest path is outside the closed relative-path contract")
+    return encoded
+
+
+def encode_descriptor(descriptor: TransportDescriptor, client_bitstream_version: int) -> bytes:
+    """Model the complete N/A descriptor header before its three F chunks."""
+    manifest = _canonical_manifest(descriptor.manifest_path)
+    if descriptor.format != PACK_FORMAT or descriptor.file_count != 3:
+        raise RecordError("unsupported transport descriptor")
+    if client_bitstream_version < TRANSPORT_BITSTREAM_VERSION:
+        return b""
+    authorized = descriptor.authorization_requested and client_bitstream_version >= AUTHORIZATION_BITSTREAM_VERSION
+    fields = bytearray(b"A" if authorized else b"N")
+    fields += bytes((descriptor.format, descriptor.file_count, len(manifest)))
+    fields += manifest
+    if authorized:
+        if (descriptor.wire_version, descriptor.startup_mode, descriptor.policy) != (WIRE_VERSION, STARTUP_MODE, POLICY_BULLWORTH):
+            raise RecordError("unsupported startup authorization")
+        fields += bytes((descriptor.wire_version, descriptor.startup_mode, descriptor.policy))
+    return bytes(fields)
+
+
+def decode_descriptor(data: bytes, client_bitstream_version: int) -> TransportDescriptor:
+    if not isinstance(data, bytes) or len(data) < 4:
+        raise RecordError("truncated transport descriptor")
+    tag, format_value, file_count, manifest_length = data[:4]
+    if tag not in (ord("N"), ord("A")) or format_value != PACK_FORMAT or file_count != 3 or not manifest_length:
+        raise RecordError("malformed transport descriptor")
+    expected = 4 + manifest_length + (3 if tag == ord("A") else 0)
+    if len(data) != expected:
+        raise RecordError("truncated transport descriptor or trailing fields")
+    try:
+        manifest_path = data[4 : 4 + manifest_length].decode("utf-8")
+    except UnicodeDecodeError as exc:
+        raise RecordError("manifest path must be UTF-8") from exc
+    _canonical_manifest(manifest_path)
+    if tag == ord("A"):
+        if client_bitstream_version < AUTHORIZATION_BITSTREAM_VERSION:
+            raise RecordError("authorization descriptor exceeds negotiated capability")
+        wire_version, startup_mode, policy = data[-3:]
+        if (wire_version, startup_mode, policy) != (WIRE_VERSION, STARTUP_MODE, POLICY_BULLWORTH):
+            raise RecordError("unsupported startup authorization")
+        return TransportDescriptor(manifest_path=manifest_path, authorization_requested=True)
+    return TransportDescriptor(manifest_path=manifest_path, authorization_requested=False)
+
+
+def validate_descriptor_placement(chunk_types: tuple[str, ...]) -> None:
+    """Model the client's closed placement rule for the N/A + exactly 3 F group."""
+    if any(chunk not in ("N", "A", "F", "E") for chunk in chunk_types):
+        raise RecordError("unknown resource-start chunk type")
+    descriptors = [index for index, chunk in enumerate(chunk_types) if chunk in ("N", "A")]
+    if not descriptors:
+        return
+    if len(descriptors) != 1 or descriptors[0] != 0 or chunk_types[1:4] != ("F", "F", "F"):
+        raise RecordError("interrupted, duplicate, or misplaced native-world descriptor")
+
+
+def publication_allowed(*, connected: bool, cancelled: bool, captured_generation: int, current_generation: int,
+                        captured_epoch: int, current_epoch: int, resource_still_matches: bool) -> bool:
+    return (
+        connected
+        and not cancelled
+        and captured_generation != 0
+        and captured_generation == current_generation
+        and captured_epoch != 0
+        and captured_epoch == current_epoch
+        and resource_still_matches
+    )
+
+
+def teardown_action(reason: str, publication_may_exist: bool) -> str:
+    """Only an explicit resource stop consumes the pending one-shot ticket."""
+    if reason == "resource-stop" and publication_may_exist:
+        return "revoke"
+    return "preserve"
+
+
+@dataclass(frozen=True)
+class AuthorizationRecord:
+    content_id: bytes
+    offer_id: bytes
+    server_id_digest: bytes
+    server_ipv4: bytes
+    server_port: int
+    resource_name: str
+    resource_net_id: int
+    resource_start_counter: int
+    bitstream_version: int
+    connection_generation: int
+    authorization_epoch: int
+    ticket_id: bytes
+    issued_at: int
+    expires_at: int
+    wire_version: int = WIRE_VERSION
+    startup_mode: int = STARTUP_MODE
+    pack_format: int = PACK_FORMAT
+    policy: int = POLICY_BULLWORTH
+
+
+def _require_uint(value: int, bits: int, field: str) -> None:
+    if not isinstance(value, int) or not 0 <= value < 1 << bits:
+        raise RecordError(f"{field} is outside uint{bits}")
+
+
+def _require_bytes(value: bytes, size: int, field: str) -> None:
+    if not isinstance(value, bytes) or len(value) != size:
+        raise RecordError(f"{field} must be exactly {size} bytes")
+
+
+def _validate(record: AuthorizationRecord) -> bytes:
+    for value, size, field in (
+        (record.content_id, 32, "content_id"),
+        (record.offer_id, 32, "offer_id"),
+        (record.server_id_digest, 32, "server_id_digest"),
+        (record.server_ipv4, 4, "server_ipv4"),
+        (record.ticket_id, 16, "ticket_id"),
+    ):
+        _require_bytes(value, size, field)
+    for value, bits, field in (
+        (record.server_port, 16, "server_port"),
+        (record.resource_net_id, 16, "resource_net_id"),
+        (record.resource_start_counter, 32, "resource_start_counter"),
+        (record.bitstream_version, 16, "bitstream_version"),
+        (record.connection_generation, 64, "connection_generation"),
+        (record.authorization_epoch, 64, "authorization_epoch"),
+        (record.issued_at, 64, "issued_at"),
+        (record.expires_at, 64, "expires_at"),
+    ):
+        _require_uint(value, bits, field)
+    if (
+        record.wire_version != WIRE_VERSION
+        or record.startup_mode != STARTUP_MODE
+        or record.pack_format != PACK_FORMAT
+        or record.policy != POLICY_BULLWORTH
+    ):
+        raise RecordError("unsupported closed authorization version or policy")
+    if not record.server_port or record.resource_net_id == 0xFFFF or not record.resource_start_counter:
+        raise RecordError("invalid endpoint or resource identity")
+    if not record.connection_generation or not record.authorization_epoch:
+        raise RecordError("zero generation or authorization epoch")
+    if record.server_id_digest == bytes(32) or record.server_ipv4 == bytes(4):
+        raise RecordError("empty server identity or endpoint")
+    try:
+        resource = record.resource_name.encode("ascii")
+    except UnicodeEncodeError as exc:
+        raise RecordError("resource_name must use the closed ASCII alphabet") from exc
+    if not 1 <= len(resource) <= 64 or any(
+        not (character in b"_- ." or chr(character).isalnum()) for character in resource
+    ):
+        raise RecordError("non-canonical resource_name")
+    if b" " in resource:
+        raise RecordError("non-canonical resource_name")
+    if record.expires_at < record.issued_at or record.expires_at - record.issued_at != RECORD_LIFETIME_SECONDS:
+        raise RecordError("invalid fixed lifetime")
+    return resource
+
+
+def encode_record(record: AuthorizationRecord) -> bytes:
+    resource = _validate(record)
+    fields = bytearray(RECORD_MAGIC)
+    fields += struct.pack(
+        "<HBBBB",
+        RECORD_FORMAT,
+        record.wire_version,
+        record.startup_mode,
+        record.pack_format,
+        record.policy,
+    )
+    fields += record.content_id
+    fields += record.offer_id
+    fields += record.server_id_digest
+    fields += record.server_ipv4
+    fields += struct.pack("<HB", record.server_port, len(resource))
+    fields += resource
+    fields += struct.pack(
+        "<HIHQQ",
+        record.resource_net_id,
+        record.resource_start_counter,
+        record.bitstream_version,
+        record.connection_generation,
+        record.authorization_epoch,
+    )
+    fields += record.ticket_id
+    fields += struct.pack("<QQ", record.issued_at, record.expires_at)
+    return bytes(fields)
+
+
+def decode_record(data: bytes) -> AuthorizationRecord:
+    if not isinstance(data, bytes):
+        raise RecordError("record must be bytes")
+    fixed_prefix = len(RECORD_MAGIC) + struct.calcsize("<HBBBB") + 32 * 3 + 4 + struct.calcsize("<HB")
+    if len(data) < fixed_prefix:
+        raise RecordError("truncated record")
+    offset = 0
+    if data[: len(RECORD_MAGIC)] != RECORD_MAGIC:
+        raise RecordError("bad magic")
+    offset += len(RECORD_MAGIC)
+    record_format, wire_version, startup_mode, pack_format, policy = struct.unpack_from("<HBBBB", data, offset)
+    offset += struct.calcsize("<HBBBB")
+    if record_format != RECORD_FORMAT:
+        raise RecordError("unknown record format")
+
+    def take(size: int) -> bytes:
+        nonlocal offset
+        if len(data) - offset < size:
+            raise RecordError("truncated record")
+        value = data[offset : offset + size]
+        offset += size
+        return value
+
+    content_id = take(32)
+    offer_id = take(32)
+    server_id_digest = take(32)
+    server_ipv4 = take(4)
+    if len(data) - offset < struct.calcsize("<HB"):
+        raise RecordError("truncated endpoint")
+    server_port, resource_length = struct.unpack_from("<HB", data, offset)
+    offset += struct.calcsize("<HB")
+    if not 1 <= resource_length <= 64:
+        raise RecordError("invalid resource length")
+    try:
+        resource_name = take(resource_length).decode("ascii")
+    except UnicodeDecodeError as exc:
+        raise RecordError("invalid resource encoding") from exc
+    tail_format = "<HIHQQ"
+    if len(data) - offset < struct.calcsize(tail_format) + 16 + 16:
+        raise RecordError("truncated record tail")
+    resource_net_id, resource_start_counter, bitstream_version, connection_generation, authorization_epoch = struct.unpack_from(
+        tail_format, data, offset
+    )
+    offset += struct.calcsize(tail_format)
+    ticket_id = take(16)
+    issued_at, expires_at = struct.unpack_from("<QQ", data, offset)
+    offset += struct.calcsize("<QQ")
+    if offset != len(data):
+        raise RecordError("unexpected trailing bytes")
+    record = AuthorizationRecord(
+        content_id=content_id,
+        offer_id=offer_id,
+        server_id_digest=server_id_digest,
+        server_ipv4=server_ipv4,
+        server_port=server_port,
+        resource_name=resource_name,
+        resource_net_id=resource_net_id,
+        resource_start_counter=resource_start_counter,
+        bitstream_version=bitstream_version,
+        connection_generation=connection_generation,
+        authorization_epoch=authorization_epoch,
+        ticket_id=ticket_id,
+        issued_at=issued_at,
+        expires_at=expires_at,
+        wire_version=wire_version,
+        startup_mode=startup_mode,
+        pack_format=pack_format,
+        policy=policy,
+    )
+    _validate(record)
+    return record
+
+
+def freshness(record: AuthorizationRecord, now: int) -> str:
+    _validate(record)
+    _require_uint(now, 64, "now")
+    if now > record.expires_at:
+        return "expired"
+    if now + CLOCK_ROLLBACK_TOLERANCE_SECONDS < record.issued_at:
+        return "clock-refused"
+    return "fresh"
+
+
+def semantic_identity(record: AuthorizationRecord) -> tuple[object, ...]:
+    _validate(record)
+    return (
+        record.wire_version,
+        record.startup_mode,
+        record.pack_format,
+        record.policy,
+        record.content_id,
+        record.offer_id,
+        record.server_id_digest,
+        record.server_ipv4,
+        record.server_port,
+        record.resource_name,
+        record.resource_net_id,
+        record.resource_start_counter,
+        record.bitstream_version,
+        record.connection_generation,
+        record.authorization_epoch,
+    )
+
+
+def durable_identity(record: AuthorizationRecord) -> tuple[object, ...]:
+    """Identity retained across a reconnect; launch provenance is excluded."""
+    return semantic_identity(record)[:-2]
+
+
+def resolve_existing(existing: AuthorizationRecord, requested: AuthorizationRecord) -> tuple[str, AuthorizationRecord]:
+    """Model no-refresh Persist resolution for an already-fresh pending record."""
+    if semantic_identity(existing) == semantic_identity(requested):
+        return "idempotent", existing
+    if durable_identity(existing) == durable_identity(requested):
+        return "attached", existing
+    raise RecordError("a different unexpired authorization is already pending")

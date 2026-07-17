@@ -136,7 +136,10 @@ enum class EResourceState : unsigned char
 struct SNativeWorldPackTransport
 {
     bool                          present{};
+    bool                          startupAuthorization{};
     unsigned char                 format{};
+    unsigned char                 authorizationVersion{};
+    unsigned char                 authorizationPolicy{};
     std::string                   manifestPath;
     std::array<CResourceFile*, 3> files{};
 };

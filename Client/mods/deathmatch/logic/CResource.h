@@ -121,6 +121,8 @@ public:
     bool AddNativeWorldTransportFile(CDownloadableResource* file);
     bool IsNativeWorldTransportDescriptorValid() const;
     bool IsNativeWorldTransportPublicationPending() const noexcept;
+    bool SetNativeWorldStartupAuthorization(unsigned char wireVersion, unsigned char startupMode, unsigned char policy);
+    void RevokeNativeWorldStartupAuthorization();
 
 private:
     unsigned short       m_usNetID;
@@ -178,6 +180,16 @@ private:
         size_t                                          fileCount{};
         std::shared_ptr<std::atomic_bool>               cancellation;
         std::future<SNativeWorldTransportPublishResult> publication;
+        bool                                            authorizationRequested{};
+        bool                                            authorizationCaptureAttempted{};
+        bool                                            authorizationRecordPublished{};
+        bool                                            authorizationPublicationAmbiguous{};
+        unsigned char                                   authorizationWireVersion{};
+        unsigned char                                   authorizationStartupMode{};
+        unsigned char                                   authorizationPolicy{};
+        SNativeWorldStartupAuthorization                authorizationSnapshot;
+        SString                                         authorizationError;
+        std::string                                     authorizationContentId;
     } m_nativeWorldTransport;
 
     bool VerifyPendingClientChecksums();

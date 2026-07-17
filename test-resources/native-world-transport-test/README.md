@@ -12,7 +12,13 @@ are intentionally not committed.
 Start the resource on a current Neon server and connect with a matching client.
 The client log should show `state=audit-started`, followed by `state=cached`
 with either `disposition=published` or `disposition=hit`. Every successful line
-must retain `activation=no`, `lease=no`, and `restart-required=yes`.
+must retain `activation=no` and `lease=no`; cached and pending lines use
+`restart-required=yes`, while revoked/cleared states use no.
+
+This fixture requests an inert one-shot startup authorization after the cache
+publication. Its logs must still report `activation=no lease=no`.
+Use `nativeworldauth status` to inspect it or `nativeworldauth clear` to remove
+it deliberately.
 
 Reconnect to verify a cache hit with the same `contentId`, unchanged file
 hashes, no duplicate cache object, and no quarantine residue.

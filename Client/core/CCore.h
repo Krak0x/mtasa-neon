@@ -110,6 +110,18 @@ public:
     std::shared_ptr<CDiscordInterface> GetDiscord();
     CSteamClient*                      GetSteamClient() { return m_steamClient.get(); }
     FPSLimiter::FPSLimiterInterface*   GetFPSLimiter() const noexcept { return m_pFPSLimiter.get(); }
+    unsigned long long                 GetNetworkConnectionGeneration() const override { return m_networkConnectionGeneration; }
+    void                               AdvanceNetworkConnectionGeneration() override;
+    unsigned long long                 GetNativeWorldStartupAuthorizationEpoch() const override { return m_nativeWorldAuthorizationEpoch; }
+    bool CaptureNativeWorldStartupAuthorization(unsigned char wireVersion, unsigned char startupMode, unsigned char policy, unsigned char packFormat,
+                                                const std::string& resourceName, unsigned short resourceNetId, unsigned int resourceStartCounter,
+                                                SNativeWorldStartupAuthorization& authorization, std::string& error) override;
+    SNativeWorldAuthorizationRecordResult PersistNativeWorldStartupAuthorization(const SNativeWorldStartupAuthorization&     authorization,
+                                                                                 const SNativeWorldAuthorizationPublication& publication) override;
+    SNativeWorldAuthorizationRecordResult InspectNativeWorldStartupAuthorization() override;
+    SNativeWorldAuthorizationRecordResult ClearNativeWorldStartupAuthorization() override;
+    SNativeWorldAuthorizationRecordResult RevokeNativeWorldStartupAuthorization(const SNativeWorldStartupAuthorization& authorization,
+                                                                                const std::string&                      contentId) override;
 
     void SaveConfig(bool bWaitUntilFinished = false);
 
@@ -396,8 +408,10 @@ private:
     bool    m_bIsRenderingGrass;
     bool    m_bFakeLagCommandEnabled;
 
-    SString m_strLastConnectedServerName{};
-    uint    m_uiCurrentRefreshRate{};
+    SString            m_strLastConnectedServerName{};
+    uint               m_uiCurrentRefreshRate{};
+    unsigned long long m_networkConnectionGeneration{};
+    unsigned long long m_nativeWorldAuthorizationEpoch{1};
 
     // Command line
     static void                        ParseCommandLine(std::map<std::string, std::string>& options, const char*& szArgs, const char** pszNoValOptions = NULL);

@@ -119,15 +119,24 @@ bool CResourceStartPacket::Write(NetBitStreamInterface& BitStream) const
         }
     };
 
-    // Capable clients receive an unambiguous descriptor followed immediately by its three files. Legacy clients never see either the new chunk or
-    // engine-only payloads they cannot safely interpret.
+    // Authorization-capable clients receive a distinct complete descriptor.
+    // Keeping the legacy N layout byte-for-byte unchanged lets a new client
+    // connect to an older server without guessing whether trailing fields exist.
     if (nativeWorldPack.present && m_pResource->IsClientFilesOn() && BitStream.Can(eBitStreamVersion::NativeWorldPackTransport))
     {
-        BitStream.Write(static_cast<unsigned char>('N'));
+        const bool writeStartupAuthorization = nativeWorldPack.startupAuthorization && BitStream.Can(eBitStreamVersion::NativeWorldStartupAuthorization);
+        BitStream.Write(static_cast<unsigned char>(writeStartupAuthorization ? 'A' : 'N'));
         BitStream.Write(nativeWorldPack.format);
         BitStream.Write(static_cast<unsigned char>(nativeWorldPack.files.size()));
         BitStream.Write(static_cast<unsigned char>(nativeWorldPack.manifestPath.size()));
         BitStream.Write(nativeWorldPack.manifestPath.c_str(), static_cast<int>(nativeWorldPack.manifestPath.size()));
+
+        if (writeStartupAuthorization)
+        {
+            BitStream.Write(nativeWorldPack.authorizationVersion);
+            BitStream.Write(static_cast<unsigned char>(1));  // one-shot startup mode
+            BitStream.Write(nativeWorldPack.authorizationPolicy);
+        }
 
         for (CResourceFile* resourceFile : nativeWorldPack.files)
             writeResourceFile(resourceFile);
