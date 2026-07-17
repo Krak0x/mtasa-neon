@@ -126,8 +126,6 @@ local function beginMissionStageText(stage)
         scheduleMissionText(stage, 3000, function()
             printMissionText("HOOD3_B", 5000)
         end)
-    elseif stage == "ballas_departure" then
-        printMissionText("SWE1_AV", 10000)
     elseif stage == "tags_ballas" then
         scheduleMissionText(stage, 2500, function()
             printMissionText("SWE1_M", 6000)
@@ -260,6 +258,7 @@ local MISSION_TRACE_SEQUENCE = {
     {id = "drive_ballas", title = "LOCATE CAR IN BALLAS", detail = "SCM GATE · 4 m box + grounded / vehicle anchored"},
     {id = "ballas_camera", title = "SCRIPT CAMERA · BALLAS ARRIVAL", detail = "NATIVE VERIFIED · fixed point + widescreen / co-op barrier"},
     {id = "ballas_leave", title = "05CD · CJ LEAVES CAR", detail = "NATIVE VERIFIED · local player vehicle lifecycle"},
+    {id = "ballas_audio_av", title = "03CF/03D1 · SWE1_AV", detail = "NATIVE MISSION AUDIO · preload / play / natural finish"},
     {id = "ballas_wander", title = "05D2 · CAR DRIVE WANDER", detail = "NATIVE VERIFIED · Sweet passenger / speed 20 / style 2"},
     {id = "ballas_wait", title = "WAIT 1000", detail = "SCM FLOW · release control after native start"},
     {id = "spawn_ballas", title = "CREATE BALLAS GROUP", detail = "SCM ADAPTER · synchronized peds with native task AI"},
@@ -1371,6 +1370,24 @@ local function releaseBallasCamera(departure, reason)
                           getTickCount() - (departure.preparedAt or getTickCount())), released and 3 or 2)
 end
 
+local function releaseBallasAudio(departure, reason)
+    if not departure or not departure.audioHandle then
+        return true
+    end
+
+    local handle = departure.audioHandle
+    departure.audioHandle = nil
+    local released = false
+    if type(releaseMissionAudio) == "function" then
+        local ok, result = pcall(releaseMissionAudio, handle)
+        released = ok and result ~= false
+    end
+    outputDebugString(("[tagging-up-turf] Ballas SWE1_AV #%d release=%s handle=%s reason=%s"):format(
+                          departure.id, tostring(released), tostring(handle), tostring(reason or "cleanup")),
+                      released and 3 or 2)
+    return released
+end
+
 local function clearBallasDeparture(killWander, reason)
     local departure = state.ballasDeparture
     if departure then
@@ -1379,6 +1396,12 @@ local function clearBallasDeparture(killWander, reason)
         end
         if isTimer(departure.cameraLeaseMonitorTimer) then
             killTimer(departure.cameraLeaseMonitorTimer)
+        end
+        if isTimer(departure.audioLoadTimer) then
+            killTimer(departure.audioLoadTimer)
+        end
+        if isTimer(departure.audioFinishTimer) then
+            killTimer(departure.audioFinishTimer)
         end
         if isTimer(departure.exitRetryTimer) then
             killTimer(departure.exitRetryTimer)
@@ -1392,6 +1415,7 @@ local function clearBallasDeparture(killWander, reason)
         if isTimer(departure.wanderMonitorTimer) then
             killTimer(departure.wanderMonitorTimer)
         end
+        releaseBallasAudio(departure, reason)
         releaseBallasCamera(departure, reason)
     end
     if killWander and isElement(state.ballasWanderPed) and isElementSyncer(state.ballasWanderPed) then
@@ -1893,11 +1917,25 @@ end
 local function prepareBallasCamera(departure)
     local camera = TAGUP.ballasDeparture.camera
     local setupStartedAt = getTickCount()
+    if type(requestMissionAudio) ~= "function" or type(isMissionAudioLoaded) ~= "function" or type(playMissionAudio) ~= "function" or
+        type(isMissionAudioFinished) ~= "function" or type(releaseMissionAudio) ~= "function" then
+        return reportBallasCameraReady(departure, "audio_api_unavailable", "API mission-audio native absente")
+    end
+
+    departure.audioRequestedAt = getTickCount()
+    local requested, handle = pcall(requestMissionAudio, departure.profile.audio.event)
+    if not requested or not handle then
+        return reportBallasCameraReady(departure, "audio_request_refused",
+                                       ("SWE1_AV event=%d result=%s"):format(departure.profile.audio.event, tostring(handle)))
+    end
+    departure.audioHandle = handle
+
     local result = consumeArrivalGate("drive_ballas")
     local ok = result ~= nil
     if not ok then
         ok, result = callBallasCameraApi("acquireScriptCamera", true)
         if not ok then
+            releaseBallasAudio(departure, "camera_acquire_refused")
             return reportBallasCameraReady(departure, "acquire_refused", result)
         end
     end
@@ -1913,6 +1951,7 @@ local function prepareBallasCamera(departure)
                                         Vector3(camera.target.x, camera.target.y, camera.target.z), Vector3(0, 0, 0), true)
     end
     if not ok then
+        releaseBallasAudio(departure, "camera_setup_refused")
         releaseBallasCamera(departure, "setup_refused")
         return reportBallasCameraReady(departure, "setup_refused", result)
     end
@@ -1928,9 +1967,108 @@ local function prepareBallasCamera(departure)
         end
     end, 100, 0)
     traceCurrent("ballas_camera")
-    outputDebugString(("[tagging-up-turf] Ballas camera #%d ready token=%s in %d ms"):format(
-                          departure.id, tostring(departure.cameraToken), getTickCount() - setupStartedAt))
-    reportBallasCameraReady(departure, "ready", "native fixed camera and widescreen active")
+    outputDebugString(("[tagging-up-turf] Ballas camera #%d ready token=%s in %d ms; SWE1_AV event=%d handle=%s requested"):format(
+                          departure.id, tostring(departure.cameraToken), getTickCount() - setupStartedAt,
+                          departure.profile.audio.event, tostring(departure.audioHandle)))
+    reportBallasCameraReady(departure, "ready", "native fixed camera active; SWE1_AV requested")
+end
+
+local function reportBallasAudioReady(departure, result, details)
+    if not departure or departure.audioReadyReported then
+        return
+    end
+    departure.audioReadyReported = true
+    if isTimer(departure.audioLoadTimer) then
+        killTimer(departure.audioLoadTimer)
+        departure.audioLoadTimer = nil
+    end
+    triggerServerEvent("tagup:ballasAudioReady", resourceRoot, departure.id, departure.vehicle, result, details)
+end
+
+local function waitForBallasAudioLoad(departure)
+    if not departure or departure.audioReadyReported then
+        return
+    end
+
+    local function poll()
+        local active = state.ballasDeparture
+        if active ~= departure or active.audioReadyReported then
+            return
+        end
+        local ok, loaded = pcall(isMissionAudioLoaded, active.audioHandle)
+        if not ok then
+            return reportBallasAudioReady(active, "query_failed", tostring(loaded))
+        end
+        if loaded then
+            active.audioLoadedAt = getTickCount()
+            outputDebugString(("[tagging-up-turf] Ballas SWE1_AV #%d loaded after leave request; total preload=%d ms"):format(
+                                  active.id, active.audioLoadedAt - active.audioRequestedAt))
+            return reportBallasAudioReady(active, "ready", "native event 37420 loaded after leave request")
+        end
+        if getTickCount() - active.audioRequestedAt >= active.profile.audio.loadTimeout then
+            return reportBallasAudioReady(active, "load_timeout",
+                                          ("event=%d non charge apres %d ms"):format(
+                                              active.profile.audio.event, active.profile.audio.loadTimeout))
+        end
+    end
+
+    departure.audioLoadTimer = setTimer(poll, 100, 0)
+    poll()
+end
+
+local function reportBallasAudio(departure, result, details)
+    if not departure or departure.audioResultReported then
+        return
+    end
+    departure.audioResultReported = true
+    if isTimer(departure.audioFinishTimer) then
+        killTimer(departure.audioFinishTimer)
+        departure.audioFinishTimer = nil
+    end
+    triggerServerEvent("tagup:ballasAudioResult", resourceRoot, departure.id, departure.vehicle, result, details)
+end
+
+local function startBallasAudio(departure)
+    if not departure or departure.audioStarted then
+        return departure and departure.audioStarted
+    end
+    if not departure.audioHandle then
+        reportBallasAudio(departure, "missing_handle", "SWE1_AV handle absent")
+        return false
+    end
+
+    local ok, played = pcall(playMissionAudio, departure.audioHandle)
+    if not ok or played ~= true then
+        reportBallasAudio(departure, "play_refused", tostring(played))
+        return false
+    end
+
+    departure.audioStarted = true
+    departure.audioStartedAt = getTickCount()
+    printMissionText("SWE1_AV", 10000)
+    traceCurrent("ballas_audio_av", "NATIVE MISSION AUDIO · event 37420 / waiting for natural finish")
+    outputDebugString(("[tagging-up-turf] Ballas SWE1_AV #%d started event=%d handle=%s"):format(
+                          departure.id, departure.profile.audio.event, tostring(departure.audioHandle)))
+    departure.audioFinishTimer = setTimer(function()
+        local active = state.ballasDeparture
+        if active ~= departure or active.audioResultReported then
+            return
+        end
+        local queried, finished = pcall(isMissionAudioFinished, active.audioHandle)
+        local elapsed = getTickCount() - active.audioStartedAt
+        if not queried then
+            return reportBallasAudio(active, "query_failed", tostring(finished))
+        end
+        if finished then
+            traceProgress("ballas_audio_av", 1, ("NATIVE MISSION AUDIO · natural finish after %d ms"):format(elapsed))
+            outputDebugString(("[tagging-up-turf] Ballas SWE1_AV #%d finished naturally after %d ms"):format(active.id, elapsed))
+            return reportBallasAudio(active, "finished", ("natural finish after %d ms"):format(elapsed))
+        end
+        if elapsed >= active.profile.audio.finishTimeout then
+            return reportBallasAudio(active, "finish_timeout", ("still active after %d ms"):format(elapsed))
+        end
+    end, 100, 0)
+    return true
 end
 
 local function reportBallasPlayerExit(result, details)
@@ -1961,6 +2099,7 @@ local function beginBallasPlayerExit()
         return reportBallasPlayerExit("destroyed", "Greenwood absente avant la sortie")
     end
     if getPedOccupiedVehicle(localPlayer) ~= departure.vehicle then
+        waitForBallasAudioLoad(departure)
         return reportBallasPlayerExit("already_out", "joueur deja hors de la Greenwood")
     end
     if not isElementStreamedIn(departure.vehicle) then
@@ -1973,6 +2112,8 @@ local function beginBallasPlayerExit()
     if type(setPedExitVehicle) ~= "function" or not setPedExitVehicle(localPlayer) then
         return reportBallasPlayerExit("refused", "setPedExitVehicle(localPlayer) refusee")
     end
+
+    waitForBallasAudioLoad(departure)
 
     departure.exitAcceptedAt = getTickCount()
     departure.exitSeenNative = false
@@ -2102,6 +2243,16 @@ addEventHandler("tagup:ballasPlayerExitStart", resourceRoot, function(departureI
     else
         beginBallasPlayerExit()
     end
+end)
+
+addEvent("tagup:ballasAudioStart", true)
+addEventHandler("tagup:ballasAudioStart", resourceRoot, function(departureId, vehicle)
+    local departure = state.ballasDeparture
+    if source ~= resourceRoot or not departure or departure.id ~= departureId or departure.vehicle ~= vehicle or
+        not departure.audioReadyReported or departure.audioStarted or not state.active or state.stage ~= "ballas_departure" then
+        return
+    end
+    startBallasAudio(departure)
 end)
 
 addEvent("tagup:ballasCameraFinalCheck", true)

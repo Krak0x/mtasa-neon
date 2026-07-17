@@ -789,6 +789,48 @@ local function startMission(requester, checkpoint)
     setElementData(demoObject, "tagup.paintAlpha", 0, true)
     mission.entities.demoTag = demoObject
 
+    if checkpoint == "departure" then
+        -- This checkpoint owns only mission setup. It leaves the real
+        -- LOCATE_CAR_3D, camera, leave-car, audio, and DriveWander gates intact.
+        for _, tagId in ipairs({1, 2}) do
+            mission.tagProgress[tagId] = 255
+            mission.completedTags[tagId] = true
+            replaceTagObject(tagId)
+        end
+        setElementData(demoObject, "tagup.paintAlpha", 255, true)
+
+        -- The checkpoint bypasses the drive that normally streams this road.
+        -- Start above the SCM target so collision can settle the Greenwood onto
+        -- the surface without losing the real 4 m arrival gate.
+        setElementPosition(vehicle, TAGUP.ballasDestination[1], TAGUP.ballasDestination[2], TAGUP.ballasDestination[3] + 2.0)
+        setElementRotation(vehicle, 0, 0, 270)
+        setElementVelocity(vehicle, 0, 0, 0)
+        setElementFrozen(vehicle, false)
+
+        if not warpPedIntoVehicle(requester, vehicle, 0) or not warpPedIntoVehicle(sweet, vehicle, 1) then
+            return failMission("Le checkpoint SWE1_AV n'a pas pu installer le conducteur ou Sweet.")
+        end
+        for index = 2, #mission.party do
+            local player = mission.party[index]
+            if not warpPedIntoVehicle(player, vehicle, index) then
+                return failMission("Le checkpoint SWE1_AV n'a pas pu installer toute l'equipe.")
+            end
+        end
+        for _, player in ipairs(mission.party) do
+            if isElement(player) then
+                setElementFrozen(player, false)
+            end
+        end
+
+        setElementSyncer(sweet, requester, true, true)
+        mission.ballasTimerResetAt = getTickCount()
+        setStage("drive_ballas", {message = "Checkpoint SWE1_AV pret dans la zone d'arrivee Ballas."})
+        outputDebugString(("[tagging-up-turf] SWE1_AV departure checkpoint started by %s; real LOCATE_CAR_3D gate remains armed"):format(
+                              getPlayerName(requester)))
+        outputChatBox("Checkpoint SWE1_AV charge. Attends la stabilisation de la Greenwood pour declencher la scene.", requester, 120, 220, 120)
+        return
+    end
+
     if checkpoint == "ballas" then
         -- This checkpoint preserves the state produced by the completed
         -- Idlewood and first Ballas tag flow while leaving the encounter's
@@ -1343,6 +1385,13 @@ addCommandHandler("tagupballas", function(player)
         return
     end
     startMission(player, "ballas")
+end)
+
+addCommandHandler("tagupdeparture", function(player)
+    if not player then
+        return
+    end
+    startMission(player, "departure")
 end)
 
 addCommandHandler("tagupabort", function(player)
@@ -2173,6 +2222,24 @@ local function allMissionPlayersExitedBallasVehicle(departure)
     return true
 end
 
+local function allMissionPlayersFinishedBallasAudio(departure)
+    for _, player in ipairs(mission.party) do
+        if isElement(player) and not departure.audioFinishedPlayers[player] then
+            return false
+        end
+    end
+    return true
+end
+
+local function allMissionPlayersReadyForBallasAudio(departure)
+    for _, player in ipairs(mission.party) do
+        if isElement(player) and not departure.audioReadyPlayers[player] then
+            return false
+        end
+    end
+    return true
+end
+
 local function allMissionPlayersCameraReady(departure)
     for _, player in ipairs(mission.party) do
         if isElement(player) and not departure.cameraReadyPlayers[player] then
@@ -2235,7 +2302,7 @@ local function startBallasDepartureScene(departure)
         failMission("La sequence native de depart de Sweet a depasse le delai de garde.")
     end, TAGUP.ballasDeparture.guardTimeout, 1, departure.id))
 
-    outputDebugString(("[tagging-up-turf] Ballas camera barrier #%d passed for %d participant(s); starting native exits"):format(
+    outputDebugString(("[tagging-up-turf] Ballas camera barrier #%d passed for %d participant(s); starting native exits and post-task audio load gate"):format(
                           departure.id, #mission.party))
     for _, player in ipairs(mission.party) do
         if isElement(player) then
@@ -2244,10 +2311,26 @@ local function startBallasDepartureScene(departure)
     end
 end
 
+local function tryStartBallasAudio(departure)
+    if not departure or departure.audioStarted or not allMissionPlayersReadyForBallasAudio(departure) then
+        return
+    end
+
+    departure.audioStarted = true
+    outputDebugString(("[tagging-up-turf] Ballas SWE1_AV #%d load barrier passed for %d participant(s); starting native playback"):format(
+                          departure.id, #mission.party))
+    for _, player in ipairs(mission.party) do
+        if isElement(player) then
+            triggerClientEvent(player, "tagup:ballasAudioStart", resourceRoot, departure.id, departure.vehicle)
+        end
+    end
+end
+
 local function tryStartBallasWander()
     local departure = mission.ballasDeparture
     local sweet, vehicle = mission.entities.sweet, mission.entities.vehicle
-    if not departure or departure.wanderRequested or not allMissionPlayersExitedBallasVehicle(departure) then
+    if not departure or departure.wanderRequested or not allMissionPlayersExitedBallasVehicle(departure) or
+        not allMissionPlayersFinishedBallasAudio(departure) then
         return
     end
     if not isElement(sweet) or not isElement(vehicle) or getVehicleController(vehicle) or getPedOccupiedVehicle(sweet) ~= vehicle then
@@ -2261,7 +2344,7 @@ local function tryStartBallasWander()
     setElementSyncer(vehicle, mission.leader, true, true)
     departure.wanderRequested = true
     departure.wanderRequestedAt = getTickCount()
-    outputDebugString(("[tagging-up-turf] All players exited; requesting 05D2 DriveWander #%d (speed=%.1f, style=%s) from %s"):format(
+    outputDebugString(("[tagging-up-turf] All players exited and SWE1_AV finished; requesting 05D2 DriveWander #%d (speed=%.1f, style=%s) from %s"):format(
                           departure.id, TAGUP.ballasDeparture.speed, TAGUP.ballasDeparture.drivingStyle, getPlayerName(mission.leader)))
     triggerClientEvent(mission.leader, "tagup:ballasDriveWanderStart", resourceRoot, departure.id, sweet, vehicle, TAGUP.ballasDeparture)
 end
@@ -2281,6 +2364,8 @@ local function startBallasDeparture()
         exitedPlayers = {},
         clientExitReports = {},
         cameraReadyPlayers = {},
+        audioReadyPlayers = {},
+        audioFinishedPlayers = {},
         requestedAt = getTickCount(),
     }
     mission.ballasDeparture = departure
@@ -2338,6 +2423,51 @@ addEventHandler("tagup:ballasCameraLeaseLost", resourceRoot, function(departureI
     outputDebugString(("[tagging-up-turf] Ballas camera #%d lease lost on %s"):format(departure.id, getPlayerName(player)), 2)
     cancelBallasDeparture("client_camera_lease_lost")
     failMission("Un client a perdu le controle de la camera native pendant la scene Ballas.")
+end)
+
+addEvent("tagup:ballasAudioReady", true)
+addEventHandler("tagup:ballasAudioReady", resourceRoot, function(departureId, vehicle, result, details)
+    local player = client
+    local departure = mission.ballasDeparture
+    if source ~= resourceRoot or not mission.running or mission.stage ~= "ballas_departure" or not departure or not departure.cameraStarted or
+        departure.audioStarted or
+        departure.id ~= tonumber(departureId) or departure.vehicle ~= vehicle or vehicle ~= mission.entities.vehicle or
+        not isMissionPlayer(player) or departure.audioReadyPlayers[player] then
+        outputDebugString("[tagging-up-turf] Rejected stale or unauthorized Ballas SWE1_AV ready result", 2)
+        return
+    end
+
+    outputDebugString(("[tagging-up-turf] Ballas SWE1_AV #%d player=%s ready=%s (%s)"):format(
+                          departure.id, getPlayerName(player), tostring(result), tostring(details or ""):sub(1, 180)))
+    if result ~= "ready" then
+        cancelBallasDeparture("client_audio_ready_" .. tostring(result))
+        return failMission("Le chargement de SWE1_AV a echoue sur un client: " .. tostring(result))
+    end
+
+    departure.audioReadyPlayers[player] = true
+    tryStartBallasAudio(departure)
+end)
+
+addEvent("tagup:ballasAudioResult", true)
+addEventHandler("tagup:ballasAudioResult", resourceRoot, function(departureId, vehicle, result, details)
+    local player = client
+    local departure = mission.ballasDeparture
+    if source ~= resourceRoot or not mission.running or mission.stage ~= "ballas_departure" or not departure or not departure.audioStarted or
+        departure.id ~= tonumber(departureId) or departure.vehicle ~= vehicle or vehicle ~= mission.entities.vehicle or
+        not isMissionPlayer(player) or not departure.audioReadyPlayers[player] or departure.audioFinishedPlayers[player] then
+        outputDebugString("[tagging-up-turf] Rejected stale or unauthorized Ballas SWE1_AV result", 2)
+        return
+    end
+
+    outputDebugString(("[tagging-up-turf] Ballas SWE1_AV #%d player=%s result=%s (%s)"):format(
+                          departure.id, getPlayerName(player), tostring(result), tostring(details or ""):sub(1, 180)))
+    if result ~= "finished" then
+        cancelBallasDeparture("client_audio_" .. tostring(result))
+        return failMission("La replique SWE1_AV a echoue sur un client: " .. tostring(result))
+    end
+
+    departure.audioFinishedPlayers[player] = true
+    tryStartBallasWander()
 end)
 
 addEvent("tagup:ballasCameraFinalResult", true)
@@ -2759,5 +2889,5 @@ addEventHandler("onResourceStop", resourceRoot, function()
 end)
 
 addEventHandler("onResourceStart", resourceRoot, function()
-    outputDebugString("[tagging-up-turf] Ready. Use /tagup or /tagupballas (up to three connected players).")
+    outputDebugString("[tagging-up-turf] Ready. Use /tagup, /tagupdeparture, or /tagupballas (up to three connected players).")
 end)

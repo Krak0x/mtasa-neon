@@ -104,8 +104,13 @@ TAGUP = {
     ballasDeparture = {
         speed = 20.0,
         drivingStyle = "avoid_cars",
+        audio = {
+            event = 37420,
+            loadTimeout = 30000,
+            finishTimeout = 20000,
+        },
         -- SWEET1 keeps this exact jump-cut shot active from before CJ exits
-        -- until one second after Sweet starts DriveWander.
+        -- through SWE1_AV, then until one second after Sweet starts DriveWander.
         camera = {
             position = {x = 2329.6750, y = -1499.9113, z = 25.8505},
             target = {x = 2330.6533, y = -1499.9260, z = 25.6440},
@@ -115,7 +120,9 @@ TAGUP = {
         },
         observationTimeout = 5000,
         exitTimeout = 15000,
-        guardTimeout = 22000,
+        -- A cold audio load begins before the camera, then overlaps leave-car.
+        -- Its natural finish still precedes 05D2 observation and WAIT 1000.
+        guardTimeout = 65000,
         postStartWait = 1000,
     },
     ballasGangScene = {
