@@ -1118,7 +1118,7 @@ local function cancelFinalScene(reason, notifyClients)
     end
 
     mission.finalScene = nil
-    for _, timer in ipairs({scene.readyGuardTimer, scene.startTimer, scene.audioGuardTimer, scene.nextLineTimer,
+    for _, timer in ipairs({scene.readyGuardTimer, scene.visualGuardTimer, scene.startTimer, scene.audioGuardTimer, scene.nextLineTimer,
                             scene.handshakeGuardTimer, scene.taskReportGuardTimer, scene.postAudioTimer, scene.releaseGuardTimer}) do
         if isTimer(timer) then
             killTimer(timer)
@@ -1167,6 +1167,37 @@ end
 local prepareFinalSceneLine
 local requestFinalSceneRelease
 
+local function stageFinalSceneActors(scene, reason)
+    if mission.finalScene ~= scene or not isElement(mission.leader) or not isElement(mission.entities.sweet) then
+        return false
+    end
+    local profile = TAGUP.finalScene
+    local leader, sweet = mission.leader, mission.entities.sweet
+    local leaderX, leaderY, leaderZ = getElementPosition(leader)
+    local sweetX, sweetY, sweetZ = getElementPosition(sweet)
+    local distanceBefore = tagupDistance3D(leaderX, leaderY, leaderZ, sweetX, sweetY, sweetZ)
+    local placementZOffset = profile.placementZOffset
+
+    -- Both actors remain live synchronized peds during the dialogue. Reapply
+    -- the SCM pair immediately before the handshake so collision or residual
+    -- velocity cannot open a visible gap between the paired animations.
+    setElementPosition(leader, profile.leader.x, profile.leader.y, profile.leader.z + placementZOffset)
+    setElementRotation(leader, 0, 0, profile.leader.heading)
+    setElementVelocity(leader, 0, 0, 0)
+    setElementFrozen(leader, false)
+    setElementPosition(sweet, profile.sweet.x, profile.sweet.y, profile.sweet.z + placementZOffset)
+    setElementRotation(sweet, 0, 0, profile.sweet.heading)
+    setElementVelocity(sweet, 0, 0, 0)
+    setElementFrozen(sweet, false)
+
+    local stagedLeaderX, stagedLeaderY, stagedLeaderZ = getElementPosition(leader)
+    local stagedSweetX, stagedSweetY, stagedSweetZ = getElementPosition(sweet)
+    local distanceAfter = tagupDistance3D(stagedLeaderX, stagedLeaderY, stagedLeaderZ, stagedSweetX, stagedSweetY, stagedSweetZ)
+    outputDebugString(("[tagging-up-turf] Final Grove scene #%d actor stage %s: distance %.3f -> %.3f m"):format(
+                          scene.id, tostring(reason), distanceBefore, distanceAfter))
+    return true
+end
+
 local function tryFinishFinalSceneTimeline(scene)
     if mission.finalScene ~= scene or scene.releasing or not scene.finalAudioFinished or not scene.walkAccepted or scene.postAudioTimer then
         return
@@ -1203,7 +1234,7 @@ local function playFinalSceneLine(scene, lineIndex)
         end
     elseif lineIndex == profile.handshakeLine then
         local sweet = mission.entities.sweet
-        if not isElement(mission.leader) or not isElement(sweet) or
+        if not stageFinalSceneActors(scene, "handshake") or not isElement(mission.leader) or not isElement(sweet) or
             not setPedAnimation(sweet, profile.handshake.block, profile.handshake.name, -1, false, false, false, false, 250, false) or
             not setPedAnimation(mission.leader, profile.handshake.block, profile.handshake.name, -1, false, false, false, false, 250, false) then
             return failFinalScene(scene, "La poignee de main GANGS a ete refusee pendant la scene finale.")
@@ -1255,7 +1286,7 @@ requestFinalSceneRelease = function(scene, skipped)
     scene.releasing = true
     scene.skipped = skipped == true
     scene.releasedPlayers = {}
-    for _, timer in ipairs({scene.startTimer, scene.audioGuardTimer, scene.nextLineTimer, scene.handshakeGuardTimer,
+    for _, timer in ipairs({scene.visualGuardTimer, scene.startTimer, scene.audioGuardTimer, scene.nextLineTimer, scene.handshakeGuardTimer,
                             scene.taskReportGuardTimer, scene.postAudioTimer}) do
         if isTimer(timer) then
             killTimer(timer)
@@ -1291,6 +1322,7 @@ startFinalScene = function(extra)
         id = mission.finalSceneSerial,
         players = {},
         readyPlayers = {},
+        visualReadyPlayers = {},
         lineIndex = 1,
         traceExtra = extra,
     }
@@ -1322,7 +1354,7 @@ addEvent("tagup:finalSceneReady", true)
 addEventHandler("tagup:finalSceneReady", resourceRoot, function(sceneId, result, details)
     local player, scene = client, mission.finalScene
     if source ~= resourceRoot or not scene or mission.stage ~= "final_scene" or scene.id ~= tonumber(sceneId) or
-        not isMissionPlayer(player) or scene.readyPlayers[player] or scene.started then
+        not isMissionPlayer(player) or scene.readyPlayers[player] or scene.staged then
         return
     end
     outputDebugString(("[tagging-up-turf] Final Grove scene #%d ready player=%s result=%s (%s)"):format(
@@ -1341,20 +1373,18 @@ addEventHandler("tagup:finalSceneReady", resourceRoot, function(sceneId, result,
     end
     local profile, leader = TAGUP.finalScene, mission.leader
     removePedFromVehicle(leader)
-    setElementPosition(leader, profile.leader.x, profile.leader.y, profile.leader.z)
-    setElementRotation(leader, 0, 0, profile.leader.heading)
-    setElementFrozen(leader, false)
     takeWeapon(leader, TAGUP.sprayWeapon)
     setPedWeaponSlot(leader, 0)
     setPedAnimation(leader, false)
 
     removePedFromVehicle(mission.entities.sweet)
-    setElementPosition(mission.entities.sweet, profile.sweet.x, profile.sweet.y, profile.sweet.z)
-    setElementRotation(mission.entities.sweet, 0, 0, profile.sweet.heading)
     setElementSyncer(mission.entities.sweet, leader, true, true)
     takeWeapon(mission.entities.sweet, TAGUP.sprayWeapon)
     setPedWeaponSlot(mission.entities.sweet, 0)
     setPedAnimation(mission.entities.sweet, false)
+    if not stageFinalSceneActors(scene, "initial") then
+        return failFinalScene(scene, "Les acteurs de la scene finale n'ont pas pu etre places.")
+    end
     setElementFrozen(mission.entities.vehicle, true)
 
     local extraIndex = 1
@@ -1371,12 +1401,48 @@ addEventHandler("tagup:finalSceneReady", resourceRoot, function(sceneId, result,
         end
     end
 
+    scene.staged = true
+    scene.visualGuardTimer = rememberTimer(setTimer(function(expectedId)
+        local active = mission.finalScene
+        if active and active.id == expectedId and not active.started then
+            failFinalScene(active, "Le modele habille de CJ n'a pas ete rendu avant la scene finale.")
+        end
+    end, profile.visualReadyTimeout, 1, scene.id))
+    for _, member in ipairs(scene.players) do
+        if isElement(member) then
+            triggerClientEvent(member, "tagup:finalSceneStart", resourceRoot, scene.id)
+        end
+    end
+end)
+
+addEvent("tagup:finalSceneVisualReady", true)
+addEventHandler("tagup:finalSceneVisualReady", resourceRoot, function(sceneId, result, details)
+    local player, scene = client, mission.finalScene
+    local profile = TAGUP.finalScene
+    if source ~= resourceRoot or not scene or mission.stage ~= "final_scene" or scene.id ~= tonumber(sceneId) or not scene.staged or
+        scene.started or not isMissionPlayer(player) or scene.visualReadyPlayers[player] then
+        return
+    end
+    outputDebugString(("[tagging-up-turf] Final Grove scene #%d CJ visual ready player=%s result=%s (%s)"):format(
+                          scene.id, getPlayerName(player), tostring(result), tostring(details or ""):sub(1, 300)))
+    if result ~= "ready" then
+        return failFinalScene(scene, "Le modele habille de CJ n'a pas pu etre rendu sur un client: " .. tostring(result))
+    end
+    scene.visualReadyPlayers[player] = true
+    if not allFinalScenePlayers(scene, "visualReadyPlayers") then
+        return
+    end
+
+    if isTimer(scene.visualGuardTimer) then
+        killTimer(scene.visualGuardTimer)
+        scene.visualGuardTimer = nil
+    end
     scene.started = true
     scene.startedAt = getTickCount()
     scene.audioReadyPlayers = scene.readyPlayers
     for _, member in ipairs(scene.players) do
         if isElement(member) then
-            triggerClientEvent(member, "tagup:finalSceneStart", resourceRoot, scene.id)
+            triggerClientEvent(member, "tagup:finalSceneReveal", resourceRoot, scene.id)
         end
     end
     scene.startTimer = rememberTimer(setTimer(function(expectedId)

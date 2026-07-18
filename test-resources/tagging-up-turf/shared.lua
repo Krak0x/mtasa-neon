@@ -253,6 +253,10 @@ TAGUP = {
     finalScene = {
         -- Installed main.scm offsets 0x7BF25 through 0x7C51C stage the
         -- complete Grove Street conversation before mission_sweet1_passed.
+        -- Target handlers 0x464DC0 (SET_CHAR_COORDINATES) and opcode 0362
+        -- (WARP_CHAR_FROM_CAR_TO_COORD) add the collision model's
+        -- centre-to-base distance to script Z. CJ and Sweet both use 1.0 m.
+        placementZOffset = 1.0,
         leader = {x = 2511.3518, y = -1672.14, z = 12.4588, heading = 180.0},
         sweet = {x = 2511.3518, y = -1673.14, z = 12.4588, heading = 0.0},
         extraPlayers = {
@@ -302,6 +306,8 @@ TAGUP = {
         },
         postAudioWait = 1500,
         readyTimeout = 30000,
+        visualReadyTimeout = 5000,
+        visualStableSamples = 5,
         audioLoadTimeout = 30000,
         audioFinishTimeout = 15000,
         taskReportTimeout = 5000,

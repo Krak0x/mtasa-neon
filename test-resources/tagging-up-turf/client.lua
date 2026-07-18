@@ -1342,6 +1342,13 @@ local function clearFinalScene(reason, preserveFade)
             killTimer(scene[name])
         end
     end
+    if type(scene.visualReadyHandler) == "function" then
+        removeEventHandler("onClientPreRender", root, scene.visualReadyHandler)
+        scene.visualReadyHandler = nil
+    end
+    if scene.actorsCollidable ~= nil and isElement(scene.leader) and isElement(scene.sweet) then
+        setElementCollidableWith(scene.leader, scene.sweet, scene.actorsCollidable)
+    end
     if scene.walkAcceptedLocal and isElement(scene.sweet) and isElementSyncer(scene.sweet) and type(killPedTask) == "function" then
         killPedTask(scene.sweet, "primary", 3, false)
     end
@@ -1444,7 +1451,8 @@ addEventHandler("tagup:finalScenePrepare", resourceRoot, function(sceneId, sweet
     local required = {"acquireScriptCamera", "releaseScriptCamera", "isScriptCameraLeaseActive", "resetScriptCamera",
                       "setScriptCameraWidescreen", "setScriptCameraNearClip", "setScriptCameraFixed", "setScriptCameraPersist",
                       "moveScriptCamera", "trackScriptCamera", "fadeScriptCamera", "isScriptCameraFading", "setPedLookAt", "setPedGoTo",
-                      "requestMissionAudio", "isMissionAudioLoaded", "playMissionAudio", "isMissionAudioFinished", "releaseMissionAudio"}
+                      "getElementBonePosition", "requestMissionAudio", "isMissionAudioLoaded", "playMissionAudio", "isMissionAudioFinished",
+                      "releaseMissionAudio"}
     for _, name in ipairs(required) do
         if type(_G[name]) ~= "function" then
             state.finalScene = {id = sceneId}
@@ -1509,21 +1517,117 @@ addEventHandler("tagup:finalSceneStart", resourceRoot, function(sceneId)
         return
     end
     local camera = TAGUP.finalScene.camera
-    local ok = setScriptCameraFixed(scene.cameraToken, Vector3(camera.fixed.position.x, camera.fixed.position.y, camera.fixed.position.z),
-                                    Vector3(camera.fixed.target.x, camera.fixed.target.y, camera.fixed.target.z), Vector3(0, 0, 0), true) and
-                   resetScriptCamera(scene.cameraToken) and setScriptCameraWidescreen(scene.cameraToken, true) and
+    local ok = resetScriptCamera(scene.cameraToken) and setScriptCameraWidescreen(scene.cameraToken, true) and
                    setScriptCameraNearClip(scene.cameraToken, camera.nearClip) and setScriptCameraPersist(scene.cameraToken, true, true) and
+                   setScriptCameraFixed(scene.cameraToken, Vector3(camera.fixed.position.x, camera.fixed.position.y, camera.fixed.position.z),
+                                        Vector3(camera.fixed.target.x, camera.fixed.target.y, camera.fixed.target.z), Vector3(0, 0, 0), true)
+    if not ok then
+        return triggerServerEvent("tagup:finalSceneLeaseLost", resourceRoot, scene.id)
+    end
+
+    scene.leader = state.leader
+    -- Clothing RPC readback can become correct before GTA has rebuilt CJ's
+    -- render clump. Keep the fade black until the staged camera has observed
+    -- the complete actor for several consecutive frames.
+    scene.actorsCollidable = isElementCollidableWith(scene.leader, scene.sweet)
+    setElementCollidableWith(scene.leader, scene.sweet, false)
+    scene.visualStableSamples = 0
+    scene.visualReadyHandler = function()
+        local active = state.finalScene
+        if active ~= scene or not hasFinalSceneLease(active) then
+            return
+        end
+
+        local leader = active.leader
+        local profile = TAGUP.finalScene
+        local model = isElement(leader) and getElementModel(leader) or -1
+        local alpha = isElement(leader) and getElementAlpha(leader) or -1
+        local streamed = isElement(leader) and (leader == localPlayer or isElementStreamedIn(leader))
+        local onScreen = streamed and isElementOnScreen(leader)
+        local boneX, boneY, boneZ = false, false, false
+        if streamed then
+            boneX, boneY, boneZ = getElementBonePosition(leader, 2)
+        end
+        local boneReady = type(boneX) == "number" and type(boneY) == "number" and type(boneZ) == "number"
+        local sweetStreamed = isElement(active.sweet) and isElementStreamedIn(active.sweet)
+        local sweetBoneX, sweetBoneY, sweetBoneZ = false, false, false
+        if sweetStreamed then
+            sweetBoneX, sweetBoneY, sweetBoneZ = getElementBonePosition(active.sweet, 2)
+        end
+        local sweetBoneReady = type(sweetBoneX) == "number" and type(sweetBoneY) == "number" and type(sweetBoneZ) == "number"
+        local clothesReady = streamed and model == TAGUP.cj.model
+        local clothes = {}
+        if clothesReady then
+            for _, expected in ipairs(TAGUP.cj.clothes) do
+                local texture, clothingModel = getPedClothes(leader, expected.type)
+                clothes[#clothes + 1] = ("%d=%s/%s"):format(expected.type, tostring(texture), tostring(clothingModel))
+                if type(texture) ~= "string" or type(clothingModel) ~= "string" or texture:lower() ~= expected.texture or
+                    clothingModel:lower() ~= expected.model then
+                    clothesReady = false
+                end
+            end
+        end
+
+        local leaderDistance, sweetDistance = math.huge, math.huge
+        local placementZOffset = profile.placementZOffset
+        if isElement(leader) then
+            local x, y, z = getElementPosition(leader)
+            leaderDistance = tagupDistance3D(x, y, z, profile.leader.x, profile.leader.y, profile.leader.z + placementZOffset)
+        end
+        if isElement(active.sweet) then
+            local x, y, z = getElementPosition(active.sweet)
+            sweetDistance = tagupDistance3D(x, y, z, profile.sweet.x, profile.sweet.y, profile.sweet.z + placementZOffset)
+        end
+
+        -- On-screen and position flags describe camera/frustum and physics,
+        -- not clothing reconstruction. A valid bone proves GTA has a usable
+        -- CJ clump; consecutive pre-render frames let the deferred rebuild run.
+        -- This barrier exists to wait for CJ's deferred clothing clump rebuild.
+        -- Sweet can briefly leave the client streamer when the server warps both
+        -- actors out of their vehicle, even though the scene remains valid.
+        local ready = streamed and model == TAGUP.cj.model and alpha == 255 and clothesReady and boneReady
+        active.visualStableSamples = ready and active.visualStableSamples + 1 or 0
+        local details = ("model=%d alpha=%d streamed=%s bone=%s sweetStreamed=%s sweetBone=%s onScreen=%s clothes=%s " ..
+                            "leaderError=%.3f sweetError=%.3f stable=%d/%d"):format(
+                            model, alpha, tostring(streamed), tostring(boneReady), tostring(sweetStreamed), tostring(sweetBoneReady),
+                            tostring(onScreen), table.concat(clothes, ","), leaderDistance, sweetDistance, active.visualStableSamples,
+                            profile.visualStableSamples)
+        if details ~= active.lastVisualDetails and
+            (not active.lastVisualLogAt or getTickCount() - active.lastVisualLogAt >= 500) then
+            active.lastVisualDetails = details
+            active.lastVisualLogAt = getTickCount()
+            outputDebugString("[tagging-up-turf] Final CJ render barrier: " .. details)
+        end
+        if active.visualStableSamples >= profile.visualStableSamples then
+            removeEventHandler("onClientPreRender", root, active.visualReadyHandler)
+            active.visualReadyHandler = nil
+            active.visualReadyReported = true
+            triggerServerEvent("tagup:finalSceneVisualReady", resourceRoot, active.id, "ready", details)
+        end
+    end
+    addEventHandler("onClientPreRender", root, scene.visualReadyHandler)
+end)
+
+addEvent("tagup:finalSceneReveal", true)
+addEventHandler("tagup:finalSceneReveal", resourceRoot, function(sceneId)
+    local scene = state.finalScene
+    if source ~= resourceRoot or not scene or scene.id ~= sceneId or not scene.visualReadyReported or not hasFinalSceneLease(scene) then
+        return
+    end
+    local camera = TAGUP.finalScene.camera
+    local ok = resetScriptCamera(scene.cameraToken) and setScriptCameraPersist(scene.cameraToken, true, true) and
                    moveScriptCamera(scene.cameraToken, Vector3(camera.move.from.x, camera.move.from.y, camera.move.from.z),
-                                    Vector3(camera.move.to.x, camera.move.to.y, camera.move.to.z), camera.move.duration, true) and
+                                Vector3(camera.move.to.x, camera.move.to.y, camera.move.to.z), camera.move.duration, true) and
                    trackScriptCamera(scene.cameraToken, Vector3(camera.track.from.x, camera.track.from.y, camera.track.from.z),
                                      Vector3(camera.track.to.x, camera.track.to.y, camera.track.to.z), camera.track.duration, true) and
                    fadeScriptCamera(scene.cameraToken, true, camera.fadeInDuration, 0, 0, 0)
     if not ok then
         return triggerServerEvent("tagup:finalSceneLeaseLost", resourceRoot, scene.id)
     end
+    scene.started = true
     scene.startedAt = getTickCount()
     traceCurrent("final_camera", "NATIVE VERIFIED · 18 s vector move/track started")
-    outputDebugString(("[tagging-up-turf] Final Grove scene #%d 18-second vector camera started"):format(scene.id))
+    outputDebugString(("[tagging-up-turf] Final Grove scene #%d CJ render-ready; 18-second vector camera started"):format(scene.id))
 end)
 
 addEvent("tagup:finalScenePrepareAudio", true)
@@ -4485,6 +4589,15 @@ end)
 addEventHandler("onClientElementStreamOut", root, function()
     if state.finalScene and (source == state.finalScene.sweet or source == state.leader) then
         local scene = state.finalScene
+        local actor = source == scene.sweet and "sweet" or (source == localPlayer and "local_leader" or "remote_leader")
+        if source == localPlayer or not scene.started then
+            -- Changing a synchronized actor's vehicle/model state can recreate
+            -- its GTA entity for a frame. Before reveal the render barrier owns
+            -- recovery; the local player is never truly lost from MTA streaming.
+            outputDebugString(("[tagging-up-turf] Final Grove scene #%d transient stream-out actor=%s phase=%s"):format(
+                                  scene.id, actor, scene.started and "started" or "render_barrier"))
+            return
+        end
         triggerServerEvent("tagup:finalSceneLeaseLost", resourceRoot, scene.id)
         clearFinalScene("actor_streamed_out", false)
         return
