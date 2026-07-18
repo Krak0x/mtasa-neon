@@ -362,7 +362,7 @@ namespace
         return true;
     }
 
-    bool ValidateExecutable(eGameVersion gameVersion, const char* executablePath, DWORD& imageSize)
+    bool ValidateExecutable(eGameVersion gameVersion, const char* executablePath, DWORD& imageSize, const SExecutableIdentity*& validatedIdentity)
     {
         const HMODULE module = GetModuleHandle(nullptr);
         if (module != reinterpret_cast<HMODULE>(EXPECTED_IMAGE_BASE))
@@ -412,7 +412,7 @@ namespace
         }
 
         imageSize = nt->OptionalHeader.SizeOfImage;
-        g_executableIdentity = identity;
+        validatedIdentity = identity;
         DebugLog("[NativeBW] executable identity=%s sha256=%s timestamp=0x%08X checksum=0x%08X image=0x%08X", identity->name, identity->sha256,
                  identity->timestamp, identity->checksum, identity->imageSize);
         return true;
@@ -640,8 +640,9 @@ void CNativeModelStoreSA::InstallFromEnvironment(eGameVersion gameVersion)
     }
     DebugLog("[NativeBW] mode=preflight executable=%s gameVersion=%d", executablePath, gameVersion);
 
-    DWORD imageSize = 0;
-    if (!ValidateExecutable(gameVersion, executablePath, imageSize) || !ValidateManifest(imageSize) || !ValidateOriginalStores())
+    DWORD                      imageSize = 0;
+    const SExecutableIdentity* identity = nullptr;
+    if (!ValidateExecutable(gameVersion, executablePath, imageSize, identity) || !ValidateManifest(imageSize) || !ValidateOriginalStores())
     {
         DebugLog("[NativeBW] mode=refused; stock stores and collision buffers remain active");
         return;
@@ -652,6 +653,8 @@ void CNativeModelStoreSA::InstallFromEnvironment(eGameVersion gameVersion)
         return;
     }
 
+    g_executableIdentity = identity;
+
     // Every instruction and every allocation has been validated before this
     // first executable write. From this point the set is committed as one
     // startup operation while GTA model/streaming initialization is still idle.
@@ -661,6 +664,26 @@ void CNativeModelStoreSA::InstallFromEnvironment(eGameVersion gameVersion)
     DebugLog("[NativeBW] mode=active executable=%s timestamp=0x%08X checksum=0x%08X image=0x%08X collision=%p capacity=%u (stock=%u)",
              g_executableIdentity->name, g_executableIdentity->timestamp, g_executableIdentity->checksum, g_executableIdentity->imageSize, g_collisionBuffer,
              COLLISION_BUFFER_DEFINITIONS[0].newCapacity, COLLISION_BUFFER_DEFINITIONS[0].originalCapacity);
+}
+
+bool CNativeModelStoreSA::ValidateExecutableAndPatchManifestReadOnly(eGameVersion gameVersion, std::string& error)
+{
+    char        executablePath[MAX_PATH]{};
+    const DWORD executablePathLength = GetModuleFileNameA(nullptr, executablePath, sizeof(executablePath));
+    if (!executablePathLength || executablePathLength >= sizeof(executablePath))
+    {
+        error = SString("executable path is unavailable or truncated win32=%u", GetLastError());
+        return false;
+    }
+
+    DWORD                      imageSize = 0;
+    const SExecutableIdentity* identity = nullptr;
+    if (!ValidateExecutable(gameVersion, executablePath, imageSize, identity) || !ValidateManifest(imageSize) || !ValidateOriginalStores())
+    {
+        error = "executable identity, patch manifest, or stock stores failed read-only validation";
+        return false;
+    }
+    return identity != nullptr;
 }
 
 void CNativeModelStoreSA::LogDiagnostics(const char* context)

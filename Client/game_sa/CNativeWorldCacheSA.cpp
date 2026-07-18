@@ -286,6 +286,47 @@ namespace
         return true;
     }
 
+    bool ValidateClosedPublishedDirectory(const SString& directory, std::string& error)
+    {
+        WIN32_FIND_DATAW data{};
+        const SString    pattern = SString("%s\\*", directory.c_str());
+        HANDLE           find = FindFirstFileW(SharedUtil::FromUTF8(pattern).c_str(), &data);
+        if (find == INVALID_HANDLE_VALUE)
+        {
+            error = SString("cache directory enumeration failed win32=%u", GetLastError());
+            return false;
+        }
+        unsigned int files = 0;
+        bool         valid = true;
+        do
+        {
+            const std::wstring name = data.cFileName;
+            if (name == L"." || name == L"..")
+                continue;
+            const bool known = name == L"native-world.json" || name == L"world.ide" || name == L"world.img";
+            if (!known || (data.dwFileAttributes & (FILE_ATTRIBUTE_DIRECTORY | FILE_ATTRIBUTE_REPARSE_POINT)))
+            {
+                valid = false;
+                error = "published cache object is not the exact closed three-file directory";
+                break;
+            }
+            ++files;
+        } while (FindNextFileW(find, &data));
+        const DWORD findError = GetLastError();
+        FindClose(find);
+        if (valid && findError != ERROR_NO_MORE_FILES)
+        {
+            error = SString("cache directory enumeration failed win32=%u", findError);
+            return false;
+        }
+        if (valid && files != 3)
+        {
+            error = "published cache object does not contain exactly three files";
+            return false;
+        }
+        return valid;
+    }
+
     bool FillRandomToken(std::string& token, std::string& error)
     {
         using RtlGenRandomFunction = BOOLEAN(WINAPI*)(PVOID, ULONG);
@@ -776,6 +817,117 @@ namespace
         return true;
     }
 }  // namespace
+
+struct CNativeWorldCacheLeaseSA::SImpl
+{
+    ~SImpl()
+    {
+        for (HANDLE handle : handles)
+            CloseHandle(handle);
+    }
+
+    std::vector<HANDLE> handles;
+    std::string         policy;
+    std::string         contentId;
+    std::string         ticketId;
+    std::string         directory;
+};
+
+CNativeWorldCacheLeaseSA::CNativeWorldCacheLeaseSA() = default;
+CNativeWorldCacheLeaseSA::~CNativeWorldCacheLeaseSA() = default;
+CNativeWorldCacheLeaseSA::CNativeWorldCacheLeaseSA(CNativeWorldCacheLeaseSA&&) noexcept = default;
+CNativeWorldCacheLeaseSA& CNativeWorldCacheLeaseSA::operator=(CNativeWorldCacheLeaseSA&&) noexcept = default;
+
+bool CNativeWorldCacheLeaseSA::IsValid() const
+{
+    return m_impl && !m_impl->handles.empty();
+}
+
+bool CNativeWorldCacheLeaseSA::RevalidateClosedObject(std::string& error) const
+{
+    if (!IsValid())
+    {
+        error = "native-world cache lease is absent or already completed";
+        return false;
+    }
+    return ValidateClosedPublishedDirectory(m_impl->directory.c_str(), error);
+}
+
+bool CNativeWorldCacheLeaseSA::Commit(const std::string& policy, const std::string& contentId, const std::string& ticketId, std::string& error)
+{
+    if (!IsValid())
+    {
+        error = "native-world cache lease is absent or already completed";
+        return false;
+    }
+    if (m_impl->policy != policy || m_impl->contentId != contentId || m_impl->ticketId != ticketId)
+    {
+        error = "native-world cache lease transaction token mismatch";
+        return false;
+    }
+    g_processLocks.insert(g_processLocks.end(), m_impl->handles.begin(), m_impl->handles.end());
+    m_impl->handles.clear();
+    m_impl.reset();
+    return true;
+}
+
+void CNativeWorldCacheLeaseSA::Release()
+{
+    m_impl.reset();
+}
+
+bool AcquireExistingNativeWorldCacheLease(const SNativeWorldCacheRequestSA& request, const std::string& ticketId, const NativeWorldCacheAuditSA& audit,
+                                          CNativeWorldCacheLeaseSA& lease, std::string& publishedDirectory, std::string& error)
+{
+    if (lease.IsValid())
+    {
+        error = "native-world cache lease output is already active";
+        return false;
+    }
+    if (!audit || request.format != 1 || request.manifestFileName != CACHED_MANIFEST_FILE || request.ide.name != CACHED_IDE_FILE ||
+        request.img.name != CACHED_IMG_FILE || !IsSafeLeafName(request.packId, 32) || !IsLowerSha256(request.sourceManifestSha256) ||
+        !IsLowerSha256(request.ide.sha256) || !IsLowerSha256(request.img.sha256) || !IsLowerSha256(request.contentId) || !IsLowerHex(ticketId, 32) ||
+        !request.sourceManifestBytes || request.sourceManifestBytes > request.maximumManifestBytes || !request.ide.bytes || !request.img.bytes ||
+        GenerateNativeWorldContentId(request) != request.contentId || BuildCanonicalManifest(request).size() > request.maximumManifestBytes)
+    {
+        error = "existing native-world cache selection identity is invalid";
+        return false;
+    }
+    if (IsCancelled(request))
+    {
+        error = "existing native-world cache selection was cancelled";
+        return false;
+    }
+
+    const SString dataRoot = SharedUtil::GetMTADataPath();
+    const SString root = JoinPath(dataRoot, CACHE_ROOT_DIRECTORY);
+    const SString format = JoinPath(root, CACHE_FORMAT_DIRECTORY);
+    const SString pack = JoinPath(format, request.packId);
+    const SString published = JoinPath(pack, request.contentId);
+    publishedDirectory = published.c_str();
+    const SCachePaths paths = MakeCachePaths(request, published);
+
+    CScopedHandles locks;
+    if (!LockDirectory(paths.dataRoot, locks, error) || !LockDirectory(paths.root, locks, error) || !LockDirectory(paths.format, locks, error) ||
+        !LockDirectory(paths.pack, locks, error) || !LockDirectory(paths.published, locks, error) ||
+        !ValidateClosedPublishedDirectory(paths.published, error) || !LockAndValidatePublishedFiles(request, paths, locks, error))
+        return false;
+    if (IsCancelled(request) || !audit(publishedDirectory, error) || IsCancelled(request) || !ValidateClosedPublishedDirectory(paths.published, error))
+    {
+        if (error.empty())
+            error = "existing native-world cache audit was cancelled";
+        return false;
+    }
+
+    auto impl = std::make_unique<CNativeWorldCacheLeaseSA::SImpl>();
+    impl->policy = request.packId;
+    impl->contentId = request.contentId;
+    impl->ticketId = ticketId;
+    impl->directory = publishedDirectory;
+    locks.TransferTo(impl->handles);
+    lease.m_impl = std::move(impl);
+    return true;
+}
 
 bool PrepareAndLockNativeWorldCache(const SNativeWorldCacheRequestSA& request, std::string& publishedDirectory, bool& cacheHit, std::string& error)
 {

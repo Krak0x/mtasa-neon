@@ -23,6 +23,7 @@
 #include "SharedUtil.File.h"
 #include "SharedUtil.Hash.h"
 #include "SharedUtil.Misc.h"
+#include <core/CCoreInterface.h>
 
 #include <cstdarg>
 #include <cmath>
@@ -32,7 +33,8 @@
 #include <mutex>
 #include <sstream>
 
-extern CGameSA* pGame;
+extern CGameSA*        pGame;
+extern CCoreInterface* g_pCore;
 
 namespace
 {
@@ -1787,6 +1789,179 @@ namespace
             RegisterPack();
     }
 }  // namespace
+
+void CNativeWorldPackManagerSA::HandleStartupSelection(eGameVersion gameVersion, const SNativeWorldStartupSelection& selection)
+{
+    std::lock_guard<std::mutex> lock(g_transportPublisherMutex);
+    const auto                  isCancelled = [&selection]() { return g_pCore->IsNativeWorldStartupSelectionCancelled(selection.ticketId); };
+    const auto                  resetAuditState = []()
+    {
+        g_policy = nullptr;
+        g_manifest = {};
+        g_activeDirectory.clear();
+        g_iplNamePointers.clear();
+        g_runtimeDescriptor = {};
+        g_pack = nullptr;
+    };
+    const auto finish = [&selection](bool claim, const char* reason)
+    {
+        SNativeWorldAuthorizationRecordResult result = g_pCore->FinishNativeWorldStartupSelection(selection.ticketId, claim, claim ? "" : reason);
+        if (!result.success)
+            SharedUtil::WriteDebugEvent(SString("[NativeWorldAuthorization] state=finish-failed ticket=%s detail=%s activation=no lease=no",
+                                                selection.ticketId.substr(0, 8).c_str(), result.error.c_str()));
+        else if (claim && result.claimed)
+            SharedUtil::WriteDebugEvent(
+                SString("[NativeWorldAuthorization] state=claimed ticket=%s activation=no lease=pending", selection.ticketId.substr(0, 8).c_str()));
+        else
+            SharedUtil::WriteDebugEvent(SString("[NativeWorldAuthorization] %s", result.diagnostic.c_str()));
+        return result.success && (!claim || result.claimed);
+    };
+    const auto refuse = [&](const char* reason, const std::string& detail)
+    {
+        finish(false, reason);
+        SharedUtil::WriteDebugEvent(SString("[NativeWorldAuthorization] state=refused reason=%s detail=%s activation=no lease=no", reason, detail.c_str()));
+        resetAuditState();
+    };
+
+    if (!selection.ready || selection.policy != 1 || selection.packFormat != 1 || g_state != EState::Off)
+    {
+        refuse("selection-invalid", "startup selection is not the closed idle Bullworth transaction");
+        return;
+    }
+
+    const SNativeWorldPackPolicySA& policy = GetNativeBullworthPackPolicy();
+    g_policy = &policy;
+    g_activeDirectory = SString("%s\\native-world-cache\\v1\\%s\\%s", SharedUtil::GetMTADataPath().c_str(), policy.key, selection.contentId.c_str());
+    const SString manifestPath = SString("%s\\%s", g_activeDirectory.c_str(), policy.runtimeManifestFileName);
+    std::string   error;
+    if (!IsNativePathSafe(manifestPath) || !IsSafeRegularFile(manifestPath) || !LoadRuntimeManifest(manifestPath, error))
+    {
+        if (error.empty())
+            error = "selected canonical cache manifest is unavailable or unsafe";
+        refuse("cache-invalid", error);
+        return;
+    }
+
+    SNativeWorldCacheRequestSA request;
+    request.format = g_manifest.format;
+    request.packId = g_manifest.packId;
+    request.manifestFileName = policy.runtimeManifestFileName;
+    request.sourceManifestSha256 = g_manifest.manifestSha256;
+    request.sourceManifestBytes = g_manifest.manifestBytes;
+    request.maximumManifestBytes = policy.maximumManifestBytes;
+    request.ide = {g_manifest.ideFileName, g_manifest.ideSha256, g_manifest.ideBytes};
+    request.img = {g_manifest.imgFileName, g_manifest.imgSha256, g_manifest.imgBytes};
+    request.contentId = GenerateNativeWorldContentId(request);
+    if (request.contentId != selection.contentId)
+    {
+        refuse("cache-invalid", "selected cache manifest does not recompute to the authorized content ID");
+        return;
+    }
+
+    const auto auditExisting = [&request, &policy, &isCancelled](const std::string& directory, std::string& auditError)
+    {
+        if (isCancelled())
+        {
+            auditError = "startup cache audit was cancelled";
+            return false;
+        }
+        g_activeDirectory = directory;
+        const SString lockedManifestPath = SString("%s\\%s", directory.c_str(), policy.runtimeManifestFileName);
+        if (!IsNativePathSafe(lockedManifestPath) || !IsSafeRegularFile(lockedManifestPath) || !LoadRuntimeManifest(lockedManifestPath, auditError) ||
+            isCancelled())
+        {
+            if (isCancelled())
+                auditError = "startup cache audit was cancelled";
+            else if (auditError.empty())
+                auditError = "locked canonical manifest is unsafe";
+            return false;
+        }
+        SNativeWorldCacheRequestSA lockedIdentity = request;
+        lockedIdentity.format = g_manifest.format;
+        lockedIdentity.packId = g_manifest.packId;
+        lockedIdentity.sourceManifestSha256 = g_manifest.manifestSha256;
+        lockedIdentity.sourceManifestBytes = g_manifest.manifestBytes;
+        lockedIdentity.ide = {g_manifest.ideFileName, g_manifest.ideSha256, g_manifest.ideBytes};
+        lockedIdentity.img = {g_manifest.imgFileName, g_manifest.imgSha256, g_manifest.imgBytes};
+        if (GenerateNativeWorldContentId(lockedIdentity) != request.contentId)
+        {
+            auditError = "locked canonical manifest differs from the authorized semantic content ID";
+            return false;
+        }
+        if (isCancelled())
+        {
+            auditError = "startup cache audit was cancelled";
+            return false;
+        }
+        const SString idePath = SString("%s\\%s", directory.c_str(), g_manifest.ideFileName.c_str());
+        const SString imgPath = SString("%s\\%s", directory.c_str(), g_manifest.imgFileName.c_str());
+        if (!IsNativePathSafe(idePath) || !IsNativePathSafe(imgPath) || !IsSafeRegularFile(idePath) || !IsSafeRegularFile(imgPath) ||
+            !HasExactFileSize(idePath, g_manifest.ideBytes) || !HasExactFileSize(imgPath, g_manifest.imgBytes) ||
+            SharedUtil::GenerateSha256HexStringFromFile(idePath).ToLower() != g_manifest.ideSha256.c_str() ||
+            SharedUtil::GenerateSha256HexStringFromFile(imgPath).ToLower() != g_manifest.imgSha256.c_str())
+        {
+            auditError = "locked cache payload identity differs from its manifest";
+            return false;
+        }
+        SIdePlan   ide;
+        const auto continueAudit = [&]()
+        {
+            if (!isCancelled())
+                return true;
+            auditError = "startup cache audit was cancelled";
+            return false;
+        };
+        if (!ParseIde(idePath, ide, auditError) || !continueAudit() || !ValidateImg(imgPath, ide, auditError) || !continueAudit() ||
+            !ValidateBinaryIpls(imgPath, ide, auditError) || !continueAudit() || !ValidatePayloads(imgPath, ide, auditError) || !continueAudit() ||
+            !ValidateDescriptor(auditError) || !continueAudit())
+            return false;
+        return true;
+    };
+
+    CNativeWorldCacheLeaseSA lease;
+    std::string              leasedDirectory;
+    if (!AcquireExistingNativeWorldCacheLease(request, selection.ticketId, auditExisting, lease, leasedDirectory, error))
+    {
+        refuse(isCancelled() ? "startup-cancelled" : "cache-invalid", error);
+        return;
+    }
+    SharedUtil::WriteDebugEvent(SString("[NativeWorldAuthorization] state=cache-audited contentId=%s ticket=%s activation=no lease=pending",
+                                        selection.contentId.c_str(), selection.ticketId.substr(0, 8).c_str()));
+
+    if (!CNativeModelStoreSA::ValidateExecutableAndPatchManifestReadOnly(gameVersion, error) ||
+        memcmp(reinterpret_cast<const void*>(LOAD_CD_DIRECTORY_CALL), LOAD_CD_DIRECTORY_CALL_BYTES, sizeof(LOAD_CD_DIRECTORY_CALL_BYTES)) != 0)
+    {
+        if (error.empty())
+            error = "LoadCdDirectory call signature differs from the compiled manifest";
+        lease.Release();
+        refuse("executable-invalid", error);
+        return;
+    }
+    SharedUtil::WriteDebugEvent(
+        SString("[NativeWorldAuthorization] state=executable-valid ticket=%s nativeWrites=0 allocations=0 hooks=0 archives=0 "
+                "poolMutations=0 activation=no lease=pending",
+                selection.ticketId.substr(0, 8).c_str()));
+
+    if (isCancelled())
+    {
+        lease.Release();
+        refuse("startup-cancelled", "startup selection was cancelled immediately before claim");
+        return;
+    }
+    if (!lease.RevalidateClosedObject(error))
+    {
+        lease.Release();
+        refuse("cache-raced", error);
+        return;
+    }
+    const bool claimed = finish(true, "");
+    lease.Release();
+    SharedUtil::WriteDebugEvent(
+        SString("[NativeWorldAuthorization] state=%s ticket=%s nativeWrites=0 allocations=0 hooks=0 archives=0 poolMutations=0 "
+                "activation=no lease=released",
+                claimed ? "checkpoint-b-complete" : "claim-failed", selection.ticketId.substr(0, 8).c_str()));
+    resetAuditState();
+}
 
 void CNativeWorldPackManagerSA::InstallFromEnvironment(CStreamingSA* streaming)
 {

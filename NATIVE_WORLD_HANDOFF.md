@@ -1,6 +1,6 @@
 # Native world streaming handoff
 
-Last updated: 2026-07-17
+Last updated: 2026-07-18
 
 This file is the operational handoff for the native extended-world project
 started from [Dryxio/mtasa-neon issue #1](https://github.com/Dryxio/mtasa-neon/issues/1).
@@ -96,6 +96,9 @@ Read the commit bodies as design records. The core sequence is:
 
 Checkpoint A, the inert authorization record, is implemented in `b9ce96d3c`
 and passed both non-game validation and the user-only live gate recorded below.
+Checkpoint B, record-driven startup selection without native mutation, is also
+implemented and passed the explicitly authorized automated live gate recorded
+below. Checkpoint C is the next code checkpoint.
 
 Relevant earlier extended-world foundations include the enlarged world sectors,
 coordinate/network ranges, water bounds, renderer capacity, radar composition,
@@ -139,13 +142,17 @@ native commit, postconditions, IPL bootstrap, and process-lifetime management.
 `CNativeBullworthPackSA` is the only compiled trusted policy. It supports only
 the two exact GTA SA 1.0 US identities documented in `NATIVE_BW_PACK.md`.
 
-With `MTA_NATIVE_BW_MODEL_STORES=1`, the current prototype reads the local
-installation copy of `native-world.json` as its startup selector. It can then
-activate the matching immutable ProgramData cache object. Once that object
-exists, the installation IDE and IMG may be removed, but the small local
-selector manifest is still required. Successful registration is process-global
-and intentionally survives resource stops and reconnects; changing packs
-requires a clean client restart.
+The legacy `MTA_NATIVE_BW_MODEL_STORES=1` prototype still reads the local
+installation copy of `native-world.json` as its developer-only startup
+selector. The record-driven path no longer needs that local selector: a clean
+launch for the exact canonical numeric URI selects the pending authorization,
+locks and fully reaudits the exact ProgramData object, performs the read-only
+executable preflight, claims the ticket, and deliberately releases the lease
+without touching GTA state. A valid record and the legacy switch together are
+terminally ambiguous and suppress both routes. Checkpoint C will feed the
+record-selected object into the existing activation path. Successful native
+registration remains process-global and intentionally survives resource stops
+and reconnects; changing packs requires a clean client restart.
 
 ### Server transport and authorization-offer path
 
@@ -217,8 +224,10 @@ process. A reconnect to the exact same durable identity attaches to the
 existing fresh pending record without refreshing its ticket or timestamps;
 conflicting identities refuse. Disconnect and normal destruction preserve the
 record, while an explicit resource-stop packet revokes it. Console commands are
-`nativeworldauth status` and `nativeworldauth clear`. No Lua API, cache lease,
-startup selection, or GTA activation exists in Checkpoint A.
+`nativeworldauth status` and `nativeworldauth clear`. Checkpoint B adds a strict
+direct-URI selector, a transaction-held startup record, ticket-qualified spent
+receipts, cancellation linearized with claim, and a typed exact-cache lease. It
+deliberately adds no Lua API and performs no GTA activation.
 
 ### Cache policy
 
@@ -255,6 +264,29 @@ hash comparisons. The user performed every in-game action, including the
 Checkpoint A live authorization lifecycle below.
 
 Confirmed checkpoints include:
+
+- Checkpoint B was formatted with the pinned VM formatter. The focused suite
+  reports 64 tests with two optional environment-dependent skips, and an
+  independent security/lifecycle re-review found no remaining P1/P2 issue in
+  the startup transaction, cancellation/claim boundary, lease lifetime, or
+  no-mutation path.
+- The exact affected consumer set (`Game SA`, `Client Core`, `Client
+  Deathmatch`, `Multiplayer SA`, and `Client Webbrowser`) built Release|Win32
+  through the reviewed `vm-build.ps1` plan with zero errors and fresh verified
+  outputs. Checkpoint B changed no server wire or server binary.
+- The explicitly authorized automated live gate claimed ticket `fbdad662` only
+  after exact URI selection, complete cache audit, allowlisted executable and
+  patch-site preflight, and final cache revalidation. The resulting
+  ticket-qualified `.spent` receipt preserved the original pending-file hash;
+  the next network session published a distinct ticket. Completion logged
+  `activation=no lease=released` and zero native writes, allocations, hooks,
+  archives, and pool mutations.
+- No-URI and wrong-port launches left the same pending ticket and file hash
+  untouched. Temporarily moving the exact cache object aside caused
+  `cache-invalid` terminal refusal and a spent receipt without recreating the
+  object; restoring it reproduced the original manifest, IDE, and IMG hashes.
+  Enabling the legacy environment selector alongside a valid record caused a
+  terminal `selector-ambiguous` refusal, with no activation diagnostic.
 
 - The current Checkpoint A tree was formatted with the pinned VM
   `clang-format.exe` 21.1.7 on the exact changed C++ files. PowerShell 7 was not
@@ -354,10 +386,11 @@ generated city assets.
 
 - Bullworth is still the only compiled policy; the transport is not arbitrary
   IDE support.
-- An opted-in server can cause a strictly bound inert authorization record to
-  be persisted after publication, but no code consumes it for startup selection
-  or activates native GTA state yet.
-- Startup still depends on the local selector manifest and environment flag.
+- An opted-in server can cause a strictly bound authorization record to be
+  persisted after publication. Checkpoint B consumes it only for closed startup
+  selection and one-shot claim; no code activates native GTA state yet.
+- Only the legacy developer route depends on the local selector manifest and
+  environment flag. The record-driven B route does not.
 - The record is bound to the opaque server ID exposed by the established MTA
   session and the numeric endpoint. This is not a claim of PKI, authenticated
   DNS ownership, or any guarantee beyond the external network module.
@@ -386,11 +419,13 @@ utils/extended-world/NATIVE_WORLD_ACTIVATION.md
 ```
 
 The review found no actionable P0-P2 issue in the publish-only path because it
-was inert. Checkpoint A now supplies the explicit server/session binding,
-separate protocol capability, DPAPI-protected pending record, and conflicting
-cross-server refusal. Exact-cache startup lookup, a transaction-typed lease,
-atomic claim, and startup endpoint pinning remain Checkpoint B work and still
-block activation.
+was inert. Checkpoint A supplies the explicit server/session binding, separate
+protocol capability, DPAPI-protected pending record, and conflicting
+cross-server refusal. Checkpoint B now supplies exact-cache startup lookup, a
+transaction-typed lease, atomic claim, strict startup endpoint matching, and
+zero-mutation read-only executable preflight. Second-session identity
+revalidation and the irreversible native commit remain Checkpoint C work and
+still block activation.
 
 The server config initializes an identity facility from a private key, and the
 client's opaque server ID is the strongest available continuity input. The
@@ -458,20 +493,21 @@ The completed read-only design/research checkpoint covered:
 7. An implementation plan and independent security/lifecycle review before
    editing activation code.
 
-Continue progressively from Checkpoint B:
+Continue progressively from Checkpoint C:
 
 - **Checkpoint A — inert authorization record (complete):** receive, validate,
   persist, inspect, expire, attach on exact
   reconnect, revoke on explicit resource stop, and clear the record, while
   always logging `activation=no lease=no`.
-- **Checkpoint B — startup selection (next code checkpoint):** validate the
+- **Checkpoint B — startup selection (complete):** validate the
   record at clean startup, locate and fully revalidate the exact immutable
   object, acquire the pending
   activation lease, complete the read-only executable preflight, and only then
   claim the record atomically without committing GTA state.
-- **Checkpoint C — native activation:** feed the selected object into the
-  existing preflight/commit path, remove the environment/local-selector
-  requirement for this route, and keep rollback/fatal boundaries intact.
+- **Checkpoint C — native activation (next code checkpoint):** feed the
+  selected object into the existing preflight/commit path, remove the
+  environment/local-selector requirement for this route, and keep
+  rollback/fatal boundaries intact.
 - **Checkpoint D — restart/reconnect UX:** initially use an explicit user-driven
   restart; automate or polish it only after the trust and lifecycle path is
   stable.
@@ -554,9 +590,9 @@ Read AGENTS.md, LIMIT_PATCHING.md, NATIVE_WORLD_HANDOFF.md,
 utils/extended-world/NATIVE_BW_PACK.md, and the recent native-world commit
 bodies completely. Recheck HEAD and the dirty tree before touching files.
 
-Resume with Checkpoint B, startup selection without native mutation, in
+Resume with Checkpoint C, native activation, in
 NATIVE_WORLD_HANDOFF.md and NATIVE_WORLD_ACTIVATION.md. Recheck the current
-local commits, dirty tree, Checkpoint A evidence, and exact-cache/typed-lease
+local commits, dirty tree, Checkpoint A/B evidence, and exact-cache/typed-lease
 contract before editing. Preserve unrelated changes, keep the
 orchestrator/independent-review loop and VM workflow, and never perform in-game
 tests yourself: prepare exact instructions and wait for my feedback.

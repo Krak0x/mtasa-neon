@@ -11,11 +11,13 @@
 
 #include "CNativeWorldPayloadValidatorSA.h"
 
+#include <game/CGame.h>
 #include <string>
 #include <vector>
 
 struct SNativeWorldTransportOffer;
 struct SNativeWorldTransportPublishResult;
+struct SNativeWorldStartupSelection;
 
 class CStreamingSA;
 
@@ -157,6 +159,11 @@ struct SNativeWorldPackDescriptorSA
 class CNativeWorldPackManagerSA
 {
 public:
+    // Completes Checkpoint-B selection only: exact cache audit, read-only
+    // executable preflight, durable claim, then deliberate lease release.
+    // It never installs stores, writes executable bytes, or registers a pack.
+    static void HandleStartupSelection(eGameVersion gameVersion, const SNativeWorldStartupSelection& selection);
+
     // Installs only the startup call hook. The pack itself is validated and
     // registered after GTA has loaded all stock CD directories.
     static void InstallFromEnvironment(CStreamingSA* streaming);

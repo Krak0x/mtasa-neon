@@ -117,8 +117,9 @@ class NativeWorldPackDescriptorTest(unittest.TestCase):
         self.assertIn("instance.position[0] < MIN_STATIC_WORLD_XY", self.manager)
         self.assertIn("instance.position[0] > MAX_STATIC_WORLD_XY", self.manager)
         self.assertIn("instance.lodIndex != -1", self.manager)
-        state_guard = self.manager.index("if (g_state != EState::Off)")
-        manifest_load = self.manager.index("LoadRuntimeManifest(manifestPath")
+        legacy_start = self.manager.index("void CNativeWorldPackManagerSA::InstallFromEnvironment")
+        state_guard = self.manager.index("if (g_state != EState::Off)", legacy_start)
+        manifest_load = self.manager.index("LoadRuntimeManifest(manifestPath", legacy_start)
         self.assertLess(state_guard, manifest_load)
 
 

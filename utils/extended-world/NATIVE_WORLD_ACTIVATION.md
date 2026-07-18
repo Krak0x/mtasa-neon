@@ -1,9 +1,11 @@
 # Native world authorized startup design
 
 Status: research completed on 2026-07-16; Checkpoint A was implemented and
-user-live-validated on 2026-07-17. The inert authorization record now exists,
-but no record-driven startup selection, activation lease, executable mutation,
-or native-world activation exists. Checkpoint B is next.
+user-live-validated on 2026-07-17. Checkpoint B was implemented and live
+validated under explicit user authorization on 2026-07-18. Record-driven
+startup selection, a typed existing-cache lease, read-only executable preflight,
+and one-shot claim now exist, but no executable mutation or native-world
+activation occurs. Checkpoint C is next.
 
 Read this together with `AGENTS.md`, `LIMIT_PATCHING.md`,
 `NATIVE_WORLD_HANDOFF.md`, and `NATIVE_BW_PACK.md`.
@@ -453,7 +455,7 @@ either route mutates state; neither route may select itself independently.
 - Do not read the record during game startup and do not touch model stores,
   executable bytes, native archives, GTA pools, or activation leases.
 
-### Checkpoint B: startup selection without native mutation
+### Checkpoint B: startup selection without native mutation (complete)
 
 - Match a direct numeric startup endpoint.
 - Validate the one-shot record without claiming it yet.
@@ -553,5 +555,19 @@ Checkpoint A's user-run connection lifecycle verified initial publication,
 complete client process restart, reconnect attachment without ticket or expiry
 refresh, explicit ResourceStop revocation, fresh resource republish, and
 explicit clear. Every observed diagnostic retained `activation=no lease=no`;
-the inspected logs contained no native registration or activation. Checkpoint B
-must preserve that invariant while adding startup selection and a typed lease.
+the inspected logs contained no native registration or activation.
+
+Checkpoint B's authorized automated live gate verified the exact numeric URI
+selection, complete existing-object-only cache audit, typed lease, read-only
+allowlisted executable/patch preflight, atomic pending-to-spent claim, explicit
+lease release, and a distinct authorization published by the following network
+session. No-URI and wrong-port launches preserved the exact pending record hash.
+A temporarily absent exact cache object caused a ticket-qualified terminal
+refusal without cache recreation; the original object was restored with all
+three hashes unchanged. A simultaneous legacy environment selector caused a
+terminal `selector-ambiguous` refusal. Every B completion retained
+`activation=no` and logged zero native writes, allocations, hooks, archives,
+and pool mutations. The five affected client consumers built Release|Win32
+with zero errors, and the focused suite reports 64 tests with two optional
+environment-dependent skips. Checkpoint C may now consume the selected object
+only after preserving these gates and the documented fatal/rollback boundary.

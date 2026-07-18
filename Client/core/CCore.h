@@ -122,6 +122,10 @@ public:
     SNativeWorldAuthorizationRecordResult ClearNativeWorldStartupAuthorization() override;
     SNativeWorldAuthorizationRecordResult RevokeNativeWorldStartupAuthorization(const SNativeWorldStartupAuthorization& authorization,
                                                                                 const std::string&                      contentId) override;
+    SNativeWorldStartupSelection          BeginNativeWorldStartupSelection(bool legacySelectorEnabled) override;
+    SNativeWorldAuthorizationRecordResult FinishNativeWorldStartupSelection(const std::string& ticketId, bool claim, const std::string& refusalReason) override;
+    void                                  CancelNativeWorldStartupSelection(const std::string& ticketId) override;
+    bool                                  IsNativeWorldStartupSelectionCancelled(const std::string& ticketId) const override;
 
     void SaveConfig(bool bWaitUntilFinished = false);
 

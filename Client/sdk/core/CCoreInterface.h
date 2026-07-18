@@ -207,6 +207,11 @@ public:
     virtual SNativeWorldAuthorizationRecordResult ClearNativeWorldStartupAuthorization() = 0;
     virtual SNativeWorldAuthorizationRecordResult RevokeNativeWorldStartupAuthorization(const SNativeWorldStartupAuthorization& authorization,
                                                                                         const std::string&                      contentId) = 0;
+    virtual SNativeWorldStartupSelection          BeginNativeWorldStartupSelection(bool legacySelectorEnabled) = 0;
+    virtual SNativeWorldAuthorizationRecordResult FinishNativeWorldStartupSelection(const std::string& ticketId, bool claim,
+                                                                                    const std::string& refusalReason) = 0;
+    virtual void                                  CancelNativeWorldStartupSelection(const std::string& ticketId) = 0;
+    virtual bool                                  IsNativeWorldStartupSelectionCancelled(const std::string& ticketId) const = 0;
 };
 
 class CClientTime

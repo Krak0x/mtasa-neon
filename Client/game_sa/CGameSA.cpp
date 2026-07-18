@@ -13,6 +13,7 @@
 #define ALLOC_STATS_MODULE_NAME "game_sa"
 #include "SharedUtil.hpp"
 #include "SharedUtil.MemAccess.hpp"
+#include <core/CCoreInterface.h>
 #include "C3DMarkersSA.h"
 #include "CAEAudioHardwareSA.h"
 #include "CAERadioTrackManagerSA.h"
@@ -63,7 +64,8 @@
 #include "CCheckpointSA.h"
 #include "CPtrNodeSingleLinkPoolSA.h"
 
-extern CGameSA* pGame;
+extern CGameSA*        pGame;
+extern CCoreInterface* g_pCore;
 
 unsigned int& CGameSA::ClumpOffset = *(unsigned int*)0xB5F878;
 
@@ -146,9 +148,36 @@ CGameSA::CGameSA()
         // Find the game version and initialize m_eGameVersion so GetGameVersion() will return the correct value
         FindGameVersion();
 
+        char        legacySelectorValue[8]{};
+        const DWORD legacySelectorLength = GetEnvironmentVariableA("MTA_NATIVE_BW_MODEL_STORES", legacySelectorValue, sizeof(legacySelectorValue));
+        const bool  legacySelectorEnabled = legacySelectorLength == 1 && legacySelectorValue[0] == '1';
+        bool        suppressLegacyNativeWorld = false;
+        const SNativeWorldStartupSelection startupSelection = g_pCore->BeginNativeWorldStartupSelection(legacySelectorEnabled);
+        if (!startupSelection.diagnostic.empty())
+            SharedUtil::WriteDebugEvent(SString("[NativeWorldAuthorization] %s", startupSelection.diagnostic.c_str()));
+        if (!startupSelection.error.empty())
+        {
+            suppressLegacyNativeWorld = true;
+            SharedUtil::WriteDebugEvent(
+                SString("[NativeWorldAuthorization] state=startup-refused detail=%s activation=no lease=no", startupSelection.error.c_str()));
+        }
+        if (startupSelection.terminalRefusalRequired)
+        {
+            suppressLegacyNativeWorld = true;
+            const SNativeWorldAuthorizationRecordResult result =
+                g_pCore->FinishNativeWorldStartupSelection(startupSelection.ticketId, false, "selector-ambiguous");
+            SharedUtil::WriteDebugEvent(SString("[NativeWorldAuthorization] %s", result.success ? result.diagnostic.c_str() : result.error.c_str()));
+        }
+        else if (startupSelection.ready)
+        {
+            suppressLegacyNativeWorld = true;
+            CNativeWorldPackManagerSA::HandleStartupSelection(m_eGameVersion, startupSelection);
+        }
+
         // The opt-in native extended-world foundation must relocate GTA's
         // inline model stores before CModelInfo::Initialise can populate them.
-        CNativeModelStoreSA::InstallFromEnvironment(m_eGameVersion);
+        if (!suppressLegacyNativeWorld)
+            CNativeModelStoreSA::InstallFromEnvironment(m_eGameVersion);
 
         m_bAsyncScriptEnabled = false;
         m_bAsyncScriptForced = false;
@@ -205,7 +234,8 @@ CGameSA::CGameSA()
         m_pTasks = new CTasksSA((CTaskManagementSystemSA*)m_pTaskManagementSystem);
         m_pAnimManager = new CAnimManagerSA;
         m_pStreaming = new CStreamingSA;
-        CNativeWorldPackManagerSA::InstallFromEnvironment(static_cast<CStreamingSA*>(m_pStreaming));
+        if (!suppressLegacyNativeWorld)
+            CNativeWorldPackManagerSA::InstallFromEnvironment(static_cast<CStreamingSA*>(m_pStreaming));
         m_pVisibilityPlugins = new CVisibilityPluginsSA;
         m_pKeyGen = new CKeyGenSA;
         m_pRopes = new CRopesSA;

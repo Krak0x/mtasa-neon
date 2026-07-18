@@ -20,6 +20,7 @@ sys.path.insert(0, str(TOOLS))
 from native_world_cache import (  # noqa: E402
     canonical_manifest_bytes,
     content_id,
+    open_existing_cache,
     publish_local_seed,
     validate_cache_object,
 )
@@ -93,6 +94,26 @@ class NativeWorldCacheTest(unittest.TestCase):
         self.assertEqual(final, selected)
         self.assertEqual("hit", disposition)
         validate_cache_object(final, self.manifest, "bullworth")
+
+    def test_existing_lookup_never_repairs_or_quarantines(self) -> None:
+        identity = content_id(self.manifest, "bullworth")
+        with self.assertRaises(ValueError):
+            open_existing_cache(self.cache, self.manifest, "bullworth", identity)
+        self.assertFalse(self.cache.exists())
+
+        final, _ = publish_local_seed(self.seed, self.cache, "bullworth")
+        (final / "world.img").write_bytes(b"corrupt")
+        before = sorted(path.name for path in final.parent.iterdir())
+        with self.assertRaises(ValueError):
+            open_existing_cache(self.cache, self.manifest, "bullworth", identity)
+        self.assertEqual(before, sorted(path.name for path in final.parent.iterdir()))
+        self.assertEqual(b"corrupt", (final / "world.img").read_bytes())
+
+    def test_existing_lookup_rejects_extra_siblings(self) -> None:
+        final, _ = publish_local_seed(self.seed, self.cache, "bullworth")
+        (final / "extra.bin").write_bytes(b"x")
+        with self.assertRaises(ValueError):
+            open_existing_cache(self.cache, self.manifest, "bullworth", content_id(self.manifest, "bullworth"))
 
     def test_cpp_contract_uses_pending_guards_and_programdata(self) -> None:
         source = (GAME_SA / "CNativeWorldCacheSA.cpp").read_text(encoding="utf-8")

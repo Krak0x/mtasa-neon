@@ -20,7 +20,10 @@
 #include <wincrypt.h>
 
 #include <array>
+#include <atomic>
 #include <limits>
+#include <memory>
+#include <mutex>
 #include <set>
 #include <vector>
 
@@ -40,6 +43,7 @@ namespace
     constexpr wchar_t            PENDING_FILE[] = L"pending.bin";
     constexpr wchar_t            TEMP_PREFIX[] = L".pending.tmp.";
     constexpr wchar_t            REVOKED_PREFIX[] = L".revoked.";
+    constexpr wchar_t            SPENT_PREFIX[] = L".spent.";
 
     struct SRecord
     {
@@ -74,6 +78,60 @@ namespace
         std::vector<std::wstring> temporaryFiles;
         std::vector<std::wstring> revokedFiles;
         std::set<std::string>     spentTickets;
+    };
+
+    struct SStartupTransaction
+    {
+        STransaction transaction;
+        SRecord      record;
+    };
+
+    std::unique_ptr<SStartupTransaction> g_startupTransaction;
+    std::atomic_bool                     g_startupCancelled{};
+    std::mutex                           g_startupStateMutex;
+    bool                                 g_startupBeginning{};
+    bool                                 g_startupFinishing{};
+
+    class CStartupBeginScope
+    {
+    public:
+        bool Enter(std::string& error)
+        {
+            std::lock_guard<std::mutex> stateLock(g_startupStateMutex);
+            if (g_startupBeginning || g_startupTransaction)
+            {
+                error = "a native-world startup transaction is already active";
+                return false;
+            }
+
+            // This is the beginning of a distinct startup attempt. Clear the
+            // previous attempt only while publishing the in-progress state so
+            // shutdown cannot be lost between construction and publication.
+            g_startupCancelled.store(false, std::memory_order_release);
+            g_startupBeginning = true;
+            m_entered = true;
+            return true;
+        }
+
+        void Publish(std::unique_ptr<SStartupTransaction> startup)
+        {
+            std::lock_guard<std::mutex> stateLock(g_startupStateMutex);
+            g_startupTransaction = std::move(startup);
+            g_startupBeginning = false;
+            m_entered = false;
+        }
+
+        ~CStartupBeginScope()
+        {
+            if (!m_entered)
+                return;
+
+            std::lock_guard<std::mutex> stateLock(g_startupStateMutex);
+            g_startupBeginning = false;
+        }
+
+    private:
+        bool m_entered{};
     };
 
     void AppendU8(std::vector<unsigned char>& output, unsigned char value)
@@ -249,9 +307,8 @@ namespace
             authorization.packFormat != 1 || authorization.serverPort == 0 || authorization.connectionGeneration == 0 ||
             authorization.authorizationEpoch == 0 || authorization.resourceNetId == 0xFFFF || authorization.resourceStartCounter == 0 ||
             authorization.bitstreamVersion < static_cast<unsigned short>(eBitStreamVersion::NativeWorldStartupAuthorization) ||
-            !IsCanonicalResourceName(authorization.resourceName) ||
-            std::all_of(
-                authorization.serverIdDigest.begin(), authorization.serverIdDigest.end(), [](unsigned char byte) { return byte == 0; }) ||
+            authorization.bitstreamVersion > static_cast<unsigned short>(eBitStreamVersion::Latest) || !IsCanonicalResourceName(authorization.resourceName) ||
+            std::all_of(authorization.serverIdDigest.begin(), authorization.serverIdDigest.end(), [](unsigned char byte) { return byte == 0; }) ||
             std::all_of(authorization.serverIpv4.begin(), authorization.serverIpv4.end(), [](unsigned char byte) { return byte == 0; }))
         {
             error = "authorization snapshot is outside the closed v1 contract";
@@ -311,6 +368,13 @@ namespace
         {
             if (error.empty())
                 error = "authorization record lifetime is invalid";
+            return false;
+        }
+        if (std::all_of(record.contentId.begin(), record.contentId.end(), [](unsigned char byte) { return byte == 0; }) ||
+            std::all_of(record.offerId.begin(), record.offerId.end(), [](unsigned char byte) { return byte == 0; }) ||
+            std::all_of(record.ticketId.begin(), record.ticketId.end(), [](unsigned char byte) { return byte == 0; }))
+        {
+            error = "authorization record contains a zero identity";
             return false;
         }
         return true;
@@ -545,7 +609,8 @@ namespace
                 continue;
             const bool knownFixed = name == TRANSACTION_LOCK || name == PENDING_FILE;
             const bool knownTemp = name.rfind(TEMP_PREFIX, 0) == 0 && IsLowerHex(name.substr(std::size(TEMP_PREFIX) - 1), 32);
-            const bool knownRevoked = name.rfind(REVOKED_PREFIX, 0) == 0 && IsLowerHex(name.substr(std::size(REVOKED_PREFIX) - 1), 32);
+            const bool knownRevoked = (name.rfind(REVOKED_PREFIX, 0) == 0 && IsLowerHex(name.substr(std::size(REVOKED_PREFIX) - 1), 32)) ||
+                                      (name.rfind(SPENT_PREFIX, 0) == 0 && IsLowerHex(name.substr(std::size(SPENT_PREFIX) - 1), 32));
             if ((!knownFixed && !knownTemp && !knownRevoked) || (data.dwFileAttributes & (FILE_ATTRIBUTE_DIRECTORY | FILE_ATTRIBUTE_REPARSE_POINT)))
             {
                 error = "authorization store contains an unknown or unsafe sibling";
@@ -862,6 +927,130 @@ namespace
             return false;
         }
         return true;
+    }
+
+    SNativeWorldStartupSelection MakeStartupSelection(const SRecord& record)
+    {
+        SNativeWorldStartupSelection selection;
+        selection.success = true;
+        selection.found = true;
+        selection.policy = record.authorization.policy;
+        selection.packFormat = record.authorization.packFormat;
+        selection.serverIdDigest = record.authorization.serverIdDigest;
+        selection.serverIpv4 = record.authorization.serverIpv4;
+        selection.serverPort = record.authorization.serverPort;
+        selection.bitstreamVersion = record.authorization.bitstreamVersion;
+        selection.issuedAt = record.issuedAt;
+        selection.expiresAt = record.expiresAt;
+        selection.resourceName = record.authorization.resourceName;
+        selection.offerId = EncodeHex(record.offerId);
+        selection.contentId = EncodeHex(record.contentId);
+        selection.ticketId = EncodeHex(record.ticketId);
+        return selection;
+    }
+
+    SNativeWorldAuthorizationRecordResult TerminalizeStartup(SStartupTransaction& startup, bool claim, bool cancelledAtCommit, const std::string& refusalReason)
+    {
+        SNativeWorldAuthorizationRecordResult result;
+        std::string                           effectiveRefusalReason = refusalReason;
+        SRecord                               pending;
+        const EReadResult                     read = ReadRecord(startup.transaction.pending, pending, result.error);
+        if (read != EReadResult::Success || !RecordsEqual(pending, startup.record))
+        {
+            if (result.error.empty())
+                result.error = read == EReadResult::Missing ? "selected authorization disappeared before terminalization"
+                                                            : "selected authorization changed before terminalization";
+            return result;
+        }
+        if (!TemporaryRecordsMatch(startup.transaction, startup.record, result.error))
+            return result;
+
+        unsigned long long now = 0;
+        if (!CurrentTime(now, result.error))
+            return result;
+        const EFreshness freshness = EvaluateFreshness(startup.record, now);
+        if (claim && cancelledAtCommit)
+        {
+            claim = false;
+            effectiveRefusalReason = "cancelled-at-claim";
+        }
+        else if (claim && freshness != EFreshness::Fresh)
+        {
+            claim = false;
+            effectiveRefusalReason = freshness == EFreshness::Expired ? "expired-at-claim" : "clock-refused-at-claim";
+        }
+
+        const std::string  ticket = EncodeHex(startup.record.ticketId);
+        const std::wstring marker = JoinPath(startup.transaction.directory, std::wstring(TEMP_PREFIX) + SharedUtil::FromUTF8(ticket).c_str());
+        const std::wstring spent = JoinPath(startup.transaction.directory, std::wstring(SPENT_PREFIX) + SharedUtil::FromUTF8(ticket).c_str());
+        // A claim is exactly one write-through rename: a crash before it
+        // leaves pending and a crash after it leaves spent. Only refusal uses
+        // the extra blocker required for fail-closed terminalization.
+        if (!claim && startup.transaction.temporaryFiles.empty() && !CreateTerminalizationMarker(startup.transaction, startup.record, marker, result.error))
+        {
+            const std::string markerError = result.error;
+            if (MoveFileExW(startup.transaction.pending.c_str(), spent.c_str(), MOVEFILE_WRITE_THROUGH))
+            {
+                SRecord     reopened;
+                std::string reopenError;
+                if (ReadRecord(spent, reopened, reopenError) == EReadResult::Success && RecordsEqual(reopened, startup.record))
+                {
+                    std::string cleanupError;
+                    if (DeleteExactFile(marker, true, cleanupError))
+                    {
+                        result = MakeResult(reopened, "terminal-refused");
+                        result.diagnostic += SString(" refusal=%s fallback=direct-spent", effectiveRefusalReason.c_str());
+                        return result;
+                    }
+                    result.error = markerError + "; direct spent rename succeeded but blocker cleanup failed: " + cleanupError;
+                }
+                else
+                    result.error = markerError + "; direct spent rename verification failed: " + reopenError;
+            }
+            else
+            {
+                const DWORD renameError = GetLastError();
+                std::string deleteError;
+                if (DeleteExactFile(startup.transaction.pending, false, deleteError))
+                {
+                    result.error = SString("%s; direct spent rename failed win32=%u; pending was handle-verified and removed without a spent receipt",
+                                           markerError.c_str(), renameError);
+                }
+                else
+                    result.error = SString("%s; direct spent rename failed win32=%u; verified pending removal failed: %s", markerError.c_str(), renameError,
+                                           deleteError.c_str());
+            }
+            result.publicationAmbiguous = true;
+            return result;
+        }
+        if (!TemporaryRecordsMatch(startup.transaction, startup.record, result.error))
+            return result;
+
+        if (!MoveFileExW(startup.transaction.pending.c_str(), spent.c_str(), MOVEFILE_WRITE_THROUGH))
+        {
+            result.publicationAmbiguous = true;
+            result.error = SString("authorization startup terminalization rename failed win32=%u", GetLastError());
+            return result;
+        }
+        SRecord reopened;
+        if (ReadRecord(spent, reopened, result.error) != EReadResult::Success || !RecordsEqual(reopened, startup.record))
+        {
+            result.publicationAmbiguous = true;
+            if (result.error.empty())
+                result.error = "spent authorization differs after durable startup rename";
+            return result;
+        }
+        if (!DeleteTemporaryRecords(startup.transaction, result.error))
+        {
+            result.publicationAmbiguous = true;
+            return result;
+        }
+
+        result = MakeResult(reopened, claim ? "claimed" : "terminal-refused");
+        result.claimed = claim;
+        if (!claim && !effectiveRefusalReason.empty())
+            result.diagnostic += SString(" refusal=%s", effectiveRefusalReason.c_str());
+        return result;
     }
 }
 
@@ -1231,4 +1420,134 @@ SNativeWorldAuthorizationRecordResult NativeWorldAuthorizationStore::Revoke(cons
     }
     result = MakeResult(reopened, "revoked");
     return result;
+}
+
+SNativeWorldStartupSelection NativeWorldAuthorizationStore::BeginStartup(const std::array<unsigned char, 4>* endpointIpv4, unsigned short endpointPort,
+                                                                         bool legacySelectorEnabled)
+{
+    SNativeWorldStartupSelection selection;
+    CStartupBeginScope           beginScope;
+    if (!beginScope.Enter(selection.error))
+        return selection;
+
+    auto startup = std::make_unique<SStartupTransaction>();
+    if (!BeginTransaction(startup->transaction, selection.error))
+        return selection;
+    if (!startup->transaction.temporaryFiles.empty())
+    {
+        selection.error = "authorization store contains an unproven temporary remnant";
+        return selection;
+    }
+
+    unsigned long long now = 0;
+    if (!CurrentTime(now, selection.error) || !ValidateSpentLedger(startup->transaction, now, selection.error))
+        return selection;
+    const EReadResult read = ReadRecord(startup->transaction.pending, startup->record, selection.error);
+    if (read == EReadResult::Failure)
+        return selection;
+    if (read == EReadResult::Missing)
+    {
+        selection.success = true;
+        selection.diagnostic = "state=absent activation=no lease=no";
+        return selection;
+    }
+
+    selection = MakeStartupSelection(startup->record);
+    const std::string ticket = selection.ticketId;
+    if (startup->transaction.spentTickets.count(ticket))
+    {
+        selection.success = false;
+        selection.error = "the pending startup authorization ticket is already spent";
+        return selection;
+    }
+    const EFreshness freshness = EvaluateFreshness(startup->record, now);
+    if (freshness != EFreshness::Fresh)
+    {
+        selection.diagnostic =
+            SString("state=%s ticket=%s activation=no lease=no", freshness == EFreshness::Expired ? "expired" : "clock-refused", ticket.substr(0, 8).c_str());
+        return selection;
+    }
+
+    const bool endpointMatches =
+        endpointIpv4 && *endpointIpv4 == startup->record.authorization.serverIpv4 && endpointPort == startup->record.authorization.serverPort;
+    if (legacySelectorEnabled)
+    {
+        selection.terminalRefusalRequired = true;
+        selection.diagnostic = SString("state=selector-ambiguous ticket=%s activation=no lease=no", ticket.substr(0, 8).c_str());
+        beginScope.Publish(std::move(startup));
+        return selection;
+    }
+    if (!endpointMatches)
+    {
+        selection.diagnostic =
+            SString("state=pending target=%s ticket=%s activation=no lease=no", endpointIpv4 ? "mismatch" : "non-canonical", ticket.substr(0, 8).c_str());
+        return selection;
+    }
+
+    selection.ready = true;
+    selection.diagnostic = SString("state=selected endpoint=%u.%u.%u.%u:%u policy=bullworth contentId=%s ticket=%s activation=no lease=no",
+                                   selection.serverIpv4[0], selection.serverIpv4[1], selection.serverIpv4[2], selection.serverIpv4[3], selection.serverPort,
+                                   selection.contentId.c_str(), ticket.substr(0, 8).c_str());
+    beginScope.Publish(std::move(startup));
+    return selection;
+}
+
+SNativeWorldAuthorizationRecordResult NativeWorldAuthorizationStore::FinishStartup(const std::string& ticketId, bool claim, const std::string& refusalReason)
+{
+    SNativeWorldAuthorizationRecordResult result;
+    bool                                  cancelledAtCommit = false;
+    if ((!claim && (refusalReason.empty() || refusalReason.size() > 64)) ||
+        !std::all_of(refusalReason.begin(), refusalReason.end(),
+                     [](unsigned char character) { return (character >= 'a' && character <= 'z') || character == '-'; }))
+    {
+        result.error = "native-world startup refusal reason is non-canonical";
+        return result;
+    }
+    {
+        std::lock_guard<std::mutex> stateLock(g_startupStateMutex);
+        if (!g_startupTransaction || g_startupFinishing)
+        {
+            result.error = "no available native-world startup transaction is active";
+            return result;
+        }
+        if (!IsLowerHex(ticketId, 32) || EncodeHex(g_startupTransaction->record.ticketId) != ticketId)
+        {
+            result.error = "native-world startup transaction ticket mismatch";
+            return result;
+        }
+
+        // This lock acquisition is the claim/refusal commit boundary.
+        // Cancellation before it is terminalized as a refusal; shutdown after
+        // it is deliberately too late to alter the already chosen outcome.
+        cancelledAtCommit = g_startupCancelled.load(std::memory_order_acquire);
+        g_startupFinishing = true;
+    }
+
+    result = TerminalizeStartup(*g_startupTransaction, claim, cancelledAtCommit, refusalReason);
+    {
+        std::lock_guard<std::mutex> stateLock(g_startupStateMutex);
+        g_startupTransaction.reset();
+        g_startupFinishing = false;
+    }
+    return result;
+}
+
+void NativeWorldAuthorizationStore::CancelStartup(const std::string& ticketId)
+{
+    std::lock_guard<std::mutex> stateLock(g_startupStateMutex);
+    if (!g_startupFinishing && g_startupTransaction && EncodeHex(g_startupTransaction->record.ticketId) == ticketId)
+        g_startupCancelled.store(true, std::memory_order_release);
+}
+
+bool NativeWorldAuthorizationStore::IsStartupCancelled(const std::string& ticketId)
+{
+    std::lock_guard<std::mutex> stateLock(g_startupStateMutex);
+    return g_startupTransaction && EncodeHex(g_startupTransaction->record.ticketId) == ticketId && g_startupCancelled.load(std::memory_order_acquire);
+}
+
+void NativeWorldAuthorizationStore::CancelActiveStartup()
+{
+    std::lock_guard<std::mutex> stateLock(g_startupStateMutex);
+    if (!g_startupFinishing && (g_startupBeginning || g_startupTransaction))
+        g_startupCancelled.store(true, std::memory_order_release);
 }

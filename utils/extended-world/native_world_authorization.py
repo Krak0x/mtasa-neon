@@ -22,6 +22,7 @@ RECORD_LIFETIME_SECONDS = 900
 CLOCK_ROLLBACK_TOLERANCE_SECONDS = 120
 TRANSPORT_BITSTREAM_VERSION = 0x35
 AUTHORIZATION_BITSTREAM_VERSION = 0x36
+LATEST_BITSTREAM_VERSION = AUTHORIZATION_BITSTREAM_VERSION
 
 
 class RecordError(ValueError):
@@ -194,8 +195,16 @@ def _validate(record: AuthorizationRecord) -> bytes:
         raise RecordError("invalid endpoint or resource identity")
     if not record.connection_generation or not record.authorization_epoch:
         raise RecordError("zero generation or authorization epoch")
-    if record.server_id_digest == bytes(32) or record.server_ipv4 == bytes(4):
+    if (
+        record.content_id == bytes(32)
+        or record.offer_id == bytes(32)
+        or record.ticket_id == bytes(16)
+        or record.server_id_digest == bytes(32)
+        or record.server_ipv4 == bytes(4)
+    ):
         raise RecordError("empty server identity or endpoint")
+    if not AUTHORIZATION_BITSTREAM_VERSION <= record.bitstream_version <= LATEST_BITSTREAM_VERSION:
+        raise RecordError("bitstream version is outside the startup capability window")
     try:
         resource = record.resource_name.encode("ascii")
     except UnicodeEncodeError as exc:
@@ -357,3 +366,97 @@ def resolve_existing(existing: AuthorizationRecord, requested: AuthorizationReco
     if durable_identity(existing) == durable_identity(requested):
         return "attached", existing
     raise RecordError("a different unexpired authorization is already pending")
+
+
+def parse_closed_startup_uri(uri: str | None) -> tuple[bytes, int] | None:
+    """Accept only the production launch-2 numeric endpoint grammar."""
+    if not isinstance(uri, str) or not uri.startswith("mtasa://"):
+        return None
+    endpoint = uri[len("mtasa://") :]
+    if endpoint.count(":") != 1:
+        return None
+    host, port_text = endpoint.split(":")
+    octets = host.split(".")
+    if len(octets) != 4 or any(not part.isascii() or not part.isdigit() for part in octets):
+        return None
+    if any((len(part) > 1 and part.startswith("0")) or not 0 <= int(part) <= 255 for part in octets):
+        return None
+    if bytes(map(int, octets)) == bytes(4):
+        return None
+    if not port_text.isascii() or not port_text.isdigit() or port_text.startswith("0"):
+        return None
+    port = int(port_text)
+    if not 1 <= port <= 65535:
+        return None
+    return bytes(map(int, octets)), port
+
+
+@dataclass
+class StartupLedger:
+    pending: AuthorizationRecord | None
+    spent: dict[bytes, AuthorizationRecord]
+    selected: AuthorizationRecord | None = None
+    cancelled: bool = False
+
+    def begin(self, uri: str | None, now: int, *, legacy_selector: bool = False) -> str:
+        if self.selected is not None:
+            raise RecordError("startup transaction already active")
+        if self.pending is None:
+            return "absent"
+        _validate(self.pending)
+        if self.pending.ticket_id in self.spent:
+            raise RecordError("pending ticket is already spent")
+        state = freshness(self.pending, now)
+        if state != "fresh":
+            return state
+        endpoint = parse_closed_startup_uri(uri)
+        if legacy_selector:
+            self.selected = self.pending
+            self.cancelled = False
+            return "ambiguous"
+        if endpoint != (self.pending.server_ipv4, self.pending.server_port):
+            return "unmatched"
+        self.selected = self.pending
+        self.cancelled = False
+        return "selected"
+
+    def finish(self, now: int, *, claim: bool) -> str:
+        if self.selected is None or self.pending != self.selected:
+            raise RecordError("selected pending transaction changed")
+        selected = self.selected
+        self.selected = None
+        if selected.ticket_id in self.spent:
+            raise RecordError("ticket was already spent")
+        if claim and (self.cancelled or freshness(selected, now) != "fresh"):
+            claim = False
+        self.spent[selected.ticket_id] = selected
+        self.pending = None
+        return "claimed" if claim else "terminal-refused"
+
+    def crash(self) -> None:
+        """A pre-claim crash releases the in-memory lock and preserves pending."""
+        self.selected = None
+
+    def cancel(self) -> None:
+        if self.selected is not None:
+            self.cancelled = True
+
+
+@dataclass
+class TypedCacheLease:
+    policy: str
+    content_id: str
+    ticket_id: str
+    active: bool = True
+    committed: bool = False
+
+    def commit(self, policy: str, content_id_value: str, ticket_id: str) -> None:
+        if not self.active:
+            raise RecordError("lease already completed")
+        if (policy, content_id_value, ticket_id) != (self.policy, self.content_id, self.ticket_id):
+            raise RecordError("lease token mismatch")
+        self.active = False
+        self.committed = True
+
+    def release(self) -> None:
+        self.active = False

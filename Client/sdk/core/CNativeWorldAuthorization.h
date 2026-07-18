@@ -46,9 +46,35 @@ struct SNativeWorldAuthorizationRecordResult
     bool               idempotent{};
     bool               attached{};
     bool               publicationAmbiguous{};
+    bool               claimed{};
     unsigned long long issuedAt{};
     unsigned long long expiresAt{};
     std::string        ticketId;
     std::string        diagnostic;
     std::string        error;
+};
+
+// Value-only view of a validated launch-2 record. Core keeps the transaction
+// lock opaque; Game SA receives only the immutable identities needed to audit
+// the exact cache object before asking Core to burn or claim the ticket.
+struct SNativeWorldStartupSelection
+{
+    bool                          success{};
+    bool                          found{};
+    bool                          ready{};
+    bool                          terminalRefusalRequired{};
+    unsigned char                 policy{};
+    unsigned char                 packFormat{};
+    std::array<unsigned char, 32> serverIdDigest{};
+    std::array<unsigned char, 4>  serverIpv4{};
+    unsigned short                serverPort{};
+    unsigned short                bitstreamVersion{};
+    unsigned long long            issuedAt{};
+    unsigned long long            expiresAt{};
+    std::string                   resourceName;
+    std::string                   offerId;
+    std::string                   contentId;
+    std::string                   ticketId;
+    std::string                   diagnostic;
+    std::string                   error;
 };

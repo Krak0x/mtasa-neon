@@ -10,10 +10,15 @@
 #pragma once
 
 #include <game/CGame.h>
+#include <string>
 
 class CNativeModelStoreSA
 {
 public:
+    // Performs the complete executable/patch/store audit used by startup
+    // selection without allocating memory or changing any process state.
+    static bool ValidateExecutableAndPatchManifestReadOnly(eGameVersion gameVersion, std::string& error);
+
     // This must run before GTA calls CModelInfo::Initialise. The process-start
     // environment is intentionally the only switch so a resource cannot turn
     // executable patching on after the stores are already in use.

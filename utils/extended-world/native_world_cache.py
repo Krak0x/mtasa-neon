@@ -82,6 +82,20 @@ def validate_cache_object(directory: Path, manifest: dict[str, Any], policy_key:
     _validate_file(directory / CACHED_IMG_FILE, cached_img)
 
 
+def open_existing_cache(cache_root: Path, manifest: dict[str, Any], policy_key: str, expected_content_id: str) -> Path:
+    """Reference model for the non-repairing Checkpoint-B lookup."""
+    identity = content_id(manifest, policy_key)
+    if identity != expected_content_id:
+        raise ValueError("authorized content ID differs from the semantic manifest")
+    directory = cache_root / CACHE_FORMAT_DIRECTORY / policy_key / identity
+    if directory.is_symlink() or not directory.is_dir():
+        raise ValueError("exact cache object is missing or unsafe")
+    if {path.name for path in directory.iterdir()} != {CACHED_MANIFEST_FILE, CACHED_IDE_FILE, CACHED_IMG_FILE}:
+        raise ValueError("cache object is not the exact closed three-file directory")
+    validate_cache_object(directory, manifest, policy_key)
+    return directory
+
+
 def publish_local_seed(seed_directory: Path, cache_root: Path, policy_key: str) -> tuple[Path, str]:
     """Publish or repair a local seed using the runtime's semantic layout."""
 

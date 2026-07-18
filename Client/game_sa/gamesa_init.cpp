@@ -30,11 +30,13 @@ MTAEXPORT CGame* GetGameInterface(CCoreInterface* pCore)
 {
     g_pNet = pCore->GetNetwork();
     assert(g_pNet);
+    // CGameSA performs the record-driven startup selector in its constructor.
+    // Publish Core first so that selection cannot observe a transient null ABI.
+    g_pCore = pCore;
 
     SetMemoryAllocationFailureHandler();
 
     pGame = new CGameSA;
-    g_pCore = pCore;
 
     return (CGame*)pGame;
 }

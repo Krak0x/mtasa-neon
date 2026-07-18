@@ -88,6 +88,48 @@ static HMODULE WINAPI SkipDirectPlay_LoadLibraryA(LPCSTR fileName)
     return Win32LoadLibraryA(fileName);
 }
 
+namespace
+{
+    bool ParseClosedNativeWorldEndpoint(const char* arguments, std::array<unsigned char, 4>& ipv4, unsigned short& port)
+    {
+        constexpr char SCHEME[] = "mtasa://";
+        if (!arguments || strncmp(arguments, SCHEME, sizeof(SCHEME) - 1) != 0)
+            return false;
+
+        const char* cursor = arguments + sizeof(SCHEME) - 1;
+        for (size_t octetIndex = 0; octetIndex < ipv4.size(); ++octetIndex)
+        {
+            const char*  start = cursor;
+            unsigned int value = 0;
+            while (*cursor >= '0' && *cursor <= '9')
+            {
+                value = value * 10 + static_cast<unsigned int>(*cursor++ - '0');
+                if (value > 255)
+                    return false;
+            }
+            if (cursor == start || (cursor - start > 1 && start[0] == '0') || (octetIndex + 1 < ipv4.size() && *cursor++ != '.'))
+                return false;
+            ipv4[octetIndex] = static_cast<unsigned char>(value);
+        }
+        if (*cursor++ != ':' || *cursor < '1' || *cursor > '9')
+            return false;
+
+        const char*  portStart = cursor;
+        unsigned int parsedPort = 0;
+        while (*cursor >= '0' && *cursor <= '9')
+        {
+            parsedPort = parsedPort * 10 + static_cast<unsigned int>(*cursor++ - '0');
+            if (parsedPort > std::numeric_limits<unsigned short>::max())
+                return false;
+        }
+        if (*cursor || (cursor - portStart > 1 && portStart[0] == '0') || parsedPort == 0 ||
+            std::all_of(ipv4.begin(), ipv4.end(), [](unsigned char octet) { return octet == 0; }))
+            return false;
+        port = static_cast<unsigned short>(parsedPort);
+        return true;
+    }
+}
+
 CCore::CCore()
 {
     // Initialize the global pointer
@@ -190,6 +232,7 @@ CCore::CCore()
 CCore::~CCore()
 {
     WriteDebugEvent("CCore::~CCore");
+    NativeWorldAuthorizationStore::CancelActiveStartup();
 
     if constexpr (bFreezeWatchdogEnabled)
         StopWatchdogThread();
@@ -470,6 +513,29 @@ SNativeWorldAuthorizationRecordResult CCore::RevokeNativeWorldStartupAuthorizati
         return result;
     }
     return NativeWorldAuthorizationStore::Revoke(authorization, contentId);
+}
+
+SNativeWorldStartupSelection CCore::BeginNativeWorldStartupSelection(bool legacySelectorEnabled)
+{
+    std::array<unsigned char, 4> endpointIpv4{};
+    unsigned short               endpointPort = 0;
+    const bool                   hasClosedEndpoint = ParseClosedNativeWorldEndpoint(m_szCommandLineArgs, endpointIpv4, endpointPort);
+    return NativeWorldAuthorizationStore::BeginStartup(hasClosedEndpoint ? &endpointIpv4 : nullptr, endpointPort, legacySelectorEnabled);
+}
+
+SNativeWorldAuthorizationRecordResult CCore::FinishNativeWorldStartupSelection(const std::string& ticketId, bool claim, const std::string& refusalReason)
+{
+    return NativeWorldAuthorizationStore::FinishStartup(ticketId, claim, refusalReason);
+}
+
+void CCore::CancelNativeWorldStartupSelection(const std::string& ticketId)
+{
+    NativeWorldAuthorizationStore::CancelStartup(ticketId);
+}
+
+bool CCore::IsNativeWorldStartupSelectionCancelled(const std::string& ticketId) const
+{
+    return NativeWorldAuthorizationStore::IsStartupCancelled(ticketId);
 }
 
 CKeyBindsInterface* CCore::GetKeyBinds()
@@ -1721,6 +1787,7 @@ bool CCore::IsValidNick(const char* szNick)
 
 void CCore::Quit(bool bInstantly)
 {
+    NativeWorldAuthorizationStore::CancelActiveStartup();
     if (bInstantly)
     {
         AddReportLog(7101, "Core - Quit");
