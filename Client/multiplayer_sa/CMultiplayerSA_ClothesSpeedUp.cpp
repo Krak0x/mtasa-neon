@@ -11,6 +11,7 @@
 
 #include "StdInc.h"
 #include "../Client/game_sa/CDirectorySA.h"
+#include "../Client/game_sa/CModelInfoSA.h"
 
 DWORD FUNC_CStreamingInfoAddToList = 0x407480;
 DWORD FUNC_CStreamingConvertBufferToObject = 0x40C6B0;
@@ -64,6 +65,9 @@ void CMultiplayerSA::SetFastClothesLoading(EFastClothesLoading fastClothesLoadin
 ////////////////////////////////////////////////
 namespace
 {
+    constexpr unsigned int  MODEL_CSPLAY = 1;
+    constexpr unsigned long HASH_CSPLAY = 0xF11A7F97;
+
     struct SImgGTAItemInfo
     {
         ushort usNext;
@@ -98,6 +102,15 @@ bool _cdecl OnCallCStreamingInfoAddToList(int flags, SImgGTAItemInfo* pImgGTAInf
 
     if (pImgGTAInfo->ucImgId == 5)
     {
+        // GTA's cutscene-player builder requests player.img components from
+        // inside its clothing converter. Serving another component directly
+        // from this cache recursively re-enters RequestModel. Keep the native
+        // queued streamer active while CSPLAY occupies special-model slot 1.
+        CModelInfo* cutscenePlayerModel = pGameInterface->GetModelInfo(MODEL_CSPLAY);
+        auto*       cutscenePlayerInterface = cutscenePlayerModel ? cutscenePlayerModel->GetInterface() : nullptr;
+        if (cutscenePlayerInterface && cutscenePlayerInterface->ulHashKey == HASH_CSPLAY)
+            return false;
+
         const uintptr_t streamingBegin = reinterpret_cast<uintptr_t>(pGameInterface->GetStreamingInfoArray());
         const uintptr_t streamingEntry = reinterpret_cast<uintptr_t>(pImgGTAInfo);
         const size_t    streamingSize = static_cast<size_t>(pGameInterface->GetCountOfAllFileIDs()) * sizeof(CStreamingInfo);
@@ -110,17 +123,14 @@ bool _cdecl OnCallCStreamingInfoAddToList(int flags, SImgGTAItemInfo* pImgGTAInf
         // can verify its loadState before deciding to skip
         iLastCacheFileId = iFileId;
 
-// If bLoadingBigModel is set, try to get it unset
+        // Direct buffer conversion is unsafe while GTA is already finishing a
+        // large streamed model. Calling LoadAllRequestedModels from this hook
+        // re-enters RequestModel and can recurse until the game stack overflows.
+        // Fall back to GTA's normal request path for this transient state.
 #define VAR_CStreaming_bLoadingBigModel 0x08E4A58
         BYTE& bLoadingBigModel = *(BYTE*)VAR_CStreaming_bLoadingBigModel;
         if (bLoadingBigModel)
-        {
-            pGameInterface->GetStreaming()->LoadAllRequestedModels(true);
-            if (bLoadingBigModel)
-                pGameInterface->GetStreaming()->LoadAllRequestedModels(false);
-            if (bLoadingBigModel)
-                return false;
-        }
+            return false;
 
         iReturnFileId = iFileId;
         pReturnBuffer = CMultiplayerSA::ms_PlayerImgCachePtr + pImgGTAInfo->iBlockOffset * 2048;

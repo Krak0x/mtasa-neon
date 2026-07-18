@@ -54,14 +54,17 @@ void CClumpModelInfo_SetClump(CBaseModelInfoSAInterface* pModelInfo, RwObject* p
 //
 //////////////////////////////////////////////////////////////////////////////////////////
 RwObject* pSavedModel0RwObject = NULL;
-void      OnMy_CClothesDeleteRwObject()
+bool      OnMy_CClothesDeleteRwObject(CBaseModelInfoSAInterface* pModelInfo)
 {
-    if (pSavedModel0RwObject)
-        return;
+    CBaseModelInfoSAInterface* pModel0Info = static_cast<CBaseModelInfoSAInterface**>(pGameInterface->GetModelInfoArray())[0];
+    if (pModelInfo != pModel0Info)
+        return false;
 
-    ushort                     usModelID = 0;
-    CBaseModelInfoSAInterface* pModelInfo = static_cast<CBaseModelInfoSAInterface**>(pGameInterface->GetModelInfoArray())[usModelID];
+    if (pSavedModel0RwObject)
+        return true;
+
     pSavedModel0RwObject = pModelInfo->pRwObject;
+    return true;
 }
 
 // Hook info
@@ -76,13 +79,23 @@ static void __declspec(naked) HOOK_CClothesDeleteRwObject()
     __asm
     {
         pushad
+        push    esi
         call    OnMy_CClothesDeleteRwObject
+        add     esp, 4
+        test    al, al
+        jz      deleteNormally
         popad
 
-        // Do original code and continue
+        // Model 0 is retained for MTA's clothes-memory optimization.
         mov     ecx, esi
-        // Skip deletion
-        //call    dword ptr [edx+20h] //; 004C6C50 ; void CPedModelInfo::DeleteRwObject()
+        jmp     RETURN_CClothesDeleteRwObject
+
+    deleteNormally:
+        // Cutscene and other ped models must keep vanilla ownership: their
+        // replacement clump can use a different hierarchy than the old one.
+        popad
+        mov     ecx, esi
+        call    dword ptr [edx+20h] //; 004C6C50 ; void CPedModelInfo::DeleteRwObject()
         jmp     RETURN_CClothesDeleteRwObject
     }
     // clang-format on

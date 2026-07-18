@@ -84,6 +84,8 @@ public:
     LUA_DECLARE(GetVehicleNitroLevel);
     LUA_DECLARE(GetHeliBladeCollisionsEnabled);
     LUA_DECLARE(IsVehicleWindowOpen);
+    static int  GetVehicleDoorLockMode(CClientVehicle* vehicle);
+    static bool GetVehicleTyresCanBurst(CClientVehicle* vehicle);
 
     LUA_DECLARE(FixVehicle);
     static bool BlowVehicle(CClientEntity* entity, std::optional<bool> withExplosion);
@@ -92,6 +94,8 @@ public:
     LUA_DECLARE(SetVehicleColor);
     LUA_DECLARE(SetVehicleLandingGearDown);
     LUA_DECLARE(SetVehicleLocked);
+    static bool SetVehicleDoorLockMode(CClientVehicle* vehicle, int mode);
+    static bool SetVehicleTyresCanBurst(CClientVehicle* vehicle, bool canBurst);
     LUA_DECLARE(SetVehicleModel);
     LUA_DECLARE(SetVehicleDoorsUndamageable);
     LUA_DECLARE(SetVehicleSirensOn);

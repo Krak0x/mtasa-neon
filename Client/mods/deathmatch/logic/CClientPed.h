@@ -416,6 +416,8 @@ public:
 
     bool IsMissionActor() const noexcept { return m_bMissionActor; }
     bool SetMissionActor(bool enabled);
+    bool IsStoryProtected() const noexcept { return m_bStoryProtected; }
+    bool SetStoryProtected(bool enabled);
 
     void                                    AddProjectile(CClientProjectile* pProjectile) { m_Projectiles.push_back(pProjectile); }
     void                                    RemoveProjectile(CClientProjectile* pProjectile) { m_Projectiles.remove(pProjectile); }
@@ -604,6 +606,7 @@ protected:
     void _DestroyLocalModel();
     void _ChangeModel();
     void ApplyMissionActorState();
+    void ApplyStoryProtectionState();
 
     void ModelRequestCallback(CModelInfo* pModelInfo);
 
@@ -732,7 +735,9 @@ public:
     eMoveAnim                                m_MoveAnim;
     bool                                     m_bUseNativeWalkingStyle{false};
     bool                                     m_bMissionActor{false};
+    bool                                     m_bStoryProtected{false};
     std::optional<SPedCreatedByState>        m_missionActorNativeState;
+    std::optional<SPedStoryProtectionState>  m_storyProtectionNativeState;
     std::list<CClientProjectile*>            m_Projectiles;
     unsigned char                            m_ucAlpha;
     float                                    m_fTargetRotation;

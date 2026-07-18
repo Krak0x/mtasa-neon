@@ -318,8 +318,15 @@ void CMultiplayerSA::FlushClothesCache()
 //
 ////////////////////////////////////////////////
 RpClump* _cdecl OnCClothesBuilderCreateSkinnedClumpPre(RpClump* pRpClump, RwTexDictionary* pRwTexDictionary, CPedClothesDesc* pNewClothesDesc,
-                                                       CPedClothesDesc* pPrevClothesDesc, bool bAlwaysFalse)
+                                                       CPedClothesDesc* pPrevClothesDesc, bool bCutscenePlayer)
 {
+    // A normal CJ cache entry is skinned against model 0's hierarchy, while
+    // a cutscene player must use the CSPLAY hierarchy supplied in pRpClump.
+    // Clothes alone therefore cannot key a compatible cutscene cache hit;
+    // let GTA build it from the supplied bones every time.
+    if (bCutscenePlayer)
+        return nullptr;
+
     // If torso, head, hands, legs or feet are NULL, set to the default value
     DWORD defaults[] = {0x2ff481ca, 0x6e99e4d7, 0x6e850eb7, 0x347251c1, 0xf79d4684};
 
@@ -333,9 +340,11 @@ RpClump* _cdecl OnCClothesBuilderCreateSkinnedClumpPre(RpClump* pRpClump, RwTexD
 ////////////////////////////////////////////////////////////////////////////////////////////////
 //
 void _cdecl OnCClothesBuilderCreateSkinnedClumpPost(RpClump* pRpClumpResult, RpClump* pRpClump, RwTexDictionary* pRwTexDictionary,
-                                                    CPedClothesDesc* pNewClothesDesc, CPedClothesDesc* pPrevClothesDesc, bool bAlwaysFalse)
+                                                    CPedClothesDesc* pNewClothesDesc, CPedClothesDesc* pPrevClothesDesc, bool bCutscenePlayer)
 {
-    if (pRpClumpResult)
+    // Do not let a CSPLAY-skinned clump satisfy a later ordinary CJ lookup
+    // with the same clothes descriptor (the inverse hierarchy mismatch).
+    if (pRpClumpResult && !bCutscenePlayer)
         ms_clumpStore.SaveClump(pRpClumpResult, pNewClothesDesc);
 }
 

@@ -163,6 +163,7 @@ CClientVehicle::CClientVehicle(CClientManager* pManager, ElementID ID, unsigned 
     }
     m_bSwingingDoorsAllowed = false;
     m_bDoorsLocked = false;
+    m_doorLockMode = DOOR_LOCK_UNLOCKED;
     m_bDoorsUndamageable = false;
     m_bCanShootPetrolTank = true;
     m_bCanBeTargettedByHeatSeekingMissiles = true;
@@ -180,6 +181,7 @@ CClientVehicle::CClientVehicle(CClientManager* pManager, ElementID ID, unsigned 
     m_bSyncUnoccupiedDamage = false;
     m_bScriptCanBeDamaged = true;
     m_bTyresCanBurst = true;
+    m_bScriptTyresCanBurstOverride = false;
     m_ucOverrideLights = 0;
     m_pTowedVehicle = NULL;
     m_pTowedByVehicle = NULL;
@@ -803,6 +805,28 @@ void CClientVehicle::SetDoorsLocked(bool bLocked)
         m_pVehicle->LockDoors(bLocked);
 
     m_bDoorsLocked = bLocked;
+    m_doorLockMode = bLocked ? DOOR_LOCK_LOCKED : DOOR_LOCK_UNLOCKED;
+}
+
+int CClientVehicle::GetDoorLockMode() const
+{
+    if (m_pVehicle)
+        return static_cast<int>(m_pVehicle->GetDoorLockMode());
+
+    return static_cast<int>(m_doorLockMode);
+}
+
+bool CClientVehicle::SetDoorLockMode(int mode)
+{
+    if (mode < DOOR_LOCK_UNLOCKED || mode > DOOR_LOCK_SKIP_SHUT_DOORS)
+        return false;
+
+    if (m_pVehicle)
+        m_pVehicle->SetDoorLockMode(static_cast<eDoorLock>(mode));
+
+    m_bDoorsLocked = mode != DOOR_LOCK_UNLOCKED;
+    m_doorLockMode = static_cast<eDoorLock>(mode);
+    return true;
 }
 
 bool CClientVehicle::AreDoorsUndamageable()
@@ -1253,6 +1277,16 @@ bool CClientVehicle::GetTyresCanBurst()
     return m_pVehicle ? (!m_pVehicle->GetTyresDontBurst()) : m_bTyresCanBurst;
 }
 
+void CClientVehicle::SetTyresCanBurst(bool canBurst)
+{
+    // Unlike the damage-proof flag, main.scm controls tyre bursting directly.
+    // Keep this override separate so ordinary body damage remains synchronized.
+    m_bScriptTyresCanBurstOverride = true;
+    m_bTyresCanBurst = canBurst;
+    if (m_pVehicle)
+        m_pVehicle->SetTyresDontBurst(!canBurst);
+}
+
 // This can be called frequently to ensure the correct setting gets to the SA vehicle
 void CClientVehicle::CalcAndUpdateTyresCanBurstFlag()
 {
@@ -1268,6 +1302,9 @@ void CClientVehicle::CalcAndUpdateTyresCanBurstFlag()
     // Script override
     if (!m_bScriptCanBeDamaged)
         bTyresCanBurst = false;
+
+    if (m_bScriptTyresCanBurstOverride)
+        bTyresCanBurst = m_bTyresCanBurst;
 
     if (m_pVehicle)
         m_pVehicle->SetTyresDontBurst(!bTyresCanBurst);
@@ -2634,7 +2671,7 @@ void CClientVehicle::Create()
         SetLandingGearDown(m_bLandingGearDown);
         _SetAdjustablePropertyValue(m_usAdjustablePropertyValue);
         m_pVehicle->SetSwingingDoorsAllowed(m_bSwingingDoorsAllowed);
-        m_pVehicle->LockDoors(m_bDoorsLocked);
+        m_pVehicle->SetDoorLockMode(m_doorLockMode);
         m_pVehicle->SetDoorsUndamageable(m_bDoorsUndamageable);
         m_pVehicle->SetCanShootPetrolTank(m_bCanShootPetrolTank);
         m_pVehicle->SetTaxiLightOn(m_bTaxiLightOn);

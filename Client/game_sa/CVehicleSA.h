@@ -490,14 +490,16 @@ public:
     void RemoveVehicleUpgrade(DWORD dwModelID);
     bool DoesSupportUpgrade(const SString& strFrameName);
 
-    CDoorSA* GetDoor(unsigned char ucDoor);
-    void     OpenDoor(unsigned char ucDoor, float fRatio, bool bMakeNoise = false);
-    void     SetSwingingDoorsAllowed(bool bAllowed);
-    bool     AreSwingingDoorsAllowed() const;
-    bool     AreDoorsLocked();
-    void     LockDoors(bool bLocked);
-    bool     AreDoorsUndamageable() { return m_doorsUndamageable; }
-    void     SetDoorsUndamageable(bool bUndamageable) { m_doorsUndamageable = bUndamageable; }
+    CDoorSA*  GetDoor(unsigned char ucDoor);
+    void      OpenDoor(unsigned char ucDoor, float fRatio, bool bMakeNoise = false);
+    void      SetSwingingDoorsAllowed(bool bAllowed);
+    bool      AreSwingingDoorsAllowed() const;
+    bool      AreDoorsLocked();
+    void      LockDoors(bool bLocked);
+    eDoorLock GetDoorLockMode() const override { return GetVehicleInterface()->m_doorLock; }
+    void      SetDoorLockMode(eDoorLock mode) override { GetVehicleInterface()->m_doorLock = mode; }
+    bool      AreDoorsUndamageable() { return m_doorsUndamageable; }
+    void      SetDoorsUndamageable(bool bUndamageable) { m_doorsUndamageable = bUndamageable; }
 
     DWORD GetBaseVehicleType();
 

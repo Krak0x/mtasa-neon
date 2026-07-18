@@ -3688,6 +3688,7 @@ void CClientPed::_CreateModel()
         // stream in. Reapply their persisted actor classification before GTA
         // starts evaluating ambient task transitions on the new instance.
         ApplyMissionActorState();
+        ApplyStoryProtectionState();
 
         g_pMultiplayer->AddRemoteDataStorage(m_pPlayerPed, m_remoteDataStorage);
 
@@ -4311,6 +4312,39 @@ void CClientPed::ApplyMissionActorState()
     // the task-owned target, just like a CPed created by main.scm.
     if (m_remoteDataStorage)
         m_remoteDataStorage->SetProcessPlayerWeapon(false);
+}
+
+bool CClientPed::SetStoryProtected(bool enabled)
+{
+    if (GetType() != CCLIENTPED)
+        return false;
+
+    if (m_bStoryProtected == enabled)
+        return true;
+
+    if (!enabled && m_pPlayerPed && m_storyProtectionNativeState)
+        m_pPlayerPed->SetStoryProtectionState(*m_storyProtectionNativeState);
+
+    m_bStoryProtected = enabled;
+    m_storyProtectionNativeState.reset();
+
+    if (enabled && m_pPlayerPed)
+        ApplyStoryProtectionState();
+
+    return true;
+}
+
+void CClientPed::ApplyStoryProtectionState()
+{
+    m_storyProtectionNativeState.reset();
+    if (!m_bStoryProtected || !m_pPlayerPed)
+        return;
+
+    // Story scripts combine five independent CPed bits. Preserve their prior
+    // values so a resource can relinquish this policy without contaminating
+    // an actor that it does not own.
+    m_storyProtectionNativeState = m_pPlayerPed->GetStoryProtectionState();
+    m_pPlayerPed->SetStoryProtectionState({true, true, true, true, false});
 }
 
 void CClientPed::InternalWarpIntoVehicle(CVehicle* pGameVehicle)

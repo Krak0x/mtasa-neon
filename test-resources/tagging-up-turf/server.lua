@@ -41,6 +41,11 @@ local mission = {
     fileCutscene = nil,
     finalSceneSerial = 0,
     finalScene = nil,
+    transitionAudioSerial = 0,
+    transitionAudio = nil,
+    reminderIndex = 1,
+    offscreenStored = false,
+    vehiclePlayerOnlyLocked = false,
 }
 
 -- GTA produces every spray hit and exact alpha step. The server validates those
@@ -107,7 +112,12 @@ local function applyPedClothes(ped, clothes)
 end
 
 local function applyMissionCJ(player)
-    if not isElement(player) or not setElementModel(player, TAGUP.cj.model) then
+    if not isElement(player) then
+        return false, "leader element unavailable"
+    end
+    -- MTA reports false when setElementModel is a no-op. A player who already
+    -- uses CJ model 0 is valid and still needs the mission clothing profile.
+    if getElementModel(player) ~= TAGUP.cj.model and not setElementModel(player, TAGUP.cj.model) then
         return false, "CJ model 0 refused"
     end
     local clothes = {}
@@ -125,7 +135,7 @@ local function applyMissionCJ(player)
             return false, ("slot %d readback mismatch: %s/%s"):format(expected.type, tostring(texture), tostring(model))
         end
     end
-    outputDebugString(("[tagging-up-turf] Vanilla CJ appearance applied to leader %s: model=0 vest/player_face/jeansdenim/sneakerbincblk"):format(
+    outputDebugString(("[tagging-up-turf] Vanilla CJ appearance applied to %s: model=0 vest/player_face/jeansdenim/sneakerbincblk"):format(
                           getPlayerName(player)))
     return true
 end
@@ -156,6 +166,30 @@ local function snapshotPlayer(player)
     }
 end
 
+local function restorePlayerAppearance(player, snapshot)
+    if not isElement(player) or not snapshot or not snapshot.cjAppearanceApplied then
+        return true
+    end
+
+    -- Clothes can only be changed while the element uses CJ model 0. Rebuild
+    -- that hidden state first, then return to the player's original skin.
+    if getElementModel(player) ~= TAGUP.cj.model and not setElementModel(player, TAGUP.cj.model) then
+        return false
+    end
+    local restored, details = applyPedClothes(player, snapshot.clothes)
+    if not restored then
+        outputDebugString(("[tagging-up-turf] Failed to restore clothes for %s: %s"):format(
+                              getPlayerName(player), tostring(details)), 2)
+    end
+    if getElementModel(player) ~= snapshot.model then
+        setElementModel(player, snapshot.model)
+    end
+    outputDebugString(("[tagging-up-turf] Restored appearance for %s: model=%d clothes=%s"):format(
+                          getPlayerName(player), snapshot.model, restored and "restored" or "failed"),
+                      restored and 3 or 2)
+    return restored
+end
+
 local function restorePlayer(player, snapshot)
     if not isElement(player) or not snapshot then
         return
@@ -173,19 +207,7 @@ local function restorePlayer(player, snapshot)
         setElementModel(player, restoreModel)
     end
 
-    if snapshot.cjAppearanceApplied then
-        -- Clothes can only be changed while the element uses CJ model 0.
-        -- Restore that hidden state first, then return to the original skin.
-        local appearanceRestored, appearanceDetails = applyPedClothes(player, snapshot.clothes)
-        if not appearanceRestored then
-            outputDebugString(("[tagging-up-turf] Failed to restore clothes for %s: %s"):format(
-                                  getPlayerName(player), tostring(appearanceDetails)), 2)
-        end
-        setElementModel(player, snapshot.model)
-        outputDebugString(("[tagging-up-turf] Restored leader appearance for %s: model=%d clothes=%s"):format(
-                              getPlayerName(player), snapshot.model, appearanceRestored and "restored" or "failed"),
-                          appearanceRestored and 3 or 2)
-    end
+    restorePlayerAppearance(player, snapshot)
 
     setElementFrozen(player, false)
     setElementHealth(player, math.max(1, snapshot.health))
@@ -245,6 +267,7 @@ local function stagePayload(extra)
         leader = mission.leader,
         tagProgress = mission.tagProgress,
         completedTags = mission.completedTags,
+        vehiclePlayerOnlyLocked = mission.vehiclePlayerOnlyLocked,
     }
     if extra then
         for key, value in pairs(extra) do
@@ -519,6 +542,113 @@ local createScmChar
 local createMissionEntities
 local startIntroScene
 local startFinalScene
+
+local function allTransitionAudioPlayers(audio, field)
+    for _, player in ipairs(audio.players) do
+        if isElement(player) and not audio[field][player] then
+            return false
+        end
+    end
+    return true
+end
+
+local function cancelTransitionAudio(reason)
+    local audio = mission.transitionAudio
+    if not audio then
+        return
+    end
+    mission.transitionAudio = nil
+    if isTimer(audio.guardTimer) then
+        killTimer(audio.guardTimer)
+    end
+    for _, player in ipairs(audio.players) do
+        if isElement(player) then
+            triggerClientEvent(player, "tagup:transitionAudioCancel", resourceRoot, audio.id, reason or "server_cancelled")
+        end
+    end
+end
+
+local function startTransitionAudio(profile, purpose, onComplete)
+    if mission.transitionAudio or type(profile) ~= "table" then
+        return false
+    end
+
+    mission.transitionAudioSerial = mission.transitionAudioSerial + 1
+    local audio = {
+        id = mission.transitionAudioSerial,
+        purpose = purpose,
+        profile = profile,
+        players = {},
+        readyPlayers = {},
+        finishedPlayers = {},
+        onComplete = onComplete,
+        requestedAt = getTickCount(),
+    }
+    for _, player in ipairs(mission.party) do
+        if isElement(player) then
+            table.insert(audio.players, player)
+        end
+    end
+    mission.transitionAudio = audio
+    audio.guardTimer = rememberTimer(setTimer(function(expectedId)
+        local active = mission.transitionAudio
+        if active and active.id == expectedId then
+            cancelTransitionAudio("server_timeout")
+            failMission(("La replique %s a depasse son delai de garde."):format(active.profile.key))
+        end
+    end, TAGUP.transitionAudio.loadTimeout + TAGUP.transitionAudio.finishTimeout, 1, audio.id))
+
+    outputDebugString(("[tagging-up-turf] Preparing transition audio #%d purpose=%s key=%s event=%d for %d participant(s)"):format(
+                          audio.id, purpose, profile.key, profile.event, #audio.players))
+    for _, player in ipairs(audio.players) do
+        triggerClientEvent(player, "tagup:transitionAudioPrepare", resourceRoot, audio.id, purpose, profile)
+    end
+    return true
+end
+
+addEvent("tagup:transitionAudioReady", true)
+addEventHandler("tagup:transitionAudioReady", resourceRoot, function(audioId, result, details)
+    local player, audio = client, mission.transitionAudio
+    if source ~= resourceRoot or not audio or audio.id ~= tonumber(audioId) or not isMissionPlayer(player) or audio.readyPlayers[player] then
+        return
+    end
+    if result ~= "ready" then
+        cancelTransitionAudio("client_prepare_" .. tostring(result))
+        return failMission(("La replique %s n'a pas charge: %s"):format(audio.profile.key, tostring(details or result)))
+    end
+    audio.readyPlayers[player] = true
+    if allTransitionAudioPlayers(audio, "readyPlayers") then
+        audio.startedAt = getTickCount()
+        for _, member in ipairs(audio.players) do
+            if isElement(member) then
+                triggerClientEvent(member, "tagup:transitionAudioStart", resourceRoot, audio.id)
+            end
+        end
+    end
+end)
+
+addEvent("tagup:transitionAudioResult", true)
+addEventHandler("tagup:transitionAudioResult", resourceRoot, function(audioId, result, details)
+    local player, audio = client, mission.transitionAudio
+    if source ~= resourceRoot or not audio or audio.id ~= tonumber(audioId) or not audio.startedAt or not isMissionPlayer(player) or
+        audio.finishedPlayers[player] then
+        return
+    end
+    if result ~= "finished" then
+        cancelTransitionAudio("client_play_" .. tostring(result))
+        return failMission(("La replique %s a echoue: %s"):format(audio.profile.key, tostring(details or result)))
+    end
+    audio.finishedPlayers[player] = true
+    if allTransitionAudioPlayers(audio, "finishedPlayers") then
+        local callback = audio.onComplete
+        outputDebugString(("[tagging-up-turf] Transition audio #%d key=%s finished naturally on every participant after %d ms"):format(
+                              audio.id, audio.profile.key, getTickCount() - audio.startedAt))
+        cancelTransitionAudio("completed")
+        if callback then
+            callback()
+        end
+    end
+end)
 
 local function cancelFileCutscene(reason, notifyClients)
     local scene = mission.fileCutscene
@@ -831,6 +961,12 @@ addEventHandler("tagup:fileCutsceneReleased", resourceRoot, function(sceneId, re
     end
 
     cancelFileCutscene("completed", false)
+    for _, member in ipairs(mission.party) do
+        if member ~= mission.leader and isElement(member) then
+            restorePlayerAppearance(member, mission.snapshots[member])
+            mission.snapshots[member].cjAppearanceApplied = false
+        end
+    end
     if not createMissionEntities(mission.leader) then
         return failMission("Les entites de mission n'ont pas pu etre creees apres SWEET1A.")
     end
@@ -1923,6 +2059,12 @@ local function startVehiclePlaybackReturn(extra)
         requestedAt = getTickCount(),
     }
     mission.vehiclePlayback = playback
+    setElementFrozen(vehicle, false)
+    setElementFrozen(sweet, false)
+    setVehicleLocked(vehicle, false)
+    mission.vehiclePlayerOnlyLocked = false
+    mission.offscreenStored = false
+    broadcastState()
     setElementSyncer(sweet, mission.leader, true, true)
     setElementSyncer(vehicle, mission.leader, true, true)
 
@@ -1942,6 +2084,10 @@ end
 
 local function advanceAfterTags(extra)
     if mission.stage == "tags_idlewood" then
+        if isElement(mission.entities.vehicle) then
+            setVehicleLocked(mission.entities.vehicle, false)
+        end
+        mission.vehiclePlayerOnlyLocked = false
         setStage("return_car", extra)
     elseif mission.stage == "tags_ballas" and mission.ballasGangSceneCompleted then
         local encounter = mission.ballasEncounter
@@ -1977,6 +2123,7 @@ failMission = function(reason)
     cancelPostRoofScene("mission_failed")
     cancelVehiclePlayback("mission_failed")
     cancelFinalScene("mission_failed")
+    cancelTransitionAudio("mission_failed")
     mission.stage = "failed"
     broadcastState({failureReason = reason or "La mission a echoue."})
     outputDebugString("[tagging-up-turf] Failed: " .. tostring(reason))
@@ -2107,6 +2254,7 @@ finishMission = function(passed, traceExtra)
     cancelPostRoofScene("mission_finished")
     cancelVehiclePlayback("mission_finished")
     cancelFinalScene("mission_finished")
+    cancelTransitionAudio("mission_finished")
     clearMissionTimers()
     if passed then
         mission.stage = "complete"
@@ -2161,10 +2309,14 @@ finishMission = function(passed, traceExtra)
         mission.introEntryGuardTimer = nil
         mission.fileCutscene = nil
         mission.finalScene = nil
+        mission.transitionAudio = nil
+        mission.reminderIndex = 1
+        mission.offscreenStored = false
+        mission.vehiclePlayerOnlyLocked = false
     end, delay, 1)
 end
 
-local function setupMissionPlayers()
+local function setupMissionPlayers(useCutsceneCJ)
     local offsets = {
         {2514.0, -1666.6, 13.4, 90},
         {2514.0, -1668.0, 13.4, 90},
@@ -2172,7 +2324,7 @@ local function setupMissionPlayers()
     }
     for index, player in ipairs(mission.party) do
         mission.snapshots[player] = snapshotPlayer(player)
-        if player == mission.leader then
+        if player == mission.leader or useCutsceneCJ then
             -- Mark before mutation so even a partial clothing failure restores
             -- the original appearance through the ordinary failure cleanup.
             mission.snapshots[player].cjAppearanceApplied = true
@@ -2203,6 +2355,7 @@ createMissionEntities = function(requester)
     end
     setElementDimension(vehicle, TAGUP.dimension)
     setVehicleColor(vehicle, 25, 86, 39, 25, 86, 39)
+    setVehiclePlateText(vehicle, TAGUP.vehiclePlate)
     setVehicleEngineState(vehicle, true)
     mission.entities.vehicle = vehicle
 
@@ -2252,6 +2405,10 @@ local function startMission(requester, checkpoint)
     mission.ballasGangSceneCompleted = false
     mission.ballasEncounter = nil
     mission.ballasTimerResetAt = nil
+    mission.transitionAudio = nil
+    mission.reminderIndex = 1
+    mission.offscreenStored = false
+    mission.vehiclePlayerOnlyLocked = false
     mission.leader = requester
     mission.party = {requester}
     for _, player in ipairs(getElementsByType("player")) do
@@ -2260,7 +2417,7 @@ local function startMission(requester, checkpoint)
         end
     end
 
-    if not setupMissionPlayers() then
+    if not setupMissionPlayers(not checkpoint) then
         return failMission("L'apparence vanilla de CJ n'a pas pu etre appliquee au leader.")
     end
 
@@ -2458,6 +2615,7 @@ local function startMission(requester, checkpoint)
         end
 
         mission.ballasTimerResetAt = getTickCount()
+        mission.vehiclePlayerOnlyLocked = true
         setStage("tags_ballas", {message = "Checkpoint Ballas pret. Avancez vers le tag de l'allee."})
         outputDebugString(('[tagging-up-turf] Ballas checkpoint started by %s outside the SCM 20x17 camera gate'):format(
                               getPlayerName(requester)))
@@ -3278,7 +3436,9 @@ local function finishDemoScene(scene)
     outputDebugString(("[tagging-up-turf] Sweet demonstration scene #%d %s after %d ms; camera/audio cleanup acknowledged by every participant")
                           :format(scene.id, skipped and "skipped" or "completed", getTickCount() - scene.startedAt))
     cancelDemoScene(skipped and "skipped" or "completed")
+    mission.vehiclePlayerOnlyLocked = true
     setStage("tags_idlewood", {deferTraceStep = not skipped, traceSkipped = skipped})
+    startTransitionAudio(TAGUP.transitionAudio.engineRunning, "engine_running")
     startSweetReturnEnter(ped)
 end
 
@@ -4028,6 +4188,7 @@ local function startBallasDeparture()
     if not isElement(vehicle) or not isElement(sweet) then
         return failMission("Sweet ou la Greenwood a disparu a l'arrivee Ballas.")
     end
+    mission.vehiclePlayerOnlyLocked = true
 
     cancelBallasDeparture("replaced")
     mission.ballasDepartureSerial = mission.ballasDepartureSerial + 1
@@ -4316,7 +4477,13 @@ addEventHandler("tagup:vehicleReady", resourceRoot, function(kind, reportedX, re
         end
     elseif kind == "returned" and mission.stage == "return_car" and isPartyInVehicle() then
         if getPedOccupiedVehicle(mission.entities.sweet) == vehicle and getPedOccupiedVehicleSeat(mission.entities.sweet) == TAGUP.sweetReturnEnter.seat then
-            setStage("drive_ballas")
+            if not mission.transitionAudio then
+                startTransitionAudio(TAGUP.transitionAudio.ballasDeparture, "ballas_departure", function()
+                    if mission.running and mission.stage == "return_car" and isPartyInVehicle() then
+                        setStage("drive_ballas")
+                    end
+                end)
+            end
         elseif mission.demoEnter then
             broadcastState({message = "Attendez que Sweet finisse de monter."})
         else
@@ -4330,12 +4497,54 @@ addEventHandler("tagup:vehicleReady", resourceRoot, function(kind, reportedX, re
     elseif kind == "roof_return" and mission.stage == "return_after_roof" and isPartyInVehicle() then
         warpSweetIntoFirstFreeSeat()
         setStage("drive_home")
+        startTransitionAudio(TAGUP.transitionAudio.groveReturn, "grove_return")
     elseif kind == "home" and mission.stage == "drive_home" then
         local target, gate = TAGUP.homeDestination, TAGUP.homeArrival
         if validateReportedVehicleArrival(kind, vehicle, target, gate, reportedX, reportedY, reportedZ) then
             startFinalScene()
         end
     end
+end)
+
+addEvent("tagup:vehicleReminder", true)
+addEventHandler("tagup:vehicleReminder", resourceRoot, function(stage)
+    if source ~= resourceRoot or client ~= mission.leader or not mission.running or stage ~= mission.stage or mission.transitionAudio or
+        (stage ~= "drive_idlewood" and stage ~= "drive_ballas" and stage ~= "drive_home") then
+        return
+    end
+    local vehicle = mission.entities.vehicle
+    if not isElement(vehicle) or getPedOccupiedVehicle(mission.leader) == vehicle then
+        return
+    end
+    local profile = TAGUP.transitionAudio.reminders[mission.reminderIndex]
+    mission.reminderIndex = mission.reminderIndex % #TAGUP.transitionAudio.reminders + 1
+    startTransitionAudio(profile, "vehicle_reminder")
+end)
+
+addEvent("tagup:storeOffscreenActors", true)
+addEventHandler("tagup:storeOffscreenActors", resourceRoot, function(stage)
+    -- A final rooftop visibility report can already be in flight when the last
+    -- tag starts recording 207. Once playback owns the actors, never let that
+    -- stale report freeze and store the Greenwood again before playback starts.
+    if source ~= resourceRoot or client ~= mission.leader or not mission.running or stage ~= mission.stage or mission.offscreenStored or
+        mission.vehiclePlayback or (stage ~= "tags_ballas" and stage ~= "rooftop") then
+        return
+    end
+    local sweet, vehicle = mission.entities.sweet, mission.entities.vehicle
+    if not isElement(sweet) or not isElement(vehicle) then
+        return
+    end
+    local px, py, pz = getElementPosition(mission.leader)
+    local vx, vy, vz = getElementPosition(vehicle)
+    if getDistanceBetweenPoints3D(px, py, pz, vx, vy, vz) < TAGUP.offscreenStorage.minimumDistance then
+        return
+    end
+    local storage = TAGUP.offscreenStorage.position
+    setElementFrozen(vehicle, true)
+    setElementFrozen(sweet, true)
+    setElementPosition(vehicle, storage[1], storage[2], storage[3])
+    mission.offscreenStored = true
+    outputDebugString(("[tagging-up-turf] Sweet and Greenwood stored below world after leader off-screen confirmation at stage=%s"):format(stage))
 end)
 
 local function isNativeTagAlphaStep(previousAlpha, currentAlpha)

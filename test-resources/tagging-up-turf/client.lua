@@ -38,6 +38,11 @@ local state = {
     vehicleRecordingPreloaded = false,
     postRoofScene = nil,
     finalScene = nil,
+    transitionAudio = nil,
+    lastOffscreenStorageReport = 0,
+    vehiclePlayerOnlyLocked = false,
+    greenwoodNativeLogMode = nil,
+    storyProtectionLogged = false,
     missionTextReady = false,
     missionTextTimers = {},
     nativeTagHelpPhase = 0,
@@ -118,19 +123,12 @@ local function beginMissionStageText(stage)
     elseif stage == "drive_idlewood" then
         printMissionText("HOOD3_A", 5000)
     elseif stage == "tags_idlewood" then
-        -- SWE1_CB normally accompanies the still-pending engine-running audio.
-        -- Keep the original PRINT_NOW timing while the native text slice lands.
-        printMissionText("SWE1_CB", 2500)
-        scheduleMissionText(stage, 2500, function()
-            printMissionText("SWE1_X", 6000)
-        end)
+        -- SWE1_CB is printed by the synchronized mission-audio cue once SCRIPT
+        -- reports the event loaded on every participant.
     elseif stage == "return_car" or stage == "return_after_roof" then
         printMissionText("SWE1_S", 6000)
     elseif stage == "drive_ballas" then
-        printMissionText("SWE1_AS", 3000)
-        scheduleMissionText(stage, 3000, function()
-            printMissionText("HOOD3_B", 5000)
-        end)
+        printMissionText("HOOD3_B", 5000)
     elseif stage == "tags_ballas" then
         scheduleMissionText(stage, 2500, function()
             printMissionText("SWE1_M", 6000)
@@ -142,10 +140,7 @@ local function beginMissionStageText(stage)
             printMissionText("SWE1_M", 6000)
         end)
     elseif stage == "drive_home" then
-        printMissionText("SWEX_AH", 3000)
-        scheduleMissionText(stage, 3000, function()
-            printMissionText("SWE1_B", 6000)
-        end)
+        -- SWEX_AH and its follow-up are owned by transition mission audio.
     elseif stage == "failed" then
         callMissionTextApi("clearMissionTexts")
         callMissionTextApi("showMissionBigText", "M_FAIL", 5000, 1)
@@ -154,6 +149,118 @@ local function beginMissionStageText(stage)
         callMissionTextApi("showMissionBigText", "M_PASSS", 5000, 1, 200)
     end
 end
+
+local function clearTransitionAudio(reason)
+    local audio = state.transitionAudio
+    if not audio then
+        return
+    end
+    state.transitionAudio = nil
+    for _, timer in ipairs({audio.loadTimer, audio.loadGuardTimer, audio.finishTimer, audio.finishGuardTimer}) do
+        if isTimer(timer) then
+            killTimer(timer)
+        end
+    end
+    if audio.handle and type(releaseMissionAudio) == "function" then
+        local ok, released = pcall(releaseMissionAudio, audio.handle)
+        outputDebugString(("[tagging-up-turf] Transition audio #%d released=%s reason=%s"):format(
+                              audio.id, tostring(ok and released ~= false), tostring(reason or "cleanup")))
+    end
+end
+
+local function reportTransitionAudio(audio, eventName, result, details)
+    if state.transitionAudio ~= audio or audio.reported then
+        return
+    end
+    if eventName == "tagup:transitionAudioResult" then
+        audio.reported = true
+    end
+    triggerServerEvent(eventName, resourceRoot, audio.id, result, details)
+end
+
+addEvent("tagup:transitionAudioPrepare", true)
+addEventHandler("tagup:transitionAudioPrepare", resourceRoot, function(audioId, purpose, profile)
+    if source ~= resourceRoot or not state.active or type(audioId) ~= "number" or type(profile) ~= "table" or type(profile.event) ~= "number" then
+        return
+    end
+    clearTransitionAudio("replaced")
+    if type(requestMissionAudio) ~= "function" or type(isMissionAudioLoaded) ~= "function" or type(playMissionAudio) ~= "function" or
+        type(isMissionAudioFinished) ~= "function" or type(releaseMissionAudio) ~= "function" then
+        triggerServerEvent("tagup:transitionAudioReady", resourceRoot, audioId, "api_unavailable", "native mission-audio API unavailable")
+        return
+    end
+
+    local requested, handle = pcall(requestMissionAudio, profile.event)
+    if not requested or not handle then
+        triggerServerEvent("tagup:transitionAudioReady", resourceRoot, audioId, "request_refused", tostring(handle))
+        return
+    end
+    local audio = {id = audioId, purpose = purpose, profile = profile, handle = handle, requestedAt = getTickCount()}
+    state.transitionAudio = audio
+    audio.loadGuardTimer = setTimer(function()
+        if state.transitionAudio == audio and not audio.ready then
+            triggerServerEvent("tagup:transitionAudioReady", resourceRoot, audio.id, "load_timeout", tostring(audio.profile.event))
+        end
+    end, TAGUP.transitionAudio.loadTimeout, 1)
+    audio.loadTimer = setTimer(function()
+        if state.transitionAudio ~= audio or audio.ready then
+            return
+        end
+        local ok, loaded = pcall(isMissionAudioLoaded, audio.handle)
+        if ok and loaded == true then
+            audio.ready = true
+            if isTimer(audio.loadGuardTimer) then
+                killTimer(audio.loadGuardTimer)
+            end
+            triggerServerEvent("tagup:transitionAudioReady", resourceRoot, audio.id, "ready",
+                               ("event=%d load=%dms"):format(audio.profile.event, getTickCount() - audio.requestedAt))
+        end
+    end, 50, 0)
+end)
+
+addEvent("tagup:transitionAudioStart", true)
+addEventHandler("tagup:transitionAudioStart", resourceRoot, function(audioId)
+    local audio = state.transitionAudio
+    if source ~= resourceRoot or not audio or audio.id ~= tonumber(audioId) or not audio.ready or audio.started then
+        return
+    end
+    if isTimer(audio.loadTimer) then
+        killTimer(audio.loadTimer)
+    end
+    local ok, played = pcall(playMissionAudio, audio.handle)
+    if not ok or played ~= true then
+        return reportTransitionAudio(audio, "tagup:transitionAudioResult", "play_refused", tostring(played))
+    end
+    audio.started = getTickCount()
+    printMissionText(audio.profile.key, audio.profile.duration)
+    audio.finishGuardTimer = setTimer(function()
+        if state.transitionAudio == audio and not audio.reported then
+            reportTransitionAudio(audio, "tagup:transitionAudioResult", "finish_timeout", tostring(audio.profile.event))
+        end
+    end, TAGUP.transitionAudio.finishTimeout, 1)
+    audio.finishTimer = setTimer(function()
+        if state.transitionAudio ~= audio or audio.reported then
+            return
+        end
+        local queried, finished = pcall(isMissionAudioFinished, audio.handle)
+        if queried and finished == true then
+            if audio.profile.followUp then
+                printMissionText(audio.profile.followUp, audio.profile.followUpDuration)
+            elseif audio.purpose == "vehicle_reminder" then
+                printMissionText("SWE1_S", 6000)
+            end
+            reportTransitionAudio(audio, "tagup:transitionAudioResult", "finished",
+                                  ("event=%d play=%dms"):format(audio.profile.event, getTickCount() - audio.started))
+        end
+    end, 50, 0)
+end)
+
+addEvent("tagup:transitionAudioCancel", true)
+addEventHandler("tagup:transitionAudioCancel", resourceRoot, function(audioId, reason)
+    if source == resourceRoot and state.transitionAudio and state.transitionAudio.id == tonumber(audioId) then
+        clearTransitionAudio(reason)
+    end
+end)
 
 local function updateNativeMissionHelp()
     if not state.active or not state.missionTextReady then
@@ -203,6 +310,48 @@ local function applyMissionActor(ped)
         return false
     end
     return setPedMissionActor(ped, getElementData(ped, TAGUP.missionActorData) == true)
+end
+
+local function applyStoryActorProtection(ped)
+    if not isElement(ped) or getElementType(ped) ~= "ped" or type(setPedStoryProtected) ~= "function" then
+        return false
+    end
+    local enabled = getElementData(ped, TAGUP.missionActorData) == true
+    local applied = setPedStoryProtected(ped, enabled)
+    if applied == true and enabled and not state.storyProtectionLogged then
+        state.storyProtectionLogged = true
+        outputDebugString("[tagging-up-turf] Sweet native story protection applied: neverTargeted/noCriticalHits/cannotDragOut/stayWhenJacked/noUpsideDownExit")
+    end
+    return applied
+end
+
+local function applyGreenwoodNativeState()
+    local vehicle = state.vehicle
+    if not isElement(vehicle) then
+        return false
+    end
+    if type(setVehicleTyresCanBurst) ~= "function" or type(setVehicleDoorLockMode) ~= "function" then
+        return false
+    end
+    local mode = state.vehiclePlayerOnlyLocked and TAGUP.vehicleDoorLock.playerOnly or TAGUP.vehicleDoorLock.unlocked
+    local tyresApplied = type(getVehicleTyresCanBurst) == "function" and getVehicleTyresCanBurst(vehicle) == false or
+                              setVehicleTyresCanBurst(vehicle, false)
+    local lockApplied = type(getVehicleDoorLockMode) == "function" and getVehicleDoorLockMode(vehicle) == mode or
+                            setVehicleDoorLockMode(vehicle, mode)
+    if tyresApplied == true and lockApplied == true and state.greenwoodNativeLogMode ~= mode then
+        state.greenwoodNativeLogMode = mode
+        outputDebugString(("[tagging-up-turf] Greenwood native state applied: tyresCanBurst=false doorLockMode=%d plate=%s"):format(
+                              mode, tostring(getVehiclePlateText(vehicle))))
+    end
+    return tyresApplied == true and lockApplied == true
+end
+
+local function tuneGreenwoodRadio()
+    if state.active and isElement(state.vehicle) and getPedOccupiedVehicle(localPlayer) == state.vehicle then
+        local tuned = setRadioChannel(TAGUP.bounceRadioChannel)
+        outputDebugString(("[tagging-up-turf] Greenwood radio Bounce FM channel=%d applied=%s"):format(
+                              TAGUP.bounceRadioChannel, tostring(tuned)))
+    end
 end
 
 addEvent("tagup:checkpointGroundProbe", true)
@@ -453,12 +602,16 @@ addEventHandler("onClientElementStreamIn", root, function()
     end
     if getElementType(source) == "ped" and getElementData(source, TAGUP.missionActorData) ~= nil then
         applyMissionActor(source)
+        applyStoryActorProtection(source)
+    elseif source == state.vehicle then
+        applyGreenwoodNativeState()
     end
 end)
 
 addEventHandler("onClientElementDataChange", root, function(dataName)
     if dataName == TAGUP.missionActorData then
         applyMissionActor(source)
+        applyStoryActorProtection(source)
     elseif dataName == TAG_PAINT_ALPHA_DATA then
         applyGangTagState(source)
         if state.active and state.stage == "demo" and not getElementData(source, "tagup.tagId") then
@@ -642,6 +795,9 @@ local function refreshStageNavigation()
     if state.stage == "drive_idlewood" or state.stage == "drive_ballas" or state.stage == "drive_home" then
         local desiredMode = isElement(state.leader) and getPedOccupiedVehicle(state.leader) == state.vehicle and "destination" or "vehicle"
         if state.navigationMode ~= desiredMode then
+            if localPlayer == state.leader and state.navigationMode == "destination" and desiredMode == "vehicle" then
+                triggerServerEvent("tagup:vehicleReminder", resourceRoot, state.stage)
+            end
             setStageNavigation(state.stage)
         end
     elseif state.stage == "rooftop" and not state.rooftopTagRevealed and isElement(state.leader) and
@@ -800,7 +956,7 @@ local function clearFileCutscene(reason, preserveFade)
     if not scene then
         return true
     end
-    for _, name in ipairs({"loadTimer", "finishTimer", "fadeTimer"}) do
+    for _, name in ipairs({"appearanceTimer", "loadTimer", "finishTimer", "fadeTimer"}) do
         if isTimer(scene[name]) then
             killTimer(scene[name])
         end
@@ -844,28 +1000,29 @@ local function reportFileCutsceneFinished(scene, result)
                        scene.startedAt and getTickCount() - scene.startedAt or nil)
 end
 
-addEvent("tagup:fileCutscenePrepare", true)
-addEventHandler("tagup:fileCutscenePrepare", resourceRoot, function(sceneId, leaderCanSkip)
-    if source ~= resourceRoot or not state.active or state.stage ~= "sweet1a" then
-        return
-    end
-    clearFileCutscene("replaced", false)
-    local required = {"requestFileCutscene", "releaseFileCutscene", "isFileCutsceneLeaseActive", "isFileCutsceneLoaded",
-                      "startFileCutscene", "fadeFileCutscene", "isFileCutsceneFading", "isFileCutsceneFinished",
-                      "isFileCutsceneSkipInputPressed", "wasFileCutsceneSkipped", "skipFileCutscene"}
-    for _, name in ipairs(required) do
-        if type(_G[name]) ~= "function" then
-            state.fileCutscene = {id = sceneId}
-            return reportFileCutsceneReady(state.fileCutscene, "api_unavailable", name)
+local function getFileCutsceneCJReadiness()
+    local model = getElementModel(localPlayer)
+    local alpha = getElementAlpha(localPlayer)
+    local clothesReady = model == TAGUP.cj.model
+    local clothes = {}
+    if clothesReady then
+        for _, expected in ipairs(TAGUP.cj.clothes) do
+            local texture, clothingModel = getPedClothes(localPlayer, expected.type)
+            clothes[#clothes + 1] = ("%d=%s/%s"):format(expected.type, tostring(texture), tostring(clothingModel))
+            if type(texture) ~= "string" or type(clothingModel) ~= "string" or texture:lower() ~= expected.texture or
+                clothingModel:lower() ~= expected.model then
+                clothesReady = false
+            end
         end
     end
-    if not ensureMissionText() then
-        state.fileCutscene = {id = sceneId}
-        return reportFileCutsceneReady(state.fileCutscene, "mission_text_unavailable", "SWEET1")
-    end
+    local boneX, boneY, boneZ = getElementBonePosition(localPlayer, 2)
+    local boneReady = type(boneX) == "number" and type(boneY) == "number" and type(boneZ) == "number"
+    local ready = model == TAGUP.cj.model and alpha == 255 and clothesReady and boneReady
+    return ready, ("model=%d alpha=%d bone=%s clothes=%s"):format(
+                      model, alpha, tostring(boneReady), table.concat(clothes, ","))
+end
 
-    local scene = {id = sceneId, leaderCanSkip = leaderCanSkip == true, requestedAt = getTickCount()}
-    state.fileCutscene = scene
+local function requestNativeFileCutscene(scene)
     local ok, token = pcall(requestFileCutscene, TAGUP.fileCutscene.name)
     if not ok or not token then
         return reportFileCutsceneReady(scene, "request_refused", tostring(token))
@@ -889,11 +1046,59 @@ addEventHandler("tagup:fileCutscenePrepare", resourceRoot, function(sceneId, lea
         if loaded then
             killTimer(scene.loadTimer)
             scene.loadTimer = nil
-            reportFileCutsceneReady(scene, "ready", ("loaded in %d ms"):format(getTickCount() - scene.requestedAt))
-        elseif getTickCount() - scene.requestedAt >= TAGUP.fileCutscene.loadTimeout then
+            reportFileCutsceneReady(scene, "ready", ("loaded in %d ms after CJ readiness"):format(getTickCount() - scene.loadRequestedAt))
+        elseif getTickCount() - scene.loadRequestedAt >= TAGUP.fileCutscene.loadTimeout then
             killTimer(scene.loadTimer)
             scene.loadTimer = nil
             reportFileCutsceneReady(scene, "load_timeout", tostring(TAGUP.fileCutscene.loadTimeout))
+        end
+    end, TAGUP.fileCutscene.pollInterval, 0)
+end
+
+addEvent("tagup:fileCutscenePrepare", true)
+addEventHandler("tagup:fileCutscenePrepare", resourceRoot, function(sceneId, leaderCanSkip)
+    if source ~= resourceRoot or not state.active or state.stage ~= "sweet1a" then
+        return
+    end
+    clearFileCutscene("replaced", false)
+    local required = {"requestFileCutscene", "releaseFileCutscene", "isFileCutsceneLeaseActive", "isFileCutsceneLoaded",
+                      "startFileCutscene", "fadeFileCutscene", "isFileCutsceneFading", "isFileCutsceneFinished",
+                      "isFileCutsceneSkipInputPressed", "wasFileCutsceneSkipped", "skipFileCutscene"}
+    for _, name in ipairs(required) do
+        if type(_G[name]) ~= "function" then
+            state.fileCutscene = {id = sceneId}
+            return reportFileCutsceneReady(state.fileCutscene, "api_unavailable", name)
+        end
+    end
+    if not ensureMissionText() then
+        state.fileCutscene = {id = sceneId}
+        return reportFileCutsceneReady(state.fileCutscene, "mission_text_unavailable", "SWEET1")
+    end
+
+    local scene = {
+        id = sceneId,
+        leaderCanSkip = leaderCanSkip == true,
+        requestedAt = getTickCount(),
+        appearanceStableSamples = 0,
+    }
+    state.fileCutscene = scene
+    scene.appearanceTimer = setTimer(function()
+        if state.fileCutscene ~= scene then
+            return
+        end
+        local ready, details = getFileCutsceneCJReadiness()
+        scene.appearanceStableSamples = ready and scene.appearanceStableSamples + 1 or 0
+        if scene.appearanceStableSamples >= TAGUP.fileCutscene.appearanceStableSamples then
+            killTimer(scene.appearanceTimer)
+            scene.appearanceTimer = nil
+            scene.loadRequestedAt = getTickCount()
+            outputDebugString(("[tagging-up-turf] SWEET1A CJ render barrier passed after %d ms: %s"):format(
+                                  scene.loadRequestedAt - scene.requestedAt, details))
+            requestNativeFileCutscene(scene)
+        elseif getTickCount() - scene.requestedAt >= TAGUP.fileCutscene.appearanceTimeout then
+            killTimer(scene.appearanceTimer)
+            scene.appearanceTimer = nil
+            reportFileCutsceneReady(scene, "cj_appearance_timeout", details)
         end
     end, TAGUP.fileCutscene.pollInterval, 0)
 end)
@@ -4262,6 +4467,12 @@ addEventHandler("tagup:state", resourceRoot, function(payload)
     state.demoTag = payload.demoTag
     if isElement(state.sweet) then
         applyMissionActor(state.sweet)
+        applyStoryActorProtection(state.sweet)
+    end
+    state.vehiclePlayerOnlyLocked = payload.vehiclePlayerOnlyLocked == true
+    if isElement(state.vehicle) then
+        applyGreenwoodNativeState()
+        tuneGreenwoodRadio()
     end
     state.leader = payload.leader
     state.tagProgress = payload.tagProgress or {}
@@ -4346,6 +4557,7 @@ end)
 
 addEvent("tagup:stop", true)
 addEventHandler("tagup:stop", resourceRoot, function()
+    clearTransitionAudio("mission_stopped")
     clearFileCutscene("mission_stopped", false)
     releaseGangTagStates()
     releaseArrivalGate("mission_stopped")
@@ -4368,6 +4580,9 @@ addEventHandler("tagup:stop", resourceRoot, function()
     if isElement(state.sweet) and type(setPedMissionActor) == "function" then
         setPedMissionActor(state.sweet, false)
     end
+    if isElement(state.sweet) and type(setPedStoryProtected) == "function" then
+        setPedStoryProtected(state.sweet, false)
+    end
     state.active = false
     state.stage = nil
     state.vehicle = nil
@@ -4387,6 +4602,11 @@ addEventHandler("tagup:stop", resourceRoot, function()
     state.postRoofScene = nil
     state.fileCutscene = nil
     state.finalScene = nil
+    state.transitionAudio = nil
+    state.vehiclePlayerOnlyLocked = false
+    state.lastOffscreenStorageReport = 0
+    state.greenwoodNativeLogMode = nil
+    state.storyProtectionLogged = false
     if state.missionTextReady then
         callMissionTextApi("releaseMissionText")
     end
@@ -4568,6 +4788,27 @@ addEventHandler("onClientPreRender", root, function()
     reportVehicleProgress()
     reportBallasGangTrigger()
     reportBallasApproachTrigger()
+    if state.active and isElement(state.vehicle) then
+        applyGreenwoodNativeState()
+    end
+    if state.active and localPlayer == state.leader and (state.stage == "tags_ballas" or state.stage == "rooftop") and isElement(state.vehicle) and
+        (not isElementStreamedIn(state.vehicle) or not isElementOnScreen(state.vehicle)) then
+        local now = getTickCount()
+        if now - state.lastOffscreenStorageReport >= TAGUP.offscreenStorage.reportInterval then
+            local px, py, pz = getElementPosition(localPlayer)
+            local vx, vy, vz = getElementPosition(state.vehicle)
+            if getDistanceBetweenPoints3D(px, py, pz, vx, vy, vz) >= TAGUP.offscreenStorage.minimumDistance then
+                state.lastOffscreenStorageReport = now
+                triggerServerEvent("tagup:storeOffscreenActors", resourceRoot, state.stage)
+            end
+        end
+    end
+end)
+
+addEventHandler("onClientVehicleEnter", root, function(player)
+    if player == localPlayer and source == state.vehicle then
+        tuneGreenwoodRadio()
+    end
 end)
 
 addEventHandler("onClientPlayerDamage", localPlayer, function(attacker)

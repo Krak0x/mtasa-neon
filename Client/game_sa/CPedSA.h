@@ -512,6 +512,22 @@ public:
 
     void SetInWaterFlags(bool inWater) override;
 
+    SPedStoryProtectionState GetStoryProtectionState() const override
+    {
+        const auto& flags = GetPedInterface()->pedFlags;
+        return {flags.bNeverEverTargetThisPed != 0, flags.bNoCriticalHits != 0, flags.bDontDragMeOutCar != 0, flags.bStayInCarOnJack != 0,
+                flags.bGetOutUpsideDownCar != 0};
+    }
+    void SetStoryProtectionState(const SPedStoryProtectionState& state) override
+    {
+        auto& flags = GetPedInterface()->pedFlags;
+        flags.bNeverEverTargetThisPed = state.neverTargeted;
+        flags.bNoCriticalHits = state.noCriticalHits;
+        flags.bDontDragMeOutCar = state.cannotBeDraggedOut;
+        flags.bStayInCarOnJack = state.stayInCarWhenJacked;
+        flags.bGetOutUpsideDownCar = state.getOutOfUpsideDownCar;
+    }
+
     static void __fastcall RemoveWeaponWhenEnteringVehicle(CPedSAInterface* pedInterface, void*, int jetpack);
     static void            StaticSetHooks();
 

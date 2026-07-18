@@ -97,6 +97,7 @@ void CLuaPedDefs::LoadFunctions()
         {"setPedShootAt", ArgumentParser<SetPedShootAt>},
         {"setPedDriveWander", ArgumentParser<SetPedDriveWander>},
         {"setPedMissionActor", ArgumentParser<SetPedMissionActor>},
+        {"setPedStoryProtected", ArgumentParser<SetPedStoryProtected>},
         {"setPedBleeding", ArgumentParser<SetPedBleeding>},
         {"playPedVoiceLine", ArgumentParser<PlayPedVoiceLine>},
 
@@ -124,6 +125,7 @@ void CLuaPedDefs::LoadFunctions()
         {"isPedFootBloodEnabled", IsPedFootBloodEnabled},
         {"getPedCameraRotation", GetPedCameraRotation},
         {"isPedMissionActor", ArgumentParser<IsPedMissionActor>},
+        {"isPedStoryProtected", ArgumentParser<IsPedStoryProtected>},
 
         {"getPedStat", GetPedStat},
         {"getPedOxygenLevel", GetPedOxygenLevel},
@@ -2880,6 +2882,11 @@ bool CLuaPedDefs::IsPedMissionActor(CClientPed* ped)
     return ped && ped->GetType() == CCLIENTPED && ped->IsMissionActor();
 }
 
+bool CLuaPedDefs::IsPedStoryProtected(CClientPed* ped)
+{
+    return ped && ped->GetType() == CCLIENTPED && ped->IsStoryProtected();
+}
+
 bool CLuaPedDefs::SetPedMissionActor(CClientPed* ped, bool enabled)
 {
     if (!ped || ped->GetType() != CCLIENTPED)
@@ -2888,6 +2895,16 @@ bool CLuaPedDefs::SetPedMissionActor(CClientPed* ped, bool enabled)
     // The policy is stored on the MTA element and reapplied after native model
     // recreation, so callers may set it before the ped is streamed in.
     return ped->SetMissionActor(enabled);
+}
+
+bool CLuaPedDefs::SetPedStoryProtected(CClientPed* ped, bool enabled)
+{
+    if (!ped || ped->GetType() != CCLIENTPED)
+        return false;
+
+    // Persist the policy on the MTA element because streaming and model swaps
+    // replace the underlying GTA CPed instance.
+    return ped->SetStoryProtected(enabled);
 }
 
 bool CLuaPedDefs::killPedTask(CClientPed* ped, taskType taskType, std::uint8_t taskNumber, std::optional<bool> gracefully)

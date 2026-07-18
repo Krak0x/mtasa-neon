@@ -135,6 +135,8 @@ void CLuaVehicleDefs::LoadFunctions()
         {"getVehicleAudioSettings", ArgumentParser<GetVehicleAudioSettings>},
         {"isVehicleRecordingLoaded", ArgumentParser<IsVehicleRecordingLoaded>},
         {"isVehiclePlaybackActive", ArgumentParser<IsVehiclePlaybackActive>},
+        {"getVehicleDoorLockMode", ArgumentParser<GetVehicleDoorLockMode>},
+        {"getVehicleTyresCanBurst", ArgumentParser<GetVehicleTyresCanBurst>},
 
         // Vehicle set funcs
         {"createVehicle", CreateVehicle},
@@ -144,6 +146,8 @@ void CLuaVehicleDefs::LoadFunctions()
         {"setVehicleColor", SetVehicleColor},
         {"setVehicleLandingGearDown", SetVehicleLandingGearDown},
         {"setVehicleLocked", SetVehicleLocked},
+        {"setVehicleDoorLockMode", ArgumentParser<SetVehicleDoorLockMode>},
+        {"setVehicleTyresCanBurst", ArgumentParser<SetVehicleTyresCanBurst>},
         {"setVehicleDoorsUndamageable", SetVehicleDoorsUndamageable},
         {"setVehicleSirensOn", SetVehicleSirensOn},
         {"addVehicleUpgrade", AddVehicleUpgrade},
@@ -1842,6 +1846,27 @@ int CLuaVehicleDefs::SetVehicleLocked(lua_State* luaVM)
 
     lua_pushboolean(luaVM, false);
     return 1;
+}
+
+int CLuaVehicleDefs::GetVehicleDoorLockMode(CClientVehicle* vehicle)
+{
+    return vehicle->GetDoorLockMode();
+}
+
+bool CLuaVehicleDefs::SetVehicleDoorLockMode(CClientVehicle* vehicle, int mode)
+{
+    return vehicle->SetDoorLockMode(mode);
+}
+
+bool CLuaVehicleDefs::GetVehicleTyresCanBurst(CClientVehicle* vehicle)
+{
+    return vehicle->GetTyresCanBurst();
+}
+
+bool CLuaVehicleDefs::SetVehicleTyresCanBurst(CClientVehicle* vehicle, bool canBurst)
+{
+    vehicle->SetTyresCanBurst(canBurst);
+    return true;
 }
 
 int CLuaVehicleDefs::SetVehicleDoorsUndamageable(lua_State* luaVM)

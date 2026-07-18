@@ -30,6 +30,8 @@ Suggested resume prompt:
 
 The long-term objective is to reproduce GTA:SA missions, beginning with `SWEET1` / Tagging Up Turf, while building reusable Neon engine primitives rather than hardcoding one mission in C++.
 
+Current parity work targets mission-visible behavior that remains meaningful in multiplayer. Do not port purely single-player campaign bookkeeping unless the user explicitly expands the scope. This currently excludes global gang-zone strength, story progression counters, respect, wanted-level cleanup, collectible or weapon pickups, campaign unlocks, and similar save-state side effects. Keep such SCM operations documented as intentionally out of scope rather than reporting them as missing multiplayer mission behavior.
+
 The intended split is:
 
 - server-authoritative mission/SCM orchestration, conditions, co-op policy, checkpoints, and recovery;

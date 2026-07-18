@@ -206,6 +206,8 @@ public:
     void  AllowDoorRatioSetting(unsigned char ucDoor, bool bAllow, bool bAutoReallowAfterDelay = true);
     bool  AreDoorsLocked();
     void  SetDoorsLocked(bool bLocked);
+    int   GetDoorLockMode() const;
+    bool  SetDoorLockMode(int mode);
 
 private:
     void SetDoorOpenRatioInterpolated(unsigned char ucDoor, float fRatio, unsigned long ulDelay);
@@ -257,6 +259,7 @@ public:
     bool GetScriptCanBeDamaged() { return m_bScriptCanBeDamaged; };
 
     bool GetTyresCanBurst();
+    void SetTyresCanBurst(bool canBurst);
     void CalcAndUpdateTyresCanBurstFlag();
 
     float GetGasPedal();
@@ -626,6 +629,7 @@ protected:
     } m_doorInterp;
     bool                                        m_bSwingingDoorsAllowed;
     bool                                        m_bDoorsLocked;
+    eDoorLock                                   m_doorLockMode;
     bool                                        m_bDoorsUndamageable;
     bool                                        m_bCanShootPetrolTank;
     bool                                        m_bCanBeTargettedByHeatSeekingMissiles;
@@ -633,6 +637,7 @@ protected:
     bool                                        m_bScriptCanBeDamaged;
     bool                                        m_bSyncUnoccupiedDamage;
     bool                                        m_bTyresCanBurst;
+    bool                                        m_bScriptTyresCanBurstOverride;
     SFixedArray<unsigned char, MAX_DOORS>       m_ucDoorStates;
     SFixedArray<unsigned char, MAX_WHEELS>      m_ucWheelStates;
     SFixedArray<unsigned char, MAX_PANELS>      m_ucPanelStates;

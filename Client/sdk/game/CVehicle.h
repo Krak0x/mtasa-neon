@@ -343,5 +343,7 @@ public:
 
     // Keep new cross-module methods at the end so independently built modules
     // retain every established CVehicle vtable index.
-    virtual bool IsOnAllWheels() const = 0;
+    virtual bool      IsOnAllWheels() const = 0;
+    virtual eDoorLock GetDoorLockMode() const = 0;
+    virtual void      SetDoorLockMode(eDoorLock mode) = 0;
 };

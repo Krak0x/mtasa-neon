@@ -179,6 +179,12 @@ Use it for story missions, convoys, escorts, scripted traffic, freeroam events, 
 | `setPedScriptedSpeechMuted(ped, muted)` | Client | Disables or restores ambient ped speech through GTA's scripted-speech state. |
 | `setPedMissionActor(ped, enabled)` | Client | Persists GTA's `PED_MISSION` classification and native AI weapon ownership on a script ped across local native model recreation, restoring its previous MTA policy when disabled. |
 | `isPedMissionActor(ped)` | Client | Reports the locally persisted mission-actor policy for a script ped, including while its native model is streamed out. |
+| `setPedStoryProtected(ped, enabled)` | Client | Applies or restores GTA's grouped story-actor protection flags on a script ped across local native model recreation. |
+| `isPedStoryProtected(ped)` | Client | Reports whether the local story-actor protection policy is enabled. |
+| `setVehicleDoorLockMode(vehicle, mode)` | Client | Sets GTA's raw door lock mode from `1` through `7`; mode `3` is SCM `LOCKOUT_PLAYER_ONLY`. |
+| `getVehicleDoorLockMode(vehicle)` | Client | Returns the streamed native door mode or the locally persisted mode while streamed out. |
+| `setVehicleTyresCanBurst(vehicle, canBurst)` | Client | Applies a persistent tyre-only burst policy without changing ordinary body damage. |
+| `getVehicleTyresCanBurst(vehicle)` | Client | Reports the effective local native tyre-burst policy. |
 | `setPedShootAt(ped, target [, duration, burstLength])` | Client | Replaces the owned ped's primary task with GTA's native coordinate `GunControl` firing task. |
 | `setPedWeaponShootingRate(ped, rate)` | Client | Sets GTA's persistent 0-255 shooting-rate byte used by native gun tasks. |
 | `setPedWeaponAccuracy(ped, accuracy)` | Client | Sets GTA's persistent 0-255 weapon-accuracy byte used for shot spread. |

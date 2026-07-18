@@ -9,12 +9,16 @@
 #include "StdInc.h"
 #include "CGameSA.h"
 #include "CDirectorySA.h"
+#include "CModelInfoSA.h"
 #include "gamesa_renderware.h"
 
 extern CGameSA* pGame;
 
 namespace
 {
+    constexpr unsigned int  MODEL_CSPLAY = 1;
+    constexpr unsigned long HASH_CSPLAY = 0xF11A7F97;
+
     struct SImgGTAItemInfo
     {
         ushort usNext;
@@ -225,6 +229,15 @@ __declspec(noinline) bool _cdecl OnCStreaming_RequestModel_Mid(int flags, SImgGT
     if (pImgGTAInfo->ucImgId != 5)
         return false;
 
+    // Building the native cutscene player recursively requests several
+    // player.img components from inside GTA's clothing converter. Replacing
+    // those requests with another immediate conversion re-enters this hook
+    // until the stack is exhausted. CSPLAY must use GTA's ordinary queued
+    // streaming path for the whole rebuild.
+    const auto* cutscenePlayerModel = CModelInfoSAInterface::GetModelInfo(MODEL_CSPLAY);
+    if (cutscenePlayerModel && cutscenePlayerModel->ulHashKey == HASH_CSPLAY)
+        return false;
+
     // Early out if no clothes textures to replace with
     if (ms_ReplacementClothesFileDataMap.empty() && ms_ClothesFileDataMap.empty())
         return false;
@@ -270,16 +283,15 @@ __declspec(noinline) bool _cdecl OnCStreaming_RequestModel_Mid(int flags, SImgGT
     if (!replacementFileData)
         return false;
 
-    // If bLoadingBigModel is set, try to get it unset
+    // Direct buffer conversion is unsafe while GTA is already finishing a
+    // large streamed model. Calling LoadAllRequestedModels from this hook
+    // re-enters RequestModel and can recurse until the game stack overflows.
+    // Let GTA queue this request normally; a later request can still use the
+    // replacement once the large-model transaction has finished.
 #define VAR_CStreaming_bLoadingBigModel 0x08E4A58
     BYTE& bLoadingBigModel = *(BYTE*)VAR_CStreaming_bLoadingBigModel;
     if (bLoadingBigModel)
-    {
-        pGame->GetStreaming()->LoadAllRequestedModels(true);
-        if (bLoadingBigModel)
-            pGame->GetStreaming()->LoadAllRequestedModels(false);
-        assert(!bLoadingBigModel);
-    }
+        return false;
 
     // Set results
     iReturnFileId = ((char*)pImgGTAInfo - (char*)pGame->GetStreamingInfoArray()) / sizeof(CStreamingInfo);

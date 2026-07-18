@@ -5,6 +5,9 @@ TAGUP = {
     sprayRange = 6,
     tagModel = 1490,
     vehicleModel = 492,
+    vehiclePlate = "GROVE4L",
+    bounceRadioChannel = 4,
+    vehicleDoorLock = {unlocked = 1, playerOnly = 3},
     sweetModel = 270,
     cj = {
         model = 0,
@@ -24,6 +27,8 @@ TAGUP = {
     fileCutscene = {
         name = "SWEET1A",
         fadeInDuration = 1.0,
+        appearanceTimeout = 10000,
+        appearanceStableSamples = 3,
         loadTimeout = 60000,
         finishTimeout = 50000,
         releaseTimeout = 5000,
@@ -171,6 +176,25 @@ TAGUP = {
         observationTimeout = 5000,
         scmTimeout = 15000,
         guardTimeout = 20000,
+    },
+    transitionAudio = {
+        engineRunning = {event = 37445, key = "SWE1_CB", duration = 2500, followUp = "SWE1_X", followUpDuration = 6000},
+        ballasDeparture = {event = 37417, key = "SWE1_AS", duration = 3000, blocking = true},
+        groveReturn = {event = 38607, key = "SWEX_AH", duration = 3000, followUp = "SWE1_B", followUpDuration = 6000},
+        reminders = {
+            {event = 37434, key = "SWE1_BM", duration = 3000},
+            {event = 38644, key = "SWEX_BS", duration = 3000},
+            {event = 38641, key = "SWEX_BP", duration = 3000},
+            {event = 37429, key = "SWE1_BG", duration = 3000},
+        },
+        loadTimeout = 30000,
+        finishTimeout = 20000,
+        releaseTimeout = 3000,
+    },
+    offscreenStorage = {
+        position = {2487.1721, -1666.3010, -100.3438},
+        minimumDistance = 30.0,
+        reportInterval = 250,
     },
     ballasDeparture = {
         speed = 20.0,

@@ -38,6 +38,7 @@
 #include "CHandlingManagerSA.h"
 #include "CHudSA.h"
 #include "CKeyGenSA.h"
+#include "CModelInfoSA.h"
 #include "CObjectGroupPhysicalPropertiesSA.h"
 #include "CNativeModelStoreSA.h"
 #include "CNativeWorldPackSA.h"
@@ -113,8 +114,60 @@ namespace
     constexpr std::uintptr_t VAR_FileCutsceneRunning = 0xB5F851;
     constexpr std::uintptr_t VAR_FileCutsceneProcessing = 0xB5F852;
     constexpr std::uintptr_t VAR_FileCutsceneSkipped = 0xB5F854;
+    constexpr unsigned int   MODEL_CSPLAY = 1;
+    constexpr unsigned int   FILE_CUTSCENE_STREAMING_FLAGS = 0x1C;
 
-    bool g_suppressManagedFileCutsceneSkipInput{};
+    bool                       g_suppressManagedFileCutsceneSkipInput{};
+    bool                       g_restoreManagedFileCutscenePlayerModel{};
+    bool                       g_preloadingManagedFileCutscene{};
+    char                       g_managedFileCutsceneName[8]{};
+    CBaseModelInfoSAInterface* g_stockCutscenePlayerModelInfo{};
+    CBaseModelInfoSAInterface* g_mtaSpecialCharacterModelInfo{};
+    CStreamingInfo             g_stockCutscenePlayerStreamingInfo{};
+    CStreamingInfo             g_mtaSpecialCharacterStreamingInfo{};
+    bool                       g_cutscenePlayerMappingsCaptured{};
+
+    bool InstallManagedFileCutscenePlayerModel(CStreaming* streaming)
+    {
+        auto* currentModelInfo = CModelInfoSAInterface::GetModelInfo(MODEL_CSPLAY);
+        auto* streamingInfo = streaming->GetStreamingInfo(MODEL_CSPLAY);
+        if (!g_cutscenePlayerMappingsCaptured || !currentModelInfo || !streamingInfo || currentModelInfo != g_mtaSpecialCharacterModelInfo ||
+            currentModelInfo->usNumberOfRefs != 0)
+            return false;
+
+        // MTA replaces GTA's stock slot 1 with TRUTH during initialization.
+        // RequestSpecialModel cannot reverse that operation for CSPLAY because
+        // CSPLAY is absent from GTA's extra-object directory; a failed retail
+        // lookup leaves an undefined IMG range and hangs RetryLoadFile. Keep
+        // the original model-info object and streaming metadata captured
+        // before MTA's replacement, then request that ordinary stock model.
+        streaming->RemoveModel(MODEL_CSPLAY);
+        g_mtaSpecialCharacterModelInfo = currentModelInfo;
+        g_mtaSpecialCharacterStreamingInfo = *streamingInfo;
+        CModelInfoSAInterface::ms_modelInfoPtrs[MODEL_CSPLAY] = g_stockCutscenePlayerModelInfo;
+        *streamingInfo = g_stockCutscenePlayerStreamingInfo;
+        streaming->RequestModel(MODEL_CSPLAY, FILE_CUTSCENE_STREAMING_FLAGS);
+        return true;
+    }
+
+    void RestoreManagedFileCutscenePlayerModel(CStreaming* streaming)
+    {
+        if (!g_restoreManagedFileCutscenePlayerModel)
+            return;
+
+        auto* streamingInfo = streaming->GetStreamingInfo(MODEL_CSPLAY);
+        if (g_cutscenePlayerMappingsCaptured && streamingInfo && g_mtaSpecialCharacterModelInfo)
+        {
+            // Native teardown has released every slot-1 cutscene object. Put
+            // back MTA's exact TRUTH model-info object and CD metadata without
+            // another special-directory lookup or a synchronous stream drain.
+            streaming->RemoveModel(MODEL_CSPLAY);
+            CModelInfoSAInterface::ms_modelInfoPtrs[MODEL_CSPLAY] = g_mtaSpecialCharacterModelInfo;
+            *streamingInfo = g_mtaSpecialCharacterStreamingInfo;
+            streaming->RequestModel(MODEL_CSPLAY, 0);
+        }
+        g_restoreManagedFileCutscenePlayerModel = false;
+    }
 
     bool __cdecl FileCutsceneSkipInputHook()
     {
@@ -1157,7 +1210,21 @@ bool CGameSA::IsASyncLoadingEnabled(bool bIgnoreSuspend)
 
 void CGameSA::SetupSpecialCharacters()
 {
+    auto* stockCutscenePlayerModelInfo = CModelInfoSAInterface::GetModelInfo(MODEL_CSPLAY);
+    auto* stockCutscenePlayerStreamingInfo = m_pStreaming->GetStreamingInfo(MODEL_CSPLAY);
+    if (!g_cutscenePlayerMappingsCaptured && stockCutscenePlayerModelInfo && stockCutscenePlayerStreamingInfo &&
+        stockCutscenePlayerModelInfo->ulHashKey == m_pKeyGen->GetUppercaseKey("csplay") && stockCutscenePlayerStreamingInfo->sizeInBlocks != 0)
+    {
+        g_stockCutscenePlayerModelInfo = stockCutscenePlayerModelInfo;
+        g_stockCutscenePlayerStreamingInfo = *stockCutscenePlayerStreamingInfo;
+        g_stockCutscenePlayerStreamingInfo.prevId = UINT16_MAX;
+        g_stockCutscenePlayerStreamingInfo.nextId = UINT16_MAX;
+        g_stockCutscenePlayerStreamingInfo.loadState = eModelLoadState::LOADSTATE_NOT_LOADED;
+        g_cutscenePlayerMappingsCaptured = true;
+    }
+
     ModelInfo[1].MakePedModel("TRUTH");
+    g_mtaSpecialCharacterModelInfo = CModelInfoSAInterface::GetModelInfo(MODEL_CSPLAY);
     ModelInfo[2].MakePedModel("MACCER");
 
     ModelInfo[3].MakePedModel("CDEPUT");
@@ -1553,10 +1620,15 @@ bool CGameSA::LoadFileCutscene(const char* name)
     if (reinterpret_cast<short(__cdecl*)(const char*)>(FUNC_FindCutsceneAudioTrack)(name) < 0)
         return false;
 
-    reinterpret_cast<void(__cdecl*)(const char*)>(FUNC_LoadFileCutscene)(name);
-    if (!IsFileCutsceneActive())
+    // MTA permanently repurposes GTA's CSPLAY slot 1 as TRUTH. Temporarily put
+    // back the captured vanilla model mapping for native cutscene playback;
+    // requesting "csplay" as a special model would search the wrong directory.
+    if (!InstallManagedFileCutscenePlayerModel(m_pStreaming))
         return false;
 
+    g_restoreManagedFileCutscenePlayerModel = true;
+    g_preloadingManagedFileCutscene = true;
+    std::memcpy(g_managedFileCutsceneName, name, std::strlen(name) + 1);
     g_suppressManagedFileCutsceneSkipInput = true;
     return true;
 }
@@ -1566,11 +1638,33 @@ bool CGameSA::IsFileCutsceneActive() const
     const int  loadStatus = *reinterpret_cast<const int*>(VAR_FileCutsceneLoadStatus);
     const bool running = *reinterpret_cast<const bool*>(VAR_FileCutsceneRunning);
     const bool processing = *reinterpret_cast<const bool*>(VAR_FileCutsceneProcessing);
-    return loadStatus != 0 || running || processing;
+    return g_preloadingManagedFileCutscene || loadStatus != 0 || running || processing;
 }
 
 bool CGameSA::IsFileCutsceneLoaded() const
 {
+    if (g_preloadingManagedFileCutscene)
+    {
+        // CStreaming::LoadAllRequestedModels cannot safely be nested inside
+        // the Lua pulse that requested the cutscene. Let ordinary game pulses
+        // finish CSPLAY, then enter GTA's native loader with the correct base
+        // clump already resident.
+        if (!m_pStreaming->HasModelLoaded(MODEL_CSPLAY))
+            return false;
+
+        auto* cutscenePlayerModel = CModelInfoSAInterface::GetModelInfo(MODEL_CSPLAY);
+        if (!cutscenePlayerModel || cutscenePlayerModel->ulHashKey != m_pKeyGen->GetUppercaseKey("csplay") || !cutscenePlayerModel->pRwObject)
+            return false;
+
+        reinterpret_cast<void(__cdecl*)(const char*)>(FUNC_LoadFileCutscene)(g_managedFileCutsceneName);
+        g_preloadingManagedFileCutscene = false;
+        if (!IsFileCutsceneActive())
+        {
+            RestoreManagedFileCutscenePlayerModel(m_pStreaming);
+            return false;
+        }
+    }
+
     return *reinterpret_cast<const int*>(VAR_FileCutsceneLoadStatus) == 2;
 }
 
@@ -1610,9 +1704,11 @@ bool CGameSA::SkipFileCutscene()
 bool CGameSA::DeleteFileCutscene()
 {
     g_suppressManagedFileCutsceneSkipInput = false;
-    if (!IsFileCutsceneActive())
-        return true;
+    g_preloadingManagedFileCutscene = false;
+    if (IsFileCutsceneActive())
+        reinterpret_cast<void(__cdecl*)()>(FUNC_DeleteFileCutscene)();
 
-    reinterpret_cast<void(__cdecl*)()>(FUNC_DeleteFileCutscene)();
-    return !IsFileCutsceneActive();
+    const bool deleted = !IsFileCutsceneActive();
+    RestoreManagedFileCutscenePlayerModel(m_pStreaming);
+    return deleted;
 }

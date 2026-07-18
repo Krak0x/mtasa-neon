@@ -47,6 +47,15 @@ struct SPedCreatedByState
     float         decisionMakerRadius{};
 };
 
+struct SPedStoryProtectionState
+{
+    bool neverTargeted{};
+    bool noCriticalHits{};
+    bool cannotBeDraggedOut{};
+    bool stayInCarWhenJacked{};
+    bool getOutOfUpsideDownCar{};
+};
+
 enum ePedPieceTypes
 {
     PED_PIECE_UNKNOWN = 0,
@@ -339,9 +348,11 @@ public:
 
     // Append new cross-module methods to preserve every existing CPed vtable
     // index for independently built MTA modules such as core.dll.
-    virtual SPedCreatedByState GetCreatedByState() const = 0;
-    virtual void               SetCreatedBy(ePedCreatedBy createdBy) = 0;
-    virtual void               RestoreCreatedByState(const SPedCreatedByState& state) = 0;
-    virtual void               DisableSpeechForScript(bool stopCurrentSpeech) = 0;
-    virtual void               EnableSpeechForScript() = 0;
+    virtual SPedCreatedByState       GetCreatedByState() const = 0;
+    virtual void                     SetCreatedBy(ePedCreatedBy createdBy) = 0;
+    virtual void                     RestoreCreatedByState(const SPedCreatedByState& state) = 0;
+    virtual void                     DisableSpeechForScript(bool stopCurrentSpeech) = 0;
+    virtual void                     EnableSpeechForScript() = 0;
+    virtual SPedStoryProtectionState GetStoryProtectionState() const = 0;
+    virtual void                     SetStoryProtectionState(const SPedStoryProtectionState& state) = 0;
 };
