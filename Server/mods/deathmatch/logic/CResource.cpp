@@ -1841,7 +1841,9 @@ bool CResource::ReadNativeWorldPack(CXMLNode* pRoot)
                                   startupAttribute->GetValue() == "true" && policyAttribute && policyAttribute->GetValue() == "bullworth";
     const bool staticWorldV2PublishOnly = formatAttribute && formatAttribute->GetValue() == "2" && attributes.Count() == 3 && !startupAttribute &&
                                           policyAttribute && policyAttribute->GetValue() == "static-world-v1";
-    if ((!legacyPublishOnly && !legacyAuthorized && !staticWorldV2PublishOnly) || !manifestAttribute)
+    const bool staticWorldV2Authorized = formatAttribute && formatAttribute->GetValue() == "2" && attributes.Count() == 4 && startupAttribute &&
+                                         startupAttribute->GetValue() == "true" && policyAttribute && policyAttribute->GetValue() == "static-world-v1";
+    if ((!legacyPublishOnly && !legacyAuthorized && !staticWorldV2PublishOnly && !staticWorldV2Authorized) || !manifestAttribute)
     {
         m_strFailureReason = SString("Resource '%s' has an invalid native_world descriptor\n", m_strResourceName.c_str());
         CLogger::ErrorPrintf(m_strFailureReason);
@@ -1861,10 +1863,10 @@ bool CResource::ReadNativeWorldPack(CXMLNode* pRoot)
 
     // The descriptor is engine-owned: scripts cannot mutate this immutable snapshot after the resource has loaded.
     m_nativeWorldPackTransport.present = true;
-    m_nativeWorldPackTransport.startupAuthorization = legacyAuthorized;
-    m_nativeWorldPackTransport.format = staticWorldV2PublishOnly ? 2 : 1;
-    m_nativeWorldPackTransport.authorizationVersion = legacyAuthorized ? 1 : 0;
-    m_nativeWorldPackTransport.authorizationPolicy = legacyAuthorized ? 1 : 0;
+    m_nativeWorldPackTransport.startupAuthorization = legacyAuthorized || staticWorldV2Authorized;
+    m_nativeWorldPackTransport.format = staticWorldV2PublishOnly || staticWorldV2Authorized ? 2 : 1;
+    m_nativeWorldPackTransport.authorizationVersion = legacyAuthorized ? 1 : staticWorldV2Authorized ? 2 : 0;
+    m_nativeWorldPackTransport.authorizationPolicy = legacyAuthorized ? 1 : staticWorldV2Authorized ? 2 : 0;
     m_nativeWorldPackTransport.manifestPath = manifestPath;
     m_nativeWorldPackTransport.files = taggedFiles;
     return true;

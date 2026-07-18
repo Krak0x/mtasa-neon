@@ -13,9 +13,18 @@ sys.path.insert(0, str(ROOT))
 from native_world_authorization import (  # noqa: E402
     AUTHORIZATION_BITSTREAM_VERSION,
     AuthorizationRecord,
+    PACK_FORMAT,
+    POLICY_BULLWORTH,
     RecordError,
+    STARTUP_MODE,
+    STATIC_WORLD_AUTHORIZATION_BITSTREAM_VERSION,
+    STATIC_WORLD_PACK_FORMAT,
+    STATIC_WORLD_TRANSPORT_BITSTREAM_VERSION,
+    STATIC_WORLD_WIRE_VERSION,
+    POLICY_STATIC_WORLD_V1,
     TRANSPORT_BITSTREAM_VERSION,
     TransportDescriptor,
+    WIRE_VERSION,
     decode_record,
     decode_descriptor,
     encode_record,
@@ -82,6 +91,52 @@ class NativeWorldAuthorizationCodecTests(unittest.TestCase):
                 encode_record(changed)
         self.assertEqual(decode_record(encode_record(replace(record, resource_net_id=0))).resource_net_id, 0)
 
+    def test_format_2_record_round_trip_is_distinct_and_closed(self) -> None:
+        record = replace(
+            sample_record(),
+            wire_version=STATIC_WORLD_WIRE_VERSION,
+            pack_format=STATIC_WORLD_PACK_FORMAT,
+            policy=POLICY_STATIC_WORLD_V1,
+            bitstream_version=STATIC_WORLD_AUTHORIZATION_BITSTREAM_VERSION,
+        )
+        self.assertEqual(decode_record(encode_record(record)), record)
+        self.assertEqual(hashlib.sha256(encode_record(record)).hexdigest(), "1755486d481c3dd85e5e13922327837e8264624eeb1b3617fded0aab84919926")
+        with self.assertRaises(RecordError):
+            resolve_existing(sample_record(), record)
+        for changed in (
+            replace(record, wire_version=1),
+            replace(record, policy=1),
+            replace(record, pack_format=1),
+            replace(record, bitstream_version=STATIC_WORLD_TRANSPORT_BITSTREAM_VERSION),
+        ):
+            with self.subTest(changed=changed), self.assertRaises(RecordError):
+                encode_record(changed)
+
+    def test_only_the_two_closed_startup_tuples_are_encodable(self) -> None:
+        accepted = {
+            (PACK_FORMAT, WIRE_VERSION, STARTUP_MODE, POLICY_BULLWORTH),
+            (STATIC_WORLD_PACK_FORMAT, STATIC_WORLD_WIRE_VERSION, STARTUP_MODE, POLICY_STATIC_WORLD_V1),
+        }
+        for pack_format in (PACK_FORMAT, STATIC_WORLD_PACK_FORMAT, 3):
+            for wire_version in (WIRE_VERSION, STATIC_WORLD_WIRE_VERSION, 3):
+                for startup_mode in (0, STARTUP_MODE, 2):
+                    for policy in (POLICY_BULLWORTH, POLICY_STATIC_WORLD_V1, 3):
+                        startup_tuple = (pack_format, wire_version, startup_mode, policy)
+                        record = replace(
+                            sample_record(),
+                            pack_format=pack_format,
+                            wire_version=wire_version,
+                            startup_mode=startup_mode,
+                            policy=policy,
+                            bitstream_version=STATIC_WORLD_AUTHORIZATION_BITSTREAM_VERSION,
+                        )
+                        with self.subTest(startup_tuple=startup_tuple):
+                            if startup_tuple in accepted:
+                                self.assertEqual(decode_record(encode_record(record)), record)
+                            else:
+                                with self.assertRaises(RecordError):
+                                    encode_record(record)
+
     def test_freshness_boundaries_are_exact(self) -> None:
         record = sample_record()
         self.assertEqual(freshness(record, record.issued_at - 120), "fresh")
@@ -107,6 +162,7 @@ class NativeWorldAuthorizationWireAndLifecycleTests(unittest.TestCase):
         self.assertEqual(decode_descriptor(legacy_n, AUTHORIZATION_BITSTREAM_VERSION), inert)
         authorized_a = encode_descriptor(requested, AUTHORIZATION_BITSTREAM_VERSION)
         self.assertEqual(authorized_a[:1], b"A")
+        self.assertEqual(encode_descriptor(requested, STATIC_WORLD_AUTHORIZATION_BITSTREAM_VERSION), authorized_a)
         self.assertEqual(decode_descriptor(authorized_a, AUTHORIZATION_BITSTREAM_VERSION), requested)
 
     def test_authorization_descriptor_rejects_every_truncation_trailing_and_unknown_value(self) -> None:
@@ -125,6 +181,29 @@ class NativeWorldAuthorizationWireAndLifecycleTests(unittest.TestCase):
                 decode_descriptor(changed, AUTHORIZATION_BITSTREAM_VERSION)
         with self.assertRaises(RecordError):
             decode_descriptor(encoded, TRANSPORT_BITSTREAM_VERSION)
+
+    def test_format_2_authorization_is_append_only_and_downgrades_to_publish_only(self) -> None:
+        inert = TransportDescriptor("native/native-world.json", False, format=STATIC_WORLD_PACK_FORMAT)
+        requested = replace(
+            inert,
+            authorization_requested=True,
+            wire_version=STATIC_WORLD_WIRE_VERSION,
+            policy=POLICY_STATIC_WORLD_V1,
+        )
+        self.assertEqual(encode_descriptor(requested, STATIC_WORLD_TRANSPORT_BITSTREAM_VERSION), encode_descriptor(inert, STATIC_WORLD_TRANSPORT_BITSTREAM_VERSION))
+        authorized = encode_descriptor(requested, STATIC_WORLD_AUTHORIZATION_BITSTREAM_VERSION)
+        self.assertEqual(authorized[:4], b"A\x02\x03\x18")
+        self.assertEqual(authorized[-3:], bytes((STATIC_WORLD_WIRE_VERSION, 1, POLICY_STATIC_WORLD_V1)))
+        self.assertEqual(decode_descriptor(authorized, STATIC_WORLD_AUTHORIZATION_BITSTREAM_VERSION), requested)
+        with self.assertRaises(RecordError):
+            decode_descriptor(authorized, STATIC_WORLD_TRANSPORT_BITSTREAM_VERSION)
+        for changed in (
+            replace(requested, wire_version=1),
+            replace(requested, policy=1),
+            replace(requested, format=1),
+        ):
+            with self.subTest(changed=changed), self.assertRaises(RecordError):
+                encode_descriptor(changed, STATIC_WORLD_AUTHORIZATION_BITSTREAM_VERSION)
 
     def test_descriptor_group_is_unique_first_and_uninterrupted(self) -> None:
         validate_descriptor_placement(("A", "F", "F", "F", "E"))
@@ -184,7 +263,7 @@ class NativeWorldAuthorizationSourceContractTests(unittest.TestCase):
         self.assertIn("case 'A'", reader)
         self.assertIn("case 'N'", reader)
 
-    def test_static_world_v2_transport_is_append_only_gated_and_publish_only(self) -> None:
+    def test_static_world_v2_startup_is_append_only_gated(self) -> None:
         bitstream = (REPO / "Shared/sdk/net/bitstream.h").read_text()
         server_resource = (REPO / "Server/mods/deathmatch/logic/CResource.cpp").read_text()
         writer = (REPO / "Server/mods/deathmatch/logic/packets/CResourceStartPacket.cpp").read_text()
@@ -192,16 +271,16 @@ class NativeWorldAuthorizationSourceContractTests(unittest.TestCase):
         client_resource = (REPO / "Client/mods/deathmatch/logic/CResource.cpp").read_text()
 
         self.assertLess(bitstream.index("NativeWorldStartupAuthorization,"), bitstream.index("NativeWorldStaticWorldV2Transport,"))
+        self.assertLess(bitstream.index("NativeWorldStaticWorldV2Transport,"), bitstream.index("NativeWorldStaticWorldV2StartupAuthorization,"))
         self.assertIn('formatAttribute->GetValue() == "2"', server_resource)
         self.assertIn('policyAttribute->GetValue() == "static-world-v1"', server_resource)
-        self.assertIn("staticWorldV2PublishOnly", server_resource)
+        self.assertIn("staticWorldV2Authorized", server_resource)
         self.assertIn("NativeWorldStaticWorldV2Transport", writer)
         self.assertIn("if (!isNativeWorldFile(resourceFile))", writer)
-        self.assertIn("nativeWorldPack.format == 1 && nativeWorldPack.startupAuthorization", writer)
+        self.assertIn("NativeWorldStaticWorldV2StartupAuthorization", writer)
         self.assertIn("NativeWorldStaticWorldV2Transport", reader)
-        self.assertIn("format != 1", reader)
-        self.assertIn("m_nativeWorldTransport.format != 1", client_resource)
-        self.assertIn("m_nativeWorldTransport.format != 2", client_resource)
+        self.assertIn("NativeWorldStaticWorldV2StartupAuthorization", reader)
+        self.assertIn("IsClosedNativeWorldStartupAuthorization", client_resource)
         self.assertIn("result.auditProfile.c_str()", client_resource)
 
     def test_store_is_dpapi_atomic_unicode_and_inert(self) -> None:

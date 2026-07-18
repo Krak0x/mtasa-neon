@@ -5317,8 +5317,10 @@ void CPacketHandler::Packet_ResourceStart(NetBitStreamInterface& bitStream)
                     const bool supportedTransport = format == 1
                                                         ? g_pNet->CanServerBitStream(eBitStreamVersion::NativeWorldPackTransport)
                                                         : format == 2 && g_pNet->CanServerBitStream(eBitStreamVersion::NativeWorldStaticWorldV2Transport);
-                    if (!supportedTransport || fileCount != 3 || manifestLength == 0 ||
-                        (startupAuthorization && (format != 1 || !g_pNet->CanServerBitStream(eBitStreamVersion::NativeWorldStartupAuthorization))))
+                    const bool supportedAuthorization =
+                        !startupAuthorization || (format == 1 && g_pNet->CanServerBitStream(eBitStreamVersion::NativeWorldStartupAuthorization)) ||
+                        (format == 2 && g_pNet->CanServerBitStream(eBitStreamVersion::NativeWorldStaticWorldV2StartupAuthorization));
+                    if (!supportedTransport || !supportedAuthorization || fileCount != 3 || manifestLength == 0)
                     {
                         bFatalError = true;
                         AddReportLog(2081, "Malformed or unsupported native world transport descriptor");
@@ -5339,8 +5341,8 @@ void CPacketHandler::Packet_ResourceStart(NetBitStreamInterface& bitStream)
                         unsigned char wireVersion = 0;
                         unsigned char startupMode = 0;
                         unsigned char policy = 0;
-                        if (!bitStream.Read(wireVersion) || !bitStream.Read(startupMode) || !bitStream.Read(policy) || wireVersion != 1 || startupMode != 1 ||
-                            policy != 1 || !pResource->SetNativeWorldStartupAuthorization(wireVersion, startupMode, policy))
+                        if (!bitStream.Read(wireVersion) || !bitStream.Read(startupMode) || !bitStream.Read(policy) ||
+                            !pResource->SetNativeWorldStartupAuthorization(wireVersion, startupMode, policy))
                         {
                             bFatalError = true;
                             AddReportLog(2081, "Malformed or unsupported native world startup authorization");

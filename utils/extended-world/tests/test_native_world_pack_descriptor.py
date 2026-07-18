@@ -72,6 +72,13 @@ class NativeWorldPackDescriptorTest(unittest.TestCase):
         self.assertIn("CONTENT_ID_DOMAIN_V2", self.cache)
         self.assertIn('request.policyKey == "static-world-v1"', self.cache)
         self.assertIn('"format-2 static-world publication cannot acquire an activation lease"', self.cache)
+        acquire_start = self.cache.index("bool AcquireExistingNativeWorldCacheLease")
+        acquire_end = self.cache.index("bool PrepareAndLockNativeWorldCache", acquire_start)
+        acquire = self.cache[acquire_start:acquire_end]
+        self.assertNotIn("request.format != 1", acquire)
+        self.assertIn("impl->format = request.format", acquire)
+        self.assertIn("SelectAuthorizedPolicy(selection)", self.manager)
+        self.assertIn("GetNativeStaticWorldV1PackPolicy()", self.manager)
 
     def test_malformed_manifests_are_deterministically_rejected(self) -> None:
         mutations = []

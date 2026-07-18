@@ -69,6 +69,8 @@ At the time of this handoff:
 Canonical tree  /Users/salimtrouve/Documents/GitHub/mtasa-neon
 Branch          master
 Checkpoint C    163605d59 feat(native-world): activate authorized startup packs
+Checkpoint D    453ca427b feat(native-world): restart into authorized startup packs
+Checkpoint E1   0b8f07565 feat(native-world): publish generic static-world packs
 origin/master   7895f0e1e feat(story): match SWEET1 all-wheels gates
 VM              Windows 11
 VM build tree   C:\dev\mtasa-vm-custom
@@ -105,8 +107,11 @@ below. Checkpoint D, explicit safe restart/reconnect UX, is implemented and
 passed the explicitly authorized automated live gate recorded below. Checkpoint
 E1, the constrained generic static-world transport/cache identity, is
 implemented and passed its explicitly authorized publish/cache-hit live gate
-while remaining inert. Checkpoint E2 is now the next unfinished checkpoint and
-will extend the authorization/startup route without weakening format 1.
+while remaining inert. Checkpoint E2, the generic format-2 authorization and
+startup route, is implemented in the current checkpoint and passed the
+explicitly authorized automated live and negative gates recorded below. The
+next unfinished milestone is proving a genuinely different second city through
+the same format-2 pipeline without city-specific C++.
 
 Relevant earlier extended-world foundations include the enlarged world sectors,
 coordinate/network ranges, water bounds, renderer capacity, radar composition,
@@ -142,6 +147,8 @@ placements through a different lifecycle.
   `test-resources/native-world-transport-test` is the metadata-only legacy
   authorization harness, and `native-world-static-transport-test` is the
   metadata-only format-2 publish-only harness.
+  `native-world-static-startup-test` is the metadata-only format-2 authorized
+  startup harness; all large payload files remain VM-local test data.
 
 ## Current architecture
 
@@ -149,12 +156,13 @@ placements through a different lifecycle.
 
 `CNativeWorldPackManagerSA` performs exact preflight, allocation planning,
 native commit, postconditions, IPL bootstrap, and process-lifetime management.
-`CNativeBullworthPackSA` still owns the only activatable compiled policy and
-supports only the two exact GTA SA 1.0 US identities documented in
-`NATIVE_BW_PACK.md`. The transport registry also contains the constrained
-`static-world-v1` format-2 policy. It can audit and cache a bounded pack ID,
-but E1 deliberately gives it no environment selector, authorization record,
-activation lease, startup hook, or native mutation route.
+`CNativeBullworthPackSA` still owns the format-1 Bullworth policy, while the
+manager also exposes the constrained `static-world-v1` format-2 policy. E2 can
+authorize that policy only for an exact existing v2 cache object and feed its
+fully audited plan through the same executable allowlist, allocation planning,
+native commit, postconditions, IPL bootstrap, and process-lifetime lease. The
+bounded pack ID remains untrusted metadata: it selects no parser budget,
+executable patch, pool capacity, archive slot, or filesystem directory.
 
 The legacy `MTA_NATIVE_BW_MODEL_STORES=1` prototype still reads the local
 installation copy of `native-world.json` as its developer-only startup
@@ -175,17 +183,20 @@ packs requires a clean client restart.
 A resource declares exactly one `<native_world>` descriptor and exactly three
 tagged automatic-download files: `native-world.json`, one IDE, and one IMG.
 Format 1 remains either inert legacy transport or exactly
-`startup="true" policy="bullworth"`. Format 2 is exactly the publish-only
-`policy="static-world-v1"` descriptor and forbids startup metadata. Partial,
-unknown, or contradictory metadata is rejected.
+`startup="true" policy="bullworth"`. Format 2 is either the E1 publish-only
+`policy="static-world-v1"` descriptor or the exact E2 tuple
+`startup="true" policy="static-world-v1"`. Partial, unknown, or contradictory
+metadata is rejected.
 
 Clients through protocol capability `0x35` receive the original format-1 `N`
 group byte-for-byte. Clients advertising the appended authorization capability
 `0x36` receive the distinct complete `A` group only for an opted-in format-1
 resource. The next append-only capability admits the format-2 `N` group.
-Format 2 can never use `A`; clients without its exact capability receive
-neither its descriptor nor any of its three tagged bodies. Truncation,
-duplicates, bad placement, unknown groups, and unknown values are fatal.
+A further append-only capability admits the complete format-2 `A` group with
+authorization wire version 2 and one-shot startup mode. Clients lacking that
+exact capability receive inert format-2 `N`, never an authorization downgrade.
+Truncation, duplicates, bad placement, unknown groups, and unknown values are
+fatal.
 
 The built-in HTTP server streams file bodies through a 64 KiB buffer. After the
 normal download size and checksum checks, a cancellable worker performs the
@@ -194,11 +205,15 @@ quarantine, audits the copy, atomically renames the directory, and revalidates
 the final immutable object. A cache hit follows the same guarded validation
 path.
 
-Transport alone still does not authorize or activate the object. A format-1
-opted-in offer may publish an inert authorization record after the exact object
-is cached. Format 2 always stops at immutable publication. Its successful
-diagnostic ends with `audit=closed-static-world-v1 publish=atomic activation=no
-lease=no restart-required=no`.
+Transport alone still does not authorize or activate the object. An opted-in
+format-1 or format-2 `A` offer may publish an inert authorization record only
+after its exact object is cached. Publish-only format 2 still ends with
+`audit=closed-static-world-v1 publish=atomic activation=no lease=no
+restart-required=no`; opted-in format 2 ends pending with
+`restart-required=yes`. Startup accepts format 2 only from the canonical
+existing v2 object and promotes the lease as the pair
+`(format=2, policy=static-world-v1)`; seed/local format-2 startup remains
+forbidden.
 
 Successful authorized format-1 diagnostics contain:
 
@@ -294,6 +309,35 @@ B/C live gates through the documented VM workflow.
 
 Confirmed checkpoints include:
 
+- Checkpoint E2 was formatted with pinned clang-format 21.1.7. The focused
+  suite reports 81 tests with two optional environment-dependent skips. Three
+  independent architecture, security, and code/ABI reviews found no remaining
+  actionable P0-P2 issue.
+- The complete affected set (`Game SA`, `Client Core`, `Client Deathmatch`,
+  `Multiplayer SA`, and `Client Webbrowser` as `Release|Win32`, plus server
+  `Deathmatch` as `Release|x64`) built through reviewed `vm-build.ps1`
+  plan/execute with zero errors.
+- Format-2 content ID
+  `668bd36a1a2f686975277291032a2d3bef6048057660310d2673d4f5403fa645`
+  progressed through pending ticket `f9d7b810`, the explicit restart, exact v2
+  cache reaudit, read-only executable preflight, claim, model-store preparation,
+  second-session validation, hook, native commit, and `state=active
+  lease=process`. The registrar reported archive 6, 952 models, 166 TXDs,
+  collision slot 252, and seven IPL slots. Bullworth geometry/textures,
+  collision, return to San Andreas, exact-server reconnect, resource
+  stop/start preservation, and active clear/restart refusal all passed.
+- The extended-world teleport/line-of-sight/vehicle/camera gate passed at
+  X=+9500, and water creation/level/line-of-sight/vehicle passed at X=-9990.
+  At ordinary coordinates and both extremes, all COL set/add/index checks and
+  `moveObject` interpolation passed with intermediate motion, no regression or
+  overshoot, and zero final error.
+- A pending format-2 ticket was revoked by `ResourceStop`. A second pending
+  ticket with its exact cache object quarantined ended in ticket-qualified
+  terminal `cache-invalid`, created no replacement object, and became spent;
+  the restored manifest, IDE, and IMG hashes were unchanged. Publish-only E1
+  still created no record beyond the transaction lock, full format-1 startup
+  still reached `state=active lease=process`, and a no-URI launch reported
+  `state=absent` with restart refused and no new crash dump.
 - Checkpoint E1 was formatted with the pinned clang-format 21.1.7 executable.
   The focused suite reports 77 tests, including two optional
   environment-dependent skips. Independent architecture and security reviews
@@ -463,13 +507,15 @@ resources and is never Git-indexed. Do not commit generated city assets.
 
 ## Known boundaries
 
-- Bullworth is still the only activatable compiled policy. Format 2 accepts a
-  bounded pack identity under one closed `static-world-v1` grammar; it is not
-  arbitrary IDE/IPL/IMG support and it cannot yet authorize or activate a pack.
-- A format-1 opted-in server can cause a strictly bound authorization record to
-  be persisted after publication. Checkpoints B/C consume it for closed startup
-  selection, one-shot claim, and Bullworth activation. Format 2 cannot produce
-  such a record in E1.
+- Format 2 can now authorize and activate one exact cached pack under the
+  closed `static-world-v1` grammar. The validated fixture reused Bullworth
+  bytes, so this is not yet proof of a second city or arbitrary IDE/IPL/IMG
+  support.
+- An opted-in format-1 or format-2 server can cause a strictly bound
+  authorization record to be persisted after publication. The same closed
+  startup selection, one-shot claim, executable gate, native commit, and typed
+  process lease consume either exact tuple. Publish-only E1 format 2 remains
+  inert.
 - Only the legacy developer route depends on the local selector manifest and
   environment flag. The record-driven B route does not.
 - The record is bound to the opaque server ID exposed by the established MTA
@@ -652,29 +698,29 @@ water, COL synchronization, and `moveObject` live regression evidence.
 
 ## Remaining global roadmap
 
-After authorized activation:
+After authorized activation, item 1 is complete: E2 extends the E1 format-2
+transport boundary with strict authorization/startup without weakening format
+1. Continue with:
 
-1. Extend the completed E1 generic format-2 transport boundary with equally
-   strict E2 authorization/startup without weakening format 1.
-2. Prove that a second city, preferably Carcer, uses the same pipeline without
+1. Prove that a second city, preferably Carcer, uses the same pipeline without
    city-specific C++.
-3. Build a deterministic aggregate startup plan for multiple packs, including
+2. Build a deterministic aggregate startup plan for multiple packs, including
    conflict detection and all combined pool/store/archive/streaming limits.
-4. Transactionally register San Andreas plus Bullworth plus Carcer in one
+3. Transactionally register San Andreas plus Bullworth plus Carcer in one
    process through native GTA streaming.
-5. Tune streaming memory, buffers, request lists, spatial IPL behavior and
+4. Tune streaming memory, buffers, request lists, spatial IPL behavior and
    LOD/prefetch behavior for seamless repeated flights and stable FPS.
-6. Add optional pack components and validators for radar, paths, zones,
+5. Add optional pack components and validators for radar, paths, zones,
    population, water, CULL/occlusion, audio, timecycle, interiors, and other
    city systems.
-7. Add server/admin/client status APIs for cached, restart-required, active,
+6. Add server/admin/client status APIs for cached, restart-required, active,
    refused, and planned packs, with explicit process-lifetime semantics.
-8. Provide reproducible pack conversion, canonical-manifest generation,
+7. Provide reproducible pack conversion, canonical-manifest generation,
    conflict reporting, budget estimation, and FLA/GTA UG configuration
    comparison tools.
-9. Harden with fuzzing, hostile-server cases, cache/ticket recovery, telemetry,
+8. Harden with fuzzing, hostile-server cases, cache/ticket recovery, telemetry,
    long reconnect/restart cycles, and several-hour multi-city endurance tests.
-10. Freeze protocol/pack versions, document deployment and rollback, add CI
+9. Freeze protocol/pack versions, document deployment and rollback, add CI
     fixtures, and retire or isolate the old custom-streaming workarounds.
 
 Practical milestones are: Bullworth without preinstallation; Carcer through the
@@ -707,10 +753,10 @@ HTTP endpoint           127.0.0.1:22005 TCP
   client/server set appropriate to the checkpoint.
 - Run focused Python tests and `git diff --check` before requesting gameplay
   validation.
-- For Checkpoint C, the reviewed complete build set is `Game SA`, `Client
+- For Checkpoint E2, the reviewed complete build set is `Game SA`, `Client
   Core`, `Client Deathmatch`, `Multiplayer SA`, and `Client Webbrowser` as
-  `Release|Win32`. It changed no server wire/build definition, so no server
-  rebuild or solution regeneration was required. Recompute the set for D.
+  `Release|Win32`, plus server `Deathmatch` as `Release|x64`. Recompute the set
+  for the second-city checkpoint.
 - GUI launches through `prlctl exec` require `--current-user`; otherwise a
   command can report success without opening a visible client.
 - Never replace the current custom `netc.dll` with the older MTA 1.6 module.
@@ -722,10 +768,9 @@ Read AGENTS.md, LIMIT_PATCHING.md, NATIVE_WORLD_HANDOFF.md,
 utils/extended-world/NATIVE_BW_PACK.md, and the recent native-world commit
 bodies completely. Recheck HEAD and the dirty tree before touching files.
 
-Resume with global roadmap item 1, Checkpoint E2 generic static-world
-authorization/startup, in NATIVE_WORLD_HANDOFF.md. Recheck the current local
-commits, dirty tree, Checkpoint A/B/C/D/E1 evidence, and exact-cache/typed-lease
-contract before editing. Preserve unrelated changes, keep the
+Resume with the second-city proof milestone in NATIVE_WORLD_HANDOFF.md. Recheck
+the current local commits, dirty tree, Checkpoint A/B/C/D/E1/E2 evidence, and
+the exact-cache/typed-lease contract before editing. Preserve unrelated changes, keep the
 orchestrator/independent-review loop and VM workflow. Do not perform in-game
 tests without explicit user authorization; otherwise prepare exact instructions
 and wait for feedback.

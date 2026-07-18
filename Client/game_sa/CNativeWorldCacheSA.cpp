@@ -853,6 +853,7 @@ struct CNativeWorldCacheLeaseSA::SImpl
     }
 
     std::vector<HANDLE> handles;
+    unsigned int        format{};
     std::string         policy;
     std::string         contentId;
     std::string         ticketId;
@@ -879,14 +880,15 @@ bool CNativeWorldCacheLeaseSA::RevalidateClosedObject(std::string& error) const
     return ValidateClosedPublishedDirectory(m_impl->directory.c_str(), error);
 }
 
-bool CNativeWorldCacheLeaseSA::Commit(const std::string& policy, const std::string& contentId, const std::string& ticketId, std::string& error)
+bool CNativeWorldCacheLeaseSA::Commit(unsigned int format, const std::string& policy, const std::string& contentId, const std::string& ticketId,
+                                      std::string& error)
 {
     if (!IsValid())
     {
         error = "native-world cache lease is absent or already completed";
         return false;
     }
-    if (m_impl->policy != policy || m_impl->contentId != contentId || m_impl->ticketId != ticketId)
+    if (m_impl->format != format || m_impl->policy != policy || m_impl->contentId != contentId || m_impl->ticketId != ticketId)
     {
         error = "native-world cache lease transaction token mismatch";
         return false;
@@ -910,10 +912,10 @@ bool AcquireExistingNativeWorldCacheLease(const SNativeWorldCacheRequestSA& requ
         error = "native-world cache lease output is already active";
         return false;
     }
-    if (!audit || request.format != 1 || !IsValidRequestIdentity(request) || request.manifestFileName != CACHED_MANIFEST_FILE ||
-        request.ide.name != CACHED_IDE_FILE || request.img.name != CACHED_IMG_FILE || !IsLowerSha256(request.sourceManifestSha256) ||
-        !IsLowerSha256(request.ide.sha256) || !IsLowerSha256(request.img.sha256) || !IsLowerSha256(request.contentId) || !IsLowerHex(ticketId, 32) ||
-        !request.sourceManifestBytes || request.sourceManifestBytes > request.maximumManifestBytes || !request.ide.bytes || !request.img.bytes ||
+    if (!audit || !IsValidRequestIdentity(request) || request.manifestFileName != CACHED_MANIFEST_FILE || request.ide.name != CACHED_IDE_FILE ||
+        request.img.name != CACHED_IMG_FILE || !IsLowerSha256(request.sourceManifestSha256) || !IsLowerSha256(request.ide.sha256) ||
+        !IsLowerSha256(request.img.sha256) || !IsLowerSha256(request.contentId) || !IsLowerHex(ticketId, 32) || !request.sourceManifestBytes ||
+        request.sourceManifestBytes > request.maximumManifestBytes || !request.ide.bytes || !request.img.bytes ||
         GenerateNativeWorldContentId(request) != request.contentId || BuildCanonicalManifest(request).size() > request.maximumManifestBytes)
     {
         error = "existing native-world cache selection identity is invalid";
@@ -946,6 +948,7 @@ bool AcquireExistingNativeWorldCacheLease(const SNativeWorldCacheRequestSA& requ
     }
 
     auto impl = std::make_unique<CNativeWorldCacheLeaseSA::SImpl>();
+    impl->format = request.format;
     impl->policy = request.policyKey;
     impl->contentId = request.contentId;
     impl->ticketId = ticketId;

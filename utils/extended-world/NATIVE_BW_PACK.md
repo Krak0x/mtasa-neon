@@ -84,9 +84,10 @@ This is a constrained static-world pipeline, not arbitrary IDE support. The
 closed grammar proven by Bullworth permits `objs`/`tobj` IDE sections, DFF/TXD
 entries, exactly one merged COL, and standalone binary IPLs. Format 1 remains
 the immutable Bullworth policy. Format 2 identifies the compiled
-`static-world-v1` audit profile plus an untrusted bounded pack ID, but its E1
-route is transport/cache only. Generic authorization, hot registration, and
-multi-pack aggregate allocation are not implemented yet. The existing
+`static-world-v1` audit profile plus an untrusted bounded pack ID. Its E1 route
+is transport/cache only; E2 adds explicit one-shot authorization/startup for an
+exact existing v2 object. Hot registration and multi-pack aggregate allocation
+are not implemented yet. The existing
 Bullworth environment flag, executable allowlist, trusted pool budgets,
 registration order, diagnostics, and process-lifetime behavior are unchanged.
 
@@ -221,22 +222,21 @@ identity, and both payload sizes and hashes. Objects live at
 never a directory component or a selector for parser budgets, executable
 patches, pools, archive slots, or native paths.
 
-The wire extension has its own append-only capability. A client without that
+The E1 wire extension has its own append-only capability. A client without that
 exact capability receives neither the format-2 descriptor nor its tagged
-files. A capable client accepts format 2 only as an `N` group; the authorization
-`A` group remains format-1 Bullworth only. Publication reuses the same complete
-closed payload audit, immutable cache discipline, shared policy quotas, and
-cancellation rules. It cannot create an authorization record, retain or
-recover an activation lease, select startup content, install a hook, or mutate
-native GTA state. Success must therefore report
+files. The E1 capability accepts format 2 only as an `N` group; E2 uses a
+separate appended capability for `A`. Publish-only operation reuses the same
+complete closed payload audit, immutable cache discipline, shared policy
+quotas, and cancellation rules. It cannot create an authorization record,
+retain or recover an activation lease, select startup content, install a hook,
+or mutate native GTA state. Success must therefore report
 `audit=closed-static-world-v1 publish=atomic activation=no lease=no
 restart-required=no`.
 
 `test-resources/native-world-static-transport-test` is the metadata-only E1
 harness. Its initial live fixture may reuse Bullworth bytes to prove that the
 generic identity and cache route are distinct; that does not prove a second
-city or generic activation. The next checkpoint is the separate E2
-authorization/startup design and implementation.
+city or generic activation.
 
 The authorized E1 live fixture did reuse the known Bullworth payload. A fresh
 session published format-2 content ID
@@ -246,6 +246,42 @@ the same ID. Both diagnostics ended with `activation=no lease=no
 restart-required=no`; the activation store contained no format-2 record. A
 following format-1 session retained the established Bullworth content ID and
 pending-authorization behavior.
+
+### Generic static-world format-2 authorization/startup checkpoint
+
+Checkpoint E2 adds one exact startup tuple without changing E1 or format 1:
+
+```xml
+<native_world format="2" policy="static-world-v1"
+              manifest="native/native-world.json" startup="true" />
+```
+
+The server emits authorization metadata only to clients advertising the
+append-only format-2 startup capability. A capable E1-only client receives the
+same inert `N` descriptor; it is never silently upgraded. The client accepts
+only authorization wire version 2, one-shot startup mode, format 2, and
+`static-world-v1`. Every other cross-product is a closed protocol refusal.
+
+After the exact object is audited and published, Core may persist the same
+short-lived, endpoint/server/resource/content-bound authorization record used
+by format 1, now typed by the `(format, policy)` pair. A clean launch for the
+canonical numeric endpoint performs existing-object-only v2 lookup, locks and
+fully reaudits the object, completes the executable allowlist preflight, claims
+the ticket, prepares model stores, revalidates the second session, and then
+uses the common manager commit path. The typed pending lease becomes a typed
+process lease only after native postconditions succeed. Format-2 seed/local
+startup remains forbidden, and an absent or corrupt exact object causes a
+terminal ticket-qualified `cache-invalid` refusal without recreation.
+
+`test-resources/native-world-static-startup-test` is the metadata-only E2
+harness. Its authorized live fixture intentionally reused the same Bullworth
+bytes and v2 content ID as E1. Ticket `f9d7b810` completed restart, exact-cache
+reaudit, claim, native registration, and `state=active lease=process`; the
+registrar reported archive 6, 952 models, 166 TXDs, collision slot 252, and
+seven IPL slots. This proves the generic authorization/startup route, not a
+second city. A pending ticket was revoked by ResourceStop, and another pending
+ticket refused `cache-invalid` while the exact object was quarantined. The
+object was not recreated and all three restored hashes were unchanged.
 
 The compiled model-store policy records the relocated foundation capacities
 (`15000` Atomic, `160` DamageAtomic, and `200` Time). Preflight requires the

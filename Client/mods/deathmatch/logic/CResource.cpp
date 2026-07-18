@@ -355,8 +355,8 @@ bool CResource::SetNativeWorldTransport(unsigned char format, const SString& man
 
 bool CResource::SetNativeWorldStartupAuthorization(unsigned char wireVersion, unsigned char startupMode, unsigned char policy)
 {
-    if (!m_nativeWorldTransport.present || m_nativeWorldTransport.format != 1 || m_nativeWorldTransport.authorizationRequested || wireVersion != 1 ||
-        startupMode != 1 || policy != 1)
+    if (!m_nativeWorldTransport.present || m_nativeWorldTransport.authorizationRequested ||
+        !IsClosedNativeWorldStartupAuthorization(wireVersion, startupMode, policy, m_nativeWorldTransport.format))
         return false;
 
     m_nativeWorldTransport.authorizationRequested = true;

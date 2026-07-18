@@ -90,6 +90,11 @@ static HMODULE WINAPI SkipDirectPlay_LoadLibraryA(LPCSTR fileName)
 
 namespace
 {
+    eBitStreamVersion RequiredNativeWorldAuthorizationCapability(unsigned char packFormat)
+    {
+        return packFormat == 1 ? eBitStreamVersion::NativeWorldStartupAuthorization : eBitStreamVersion::NativeWorldStaticWorldV2StartupAuthorization;
+    }
+
     bool ParseClosedNativeWorldEndpoint(const char* arguments, std::array<unsigned char, 4>& ipv4, unsigned short& port)
     {
         constexpr char SCHEME[] = "mtasa://";
@@ -400,8 +405,9 @@ bool CCore::CaptureNativeWorldStartupAuthorization(unsigned char wireVersion, un
                                                               (character >= '0' && character <= '9') || character == '_' || character == '-' ||
                                                               character == '.';
                                                    });
-    if (wireVersion != 1 || startupMode != 1 || policy != 1 || packFormat != 1 || !canonicalResourceName || resourceNetId == 0xFFFF ||
-        resourceStartCounter == 0 || m_networkConnectionGeneration == 0 || m_nativeWorldAuthorizationEpoch == 0 || !m_pNet || !m_pNet->IsConnected())
+    if (!IsClosedNativeWorldStartupAuthorization(wireVersion, startupMode, policy, packFormat) || !canonicalResourceName || resourceNetId == 0xFFFF ||
+        resourceStartCounter == 0 || m_networkConnectionGeneration == 0 || m_nativeWorldAuthorizationEpoch == 0 || !m_pNet || !m_pNet->IsConnected() ||
+        !m_pNet->CanServerBitStream(RequiredNativeWorldAuthorizationCapability(packFormat)))
     {
         error = "native-world authorization cannot capture the current session";
         return false;
@@ -621,11 +627,12 @@ SNativeWorldAuthorizationRecordResult CCore::DescribeNativeWorldStartupProcess()
             return result;
     }
 
-    result.diagnostic = SString("state=%s endpoint=%u.%u.%u.%u:%u ticket=%s issued=%llu expires=%llu activation=%s lease=%s restart-required=no", state,
-                                m_nativeWorldStartupSelection.serverIpv4[0], m_nativeWorldStartupSelection.serverIpv4[1],
-                                m_nativeWorldStartupSelection.serverIpv4[2], m_nativeWorldStartupSelection.serverIpv4[3],
-                                m_nativeWorldStartupSelection.serverPort, m_nativeWorldStartupSelection.ticketId.substr(0, 8).c_str(),
-                                m_nativeWorldStartupSelection.issuedAt, m_nativeWorldStartupSelection.expiresAt, activation, lease);
+    result.diagnostic =
+        SString("state=%s endpoint=%u.%u.%u.%u:%u format=%u policy=%s ticket=%s issued=%llu expires=%llu activation=%s lease=%s restart-required=no", state,
+                m_nativeWorldStartupSelection.serverIpv4[0], m_nativeWorldStartupSelection.serverIpv4[1], m_nativeWorldStartupSelection.serverIpv4[2],
+                m_nativeWorldStartupSelection.serverIpv4[3], m_nativeWorldStartupSelection.serverPort, m_nativeWorldStartupSelection.packFormat,
+                GetNativeWorldStartupPolicyName(m_nativeWorldStartupSelection.packFormat), m_nativeWorldStartupSelection.ticketId.substr(0, 8).c_str(),
+                m_nativeWorldStartupSelection.issuedAt, m_nativeWorldStartupSelection.expiresAt, activation, lease);
     return result;
 }
 

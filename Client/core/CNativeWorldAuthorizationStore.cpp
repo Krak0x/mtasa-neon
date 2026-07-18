@@ -303,10 +303,13 @@ namespace
 
     bool ValidateAuthorization(const SNativeWorldStartupAuthorization& authorization, std::string& error)
     {
-        if (!authorization.present || authorization.wireVersion != 1 || authorization.startupMode != 1 || authorization.policy != 1 ||
-            authorization.packFormat != 1 || authorization.serverPort == 0 || authorization.connectionGeneration == 0 ||
-            authorization.authorizationEpoch == 0 || authorization.resourceNetId == 0xFFFF || authorization.resourceStartCounter == 0 ||
-            authorization.bitstreamVersion < static_cast<unsigned short>(eBitStreamVersion::NativeWorldStartupAuthorization) ||
+        const unsigned short minimumBitstreamVersion =
+            static_cast<unsigned short>(authorization.packFormat == 1 ? eBitStreamVersion::NativeWorldStartupAuthorization
+                                                                      : eBitStreamVersion::NativeWorldStaticWorldV2StartupAuthorization);
+        if (!authorization.present ||
+            !IsClosedNativeWorldStartupAuthorization(authorization.wireVersion, authorization.startupMode, authorization.policy, authorization.packFormat) ||
+            authorization.serverPort == 0 || authorization.connectionGeneration == 0 || authorization.authorizationEpoch == 0 ||
+            authorization.resourceNetId == 0xFFFF || authorization.resourceStartCounter == 0 || authorization.bitstreamVersion < minimumBitstreamVersion ||
             authorization.bitstreamVersion > static_cast<unsigned short>(eBitStreamVersion::Latest) || !IsCanonicalResourceName(authorization.resourceName) ||
             std::all_of(authorization.serverIdDigest.begin(), authorization.serverIdDigest.end(), [](unsigned char byte) { return byte == 0; }) ||
             std::all_of(authorization.serverIpv4.begin(), authorization.serverIpv4.end(), [](unsigned char byte) { return byte == 0; }))
@@ -815,10 +818,11 @@ namespace
         result.expiresAt = record.expiresAt;
         const std::string ticketCorrelation = result.ticketId.substr(0, 8);
         result.diagnostic =
-            SString("state=%s resource=%s endpoint=%u.%u.%u.%u:%u policy=bullworth contentId=%s ticket=%s issued=%llu expires=%llu activation=no lease=no",
+            SString("state=%s resource=%s endpoint=%u.%u.%u.%u:%u format=%u policy=%s contentId=%s ticket=%s issued=%llu expires=%llu activation=no lease=no",
                     state, record.authorization.resourceName.c_str(), record.authorization.serverIpv4[0], record.authorization.serverIpv4[1],
-                    record.authorization.serverIpv4[2], record.authorization.serverIpv4[3], record.authorization.serverPort,
-                    EncodeHex(record.contentId).c_str(), ticketCorrelation.c_str(), result.issuedAt, result.expiresAt);
+                    record.authorization.serverIpv4[2], record.authorization.serverIpv4[3], record.authorization.serverPort, record.authorization.packFormat,
+                    GetNativeWorldStartupPolicyName(record.authorization.packFormat), EncodeHex(record.contentId).c_str(), ticketCorrelation.c_str(),
+                    result.issuedAt, result.expiresAt);
         return result;
     }
 
@@ -959,6 +963,8 @@ namespace
         SNativeWorldStartupSelection selection;
         selection.success = true;
         selection.found = true;
+        selection.wireVersion = record.authorization.wireVersion;
+        selection.startupMode = record.authorization.startupMode;
         selection.policy = record.authorization.policy;
         selection.packFormat = record.authorization.packFormat;
         selection.serverIdDigest = record.authorization.serverIdDigest;
@@ -1530,9 +1536,10 @@ SNativeWorldStartupSelection NativeWorldAuthorizationStore::BeginStartup(const s
     }
 
     selection.ready = true;
-    selection.diagnostic = SString("state=selected endpoint=%u.%u.%u.%u:%u policy=bullworth contentId=%s ticket=%s activation=no lease=no",
-                                   selection.serverIpv4[0], selection.serverIpv4[1], selection.serverIpv4[2], selection.serverIpv4[3], selection.serverPort,
-                                   selection.contentId.c_str(), ticket.substr(0, 8).c_str());
+    selection.diagnostic =
+        SString("state=selected endpoint=%u.%u.%u.%u:%u format=%u policy=%s contentId=%s ticket=%s activation=no lease=no", selection.serverIpv4[0],
+                selection.serverIpv4[1], selection.serverIpv4[2], selection.serverIpv4[3], selection.serverPort, selection.packFormat,
+                GetNativeWorldStartupPolicyName(startup->record.authorization.packFormat), selection.contentId.c_str(), ticket.substr(0, 8).c_str());
     beginScope.Publish(std::move(startup));
     return selection;
 }

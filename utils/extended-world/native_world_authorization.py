@@ -18,12 +18,17 @@ WIRE_VERSION = 1
 STARTUP_MODE = 1
 PACK_FORMAT = 1
 POLICY_BULLWORTH = 1
+STATIC_WORLD_WIRE_VERSION = 2
+STATIC_WORLD_PACK_FORMAT = 2
+POLICY_STATIC_WORLD_V1 = 2
 RECORD_LIFETIME_SECONDS = 900
 CLOCK_ROLLBACK_TOLERANCE_SECONDS = 120
 RESTART_MINIMUM_REMAINING_SECONDS = 60
 TRANSPORT_BITSTREAM_VERSION = 0x35
 AUTHORIZATION_BITSTREAM_VERSION = 0x36
-LATEST_BITSTREAM_VERSION = AUTHORIZATION_BITSTREAM_VERSION
+STATIC_WORLD_TRANSPORT_BITSTREAM_VERSION = 0x37
+STATIC_WORLD_AUTHORIZATION_BITSTREAM_VERSION = 0x38
+LATEST_BITSTREAM_VERSION = STATIC_WORLD_AUTHORIZATION_BITSTREAM_VERSION
 
 
 class RecordError(ValueError):
@@ -63,16 +68,31 @@ def _canonical_manifest(value: str) -> bytes:
 def encode_descriptor(descriptor: TransportDescriptor, client_bitstream_version: int) -> bytes:
     """Model the complete N/A descriptor header before its three F chunks."""
     manifest = _canonical_manifest(descriptor.manifest_path)
-    if descriptor.format != PACK_FORMAT or descriptor.file_count != 3:
+    if descriptor.format not in (PACK_FORMAT, STATIC_WORLD_PACK_FORMAT) or descriptor.file_count != 3:
         raise RecordError("unsupported transport descriptor")
-    if client_bitstream_version < TRANSPORT_BITSTREAM_VERSION:
+    transport_capability = (
+        TRANSPORT_BITSTREAM_VERSION
+        if descriptor.format == PACK_FORMAT
+        else STATIC_WORLD_TRANSPORT_BITSTREAM_VERSION
+    )
+    authorization_capability = (
+        AUTHORIZATION_BITSTREAM_VERSION
+        if descriptor.format == PACK_FORMAT
+        else STATIC_WORLD_AUTHORIZATION_BITSTREAM_VERSION
+    )
+    if client_bitstream_version < transport_capability:
         return b""
-    authorized = descriptor.authorization_requested and client_bitstream_version >= AUTHORIZATION_BITSTREAM_VERSION
+    authorized = descriptor.authorization_requested and client_bitstream_version >= authorization_capability
     fields = bytearray(b"A" if authorized else b"N")
     fields += bytes((descriptor.format, descriptor.file_count, len(manifest)))
     fields += manifest
     if authorized:
-        if (descriptor.wire_version, descriptor.startup_mode, descriptor.policy) != (WIRE_VERSION, STARTUP_MODE, POLICY_BULLWORTH):
+        expected = (
+            (WIRE_VERSION, STARTUP_MODE, POLICY_BULLWORTH)
+            if descriptor.format == PACK_FORMAT
+            else (STATIC_WORLD_WIRE_VERSION, STARTUP_MODE, POLICY_STATIC_WORLD_V1)
+        )
+        if (descriptor.wire_version, descriptor.startup_mode, descriptor.policy) != expected:
             raise RecordError("unsupported startup authorization")
         fields += bytes((descriptor.wire_version, descriptor.startup_mode, descriptor.policy))
     return bytes(fields)
@@ -82,8 +102,12 @@ def decode_descriptor(data: bytes, client_bitstream_version: int) -> TransportDe
     if not isinstance(data, bytes) or len(data) < 4:
         raise RecordError("truncated transport descriptor")
     tag, format_value, file_count, manifest_length = data[:4]
-    if tag not in (ord("N"), ord("A")) or format_value != PACK_FORMAT or file_count != 3 or not manifest_length:
+    if tag not in (ord("N"), ord("A")) or format_value not in (PACK_FORMAT, STATIC_WORLD_PACK_FORMAT) or file_count != 3 or not manifest_length:
         raise RecordError("malformed transport descriptor")
+    transport_capability = TRANSPORT_BITSTREAM_VERSION if format_value == PACK_FORMAT else STATIC_WORLD_TRANSPORT_BITSTREAM_VERSION
+    authorization_capability = AUTHORIZATION_BITSTREAM_VERSION if format_value == PACK_FORMAT else STATIC_WORLD_AUTHORIZATION_BITSTREAM_VERSION
+    if client_bitstream_version < transport_capability:
+        raise RecordError("transport descriptor exceeds negotiated capability")
     expected = 4 + manifest_length + (3 if tag == ord("A") else 0)
     if len(data) != expected:
         raise RecordError("truncated transport descriptor or trailing fields")
@@ -93,13 +117,19 @@ def decode_descriptor(data: bytes, client_bitstream_version: int) -> TransportDe
         raise RecordError("manifest path must be UTF-8") from exc
     _canonical_manifest(manifest_path)
     if tag == ord("A"):
-        if client_bitstream_version < AUTHORIZATION_BITSTREAM_VERSION:
+        if client_bitstream_version < authorization_capability:
             raise RecordError("authorization descriptor exceeds negotiated capability")
         wire_version, startup_mode, policy = data[-3:]
-        if (wire_version, startup_mode, policy) != (WIRE_VERSION, STARTUP_MODE, POLICY_BULLWORTH):
+        expected = (
+            (WIRE_VERSION, STARTUP_MODE, POLICY_BULLWORTH)
+            if format_value == PACK_FORMAT
+            else (STATIC_WORLD_WIRE_VERSION, STARTUP_MODE, POLICY_STATIC_WORLD_V1)
+        )
+        if (wire_version, startup_mode, policy) != expected:
             raise RecordError("unsupported startup authorization")
-        return TransportDescriptor(manifest_path=manifest_path, authorization_requested=True)
-    return TransportDescriptor(manifest_path=manifest_path, authorization_requested=False)
+        return TransportDescriptor(manifest_path=manifest_path, authorization_requested=True, format=format_value,
+                                   wire_version=wire_version, startup_mode=startup_mode, policy=policy)
+    return TransportDescriptor(manifest_path=manifest_path, authorization_requested=False, format=format_value)
 
 
 def validate_descriptor_placement(chunk_types: tuple[str, ...]) -> None:
@@ -185,12 +215,19 @@ def _validate(record: AuthorizationRecord) -> bytes:
         (record.expires_at, 64, "expires_at"),
     ):
         _require_uint(value, bits, field)
-    if (
-        record.wire_version != WIRE_VERSION
-        or record.startup_mode != STARTUP_MODE
-        or record.pack_format != PACK_FORMAT
-        or record.policy != POLICY_BULLWORTH
-    ):
+    closed_bullworth = (
+        record.pack_format,
+        record.wire_version,
+        record.startup_mode,
+        record.policy,
+    ) == (PACK_FORMAT, WIRE_VERSION, STARTUP_MODE, POLICY_BULLWORTH)
+    closed_static_world = (
+        record.pack_format,
+        record.wire_version,
+        record.startup_mode,
+        record.policy,
+    ) == (STATIC_WORLD_PACK_FORMAT, STATIC_WORLD_WIRE_VERSION, STARTUP_MODE, POLICY_STATIC_WORLD_V1)
+    if not closed_bullworth and not closed_static_world:
         raise RecordError("unsupported closed authorization version or policy")
     if not record.server_port or record.resource_net_id == 0xFFFF or not record.resource_start_counter:
         raise RecordError("invalid endpoint or resource identity")
@@ -204,7 +241,8 @@ def _validate(record: AuthorizationRecord) -> bytes:
         or record.server_ipv4 == bytes(4)
     ):
         raise RecordError("empty server identity or endpoint")
-    if not AUTHORIZATION_BITSTREAM_VERSION <= record.bitstream_version <= LATEST_BITSTREAM_VERSION:
+    minimum_bitstream_version = AUTHORIZATION_BITSTREAM_VERSION if closed_bullworth else STATIC_WORLD_AUTHORIZATION_BITSTREAM_VERSION
+    if not minimum_bitstream_version <= record.bitstream_version <= LATEST_BITSTREAM_VERSION:
         raise RecordError("bitstream version is outside the startup capability window")
     try:
         resource = record.resource_name.encode("ascii")
@@ -458,16 +496,17 @@ class StartupLedger:
 
 @dataclass
 class TypedCacheLease:
+    format: int
     policy: str
     content_id: str
     ticket_id: str
     active: bool = True
     committed: bool = False
 
-    def commit(self, policy: str, content_id_value: str, ticket_id: str) -> None:
+    def commit(self, format_value: int, policy: str, content_id_value: str, ticket_id: str) -> None:
         if not self.active:
             raise RecordError("lease already completed")
-        if (policy, content_id_value, ticket_id) != (self.policy, self.content_id, self.ticket_id):
+        if (format_value, policy, content_id_value, ticket_id) != (self.format, self.policy, self.content_id, self.ticket_id):
             raise RecordError("lease token mismatch")
         self.active = False
         self.committed = True

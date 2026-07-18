@@ -11,7 +11,11 @@ sys.path.insert(0, str(ROOT))
 
 from native_world_authorization import (  # noqa: E402
     AuthorizationRecord,
+    POLICY_STATIC_WORLD_V1,
     RecordError,
+    STATIC_WORLD_AUTHORIZATION_BITSTREAM_VERSION,
+    STATIC_WORLD_PACK_FORMAT,
+    STATIC_WORLD_WIRE_VERSION,
     StartupLedger,
     TypedCacheLease,
     parse_closed_startup_uri,
@@ -119,13 +123,27 @@ class StartupTransactionTests(unittest.TestCase):
         self.assertEqual("selected", ledger.begin("mtasa://127.0.0.1:22003", 10_100))
 
     def test_typed_lease_rejects_mismatch_and_double_commit(self) -> None:
-        lease = TypedCacheLease("bullworth", "c" * 64, "t" * 32)
+        lease = TypedCacheLease(1, "bullworth", "c" * 64, "t" * 32)
         with self.assertRaises(RecordError):
-            lease.commit("bullworth", "d" * 64, "t" * 32)
+            lease.commit(1, "bullworth", "d" * 64, "t" * 32)
         self.assertTrue(lease.active)
-        lease.commit("bullworth", "c" * 64, "t" * 32)
         with self.assertRaises(RecordError):
-            lease.commit("bullworth", "c" * 64, "t" * 32)
+            lease.commit(2, "bullworth", "c" * 64, "t" * 32)
+        lease.commit(1, "bullworth", "c" * 64, "t" * 32)
+        with self.assertRaises(RecordError):
+            lease.commit(1, "bullworth", "c" * 64, "t" * 32)
+
+    def test_format_2_record_uses_the_same_one_shot_startup_transaction(self) -> None:
+        generic = replace(
+            record(),
+            wire_version=STATIC_WORLD_WIRE_VERSION,
+            pack_format=STATIC_WORLD_PACK_FORMAT,
+            policy=POLICY_STATIC_WORLD_V1,
+            bitstream_version=STATIC_WORLD_AUTHORIZATION_BITSTREAM_VERSION,
+        )
+        ledger = StartupLedger(generic, {})
+        self.assertEqual("selected", ledger.begin("mtasa://127.0.0.1:22003", generic.issued_at))
+        self.assertEqual("claimed", ledger.finish(generic.issued_at, claim=True))
 
     def test_cpp_c_prepares_stores_but_defers_hook_and_pack_commit(self) -> None:
         pack = (REPOSITORY / "Client/game_sa/CNativeWorldPackSA.cpp").read_text(encoding="utf-8")
@@ -153,7 +171,7 @@ class StartupTransactionTests(unittest.TestCase):
         register = pack[register_start:register_end]
         self.assertLess(register.index("LOAD_OBJECT_TYPES"), register.index("CommitRegistrationLease"))
         self.assertLess(register.index("ValidatePostconditions"), register.index("CommitRegistrationLease"))
-        self.assertIn("g_authorizedLease.Commit(g_policy->key, g_authorizedSelection.contentId, g_authorizedSelection.ticketId", pack)
+        self.assertIn("g_authorizedLease.Commit(g_policy->format, g_policy->key, g_authorizedSelection.contentId", pack)
 
     def test_cpp_c_pins_connect_and_checks_every_server_connected_packet(self) -> None:
         connect = (REPOSITORY / "Client/core/CConnectManager.cpp").read_text(encoding="utf-8")

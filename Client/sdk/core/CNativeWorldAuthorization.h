@@ -14,6 +14,27 @@
 #include <array>
 #include <string>
 
+constexpr unsigned char NATIVE_WORLD_BULLWORTH_FORMAT = 1;
+constexpr unsigned char NATIVE_WORLD_BULLWORTH_AUTHORIZATION_VERSION = 1;
+constexpr unsigned char NATIVE_WORLD_BULLWORTH_POLICY = 1;
+constexpr unsigned char NATIVE_WORLD_STATIC_V1_FORMAT = 2;
+constexpr unsigned char NATIVE_WORLD_STATIC_V1_AUTHORIZATION_VERSION = 2;
+constexpr unsigned char NATIVE_WORLD_STATIC_V1_POLICY = 2;
+constexpr unsigned char NATIVE_WORLD_ONE_SHOT_STARTUP_MODE = 1;
+
+inline bool IsClosedNativeWorldStartupAuthorization(unsigned char wireVersion, unsigned char startupMode, unsigned char policy, unsigned char packFormat)
+{
+    return (packFormat == NATIVE_WORLD_BULLWORTH_FORMAT && wireVersion == NATIVE_WORLD_BULLWORTH_AUTHORIZATION_VERSION &&
+            startupMode == NATIVE_WORLD_ONE_SHOT_STARTUP_MODE && policy == NATIVE_WORLD_BULLWORTH_POLICY) ||
+           (packFormat == NATIVE_WORLD_STATIC_V1_FORMAT && wireVersion == NATIVE_WORLD_STATIC_V1_AUTHORIZATION_VERSION &&
+            startupMode == NATIVE_WORLD_ONE_SHOT_STARTUP_MODE && policy == NATIVE_WORLD_STATIC_V1_POLICY);
+}
+
+inline const char* GetNativeWorldStartupPolicyName(unsigned char packFormat)
+{
+    return packFormat == NATIVE_WORLD_BULLWORTH_FORMAT ? "bullworth" : packFormat == NATIVE_WORLD_STATIC_V1_FORMAT ? "static-world-v1" : "invalid";
+}
+
 struct SNativeWorldStartupAuthorization
 {
     bool                          present{};
@@ -63,6 +84,8 @@ struct SNativeWorldStartupSelection
     bool                          found{};
     bool                          ready{};
     bool                          terminalRefusalRequired{};
+    unsigned char                 wireVersion{};
+    unsigned char                 startupMode{};
     unsigned char                 policy{};
     unsigned char                 packFormat{};
     std::array<unsigned char, 32> serverIdDigest{};

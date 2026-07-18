@@ -198,6 +198,20 @@ namespace
         return selected;
     }
 
+    const SNativeWorldPackPolicySA* SelectAuthorizedPolicy(const SNativeWorldStartupSelection& selection)
+    {
+        // Transport format alone is not authority. Require the complete
+        // compiled authorization tuple again in Game SA before any cache or
+        // executable preflight can begin.
+        if (!IsClosedNativeWorldStartupAuthorization(selection.wireVersion, selection.startupMode, selection.policy, selection.packFormat))
+            return nullptr;
+        if (selection.packFormat == NATIVE_WORLD_BULLWORTH_FORMAT)
+            return &GetNativeBullworthPackPolicy();
+        if (selection.packFormat == NATIVE_WORLD_STATIC_V1_FORMAT)
+            return &GetNativeStaticWorldV1PackPolicy();
+        return nullptr;
+    }
+
     void Log(const char* format, ...)
     {
         char    detail[1900]{};
@@ -238,7 +252,7 @@ namespace
         }
 
         std::string error;
-        if (!g_authorizedLease.Commit(g_policy->key, g_authorizedSelection.contentId, g_authorizedSelection.ticketId, error))
+        if (!g_authorizedLease.Commit(g_policy->format, g_policy->key, g_authorizedSelection.contentId, g_authorizedSelection.ticketId, error))
             Fatal(error.c_str());
     }
 
@@ -1877,15 +1891,17 @@ void CNativeWorldPackManagerSA::HandleStartupSelection(eGameVersion gameVersion,
         resetAuditState();
     };
 
-    if (!selection.ready || selection.policy != 1 || selection.packFormat != 1 || g_state != EState::Off)
+    const SNativeWorldPackPolicySA* selectedPolicy = SelectAuthorizedPolicy(selection);
+    if (!selection.ready || !selectedPolicy || g_state != EState::Off)
     {
-        refuse("selection-invalid", "startup selection is not the closed idle Bullworth transaction");
+        refuse("selection-invalid", "startup selection is not a closed idle native-world transaction");
         return;
     }
 
-    const SNativeWorldPackPolicySA& policy = GetNativeBullworthPackPolicy();
+    const SNativeWorldPackPolicySA& policy = *selectedPolicy;
     g_policy = &policy;
-    g_activeDirectory = SString("%s\\native-world-cache\\v1\\%s\\%s", SharedUtil::GetMTADataPath().c_str(), policy.key, selection.contentId.c_str());
+    g_activeDirectory =
+        SString("%s\\native-world-cache\\v%u\\%s\\%s", SharedUtil::GetMTADataPath().c_str(), policy.format, policy.key, selection.contentId.c_str());
     const SString manifestPath = SString("%s\\%s", g_activeDirectory.c_str(), policy.runtimeManifestFileName);
     std::string   error;
     if (!IsNativePathSafe(manifestPath) || !IsSafeRegularFile(manifestPath) || !LoadRuntimeManifest(manifestPath, error))
@@ -1980,8 +1996,9 @@ void CNativeWorldPackManagerSA::HandleStartupSelection(eGameVersion gameVersion,
         refuse(isCancelled() ? "startup-cancelled" : "cache-invalid", error);
         return;
     }
-    SharedUtil::WriteDebugEvent(SString("[NativeWorldAuthorization] state=cache-audited contentId=%s ticket=%s activation=no lease=pending",
-                                        selection.contentId.c_str(), selection.ticketId.substr(0, 8).c_str()));
+    SharedUtil::WriteDebugEvent(
+        SString("[NativeWorldAuthorization] state=cache-audited format=%u policy=%s packId=%s contentId=%s ticket=%s activation=no lease=pending",
+                policy.format, policy.key, g_manifest.packId.c_str(), selection.contentId.c_str(), selection.ticketId.substr(0, 8).c_str()));
 
     if (!CNativeModelStoreSA::ValidateExecutableAndPatchManifestReadOnly(gameVersion, error) ||
         memcmp(reinterpret_cast<const void*>(LOAD_CD_DIRECTORY_CALL), LOAD_CD_DIRECTORY_CALL_BYTES, sizeof(LOAD_CD_DIRECTORY_CALL_BYTES)) != 0)

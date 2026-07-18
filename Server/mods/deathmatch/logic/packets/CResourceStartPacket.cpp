@@ -128,8 +128,13 @@ bool CResourceStartPacket::Write(NetBitStreamInterface& BitStream) const
                                              : nativeWorldPack.format == 2 && BitStream.Can(eBitStreamVersion::NativeWorldStaticWorldV2Transport);
     if (nativeWorldPack.present && m_pResource->IsClientFilesOn() && canWriteNativeWorldPack)
     {
+        // A format-2 transport client predates generic startup authorization.
+        // Degrade its opted-in descriptor to the same inert N group instead of
+        // exposing an A tuple that the older parser cannot safely interpret.
         const bool writeStartupAuthorization =
-            nativeWorldPack.format == 1 && nativeWorldPack.startupAuthorization && BitStream.Can(eBitStreamVersion::NativeWorldStartupAuthorization);
+            nativeWorldPack.startupAuthorization &&
+            ((nativeWorldPack.format == 1 && BitStream.Can(eBitStreamVersion::NativeWorldStartupAuthorization)) ||
+             (nativeWorldPack.format == 2 && BitStream.Can(eBitStreamVersion::NativeWorldStaticWorldV2StartupAuthorization)));
         BitStream.Write(static_cast<unsigned char>(writeStartupAuthorization ? 'A' : 'N'));
         BitStream.Write(nativeWorldPack.format);
         BitStream.Write(static_cast<unsigned char>(nativeWorldPack.files.size()));

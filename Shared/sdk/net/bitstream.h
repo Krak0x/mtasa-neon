@@ -68,6 +68,10 @@ enum class eBitStreamVersion : unsigned short
     // 2026-07-18
     NativeWorldStaticWorldV2Transport,
 
+    // Adds one-shot startup authorization for the closed version 2 static-world policy.
+    // 2026-07-18
+    NativeWorldStaticWorldV2StartupAuthorization,
+
     // This allows us to automatically increment the BitStreamVersion when things are added to this enum.
     // Make sure you only add things above this comment.
     Next,

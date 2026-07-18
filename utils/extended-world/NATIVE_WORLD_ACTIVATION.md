@@ -9,7 +9,9 @@ deferred hook installation, native commit, process-lease promotion, and an
 explicit credential-free restart to the authorized numeric endpoint.
 Checkpoint E1 adds a separate publish-only generic transport/cache format. Its
 publication and cache-hit live gates passed under the same explicit automation
-authorization on 2026-07-18; it does not extend this authorization design.
+authorization on 2026-07-18. Checkpoint E2 extends the same two-launch
+transaction to the exact `(format=2, policy=static-world-v1)` tuple and passed
+its automated live and negative gates on 2026-07-18.
 
 Read this together with `AGENTS.md`, `LIMIT_PATCHING.md`,
 `NATIVE_WORLD_HANDOFF.md`, and `NATIVE_BW_PACK.md`.
@@ -164,6 +166,13 @@ new request remains ordinary inert transport.
 The server does not need to trust or duplicate the payload's self-asserted
 hashes. After the closed client audit, the client binds the request to the
 `contentId` it derived from the exact published bytes.
+
+E2 follows the same append-only rule. A format-2 publish-capable client without
+`NativeWorldStaticWorldV2StartupAuthorization` receives the unchanged inert
+`N` group. With that exact capability, the only accepted `A` tuple is transport
+format 2, authorization wire version 2, one-shot startup mode, and compiled
+policy `static-world-v1`. The format-1 and format-2 capability paths do not
+reinterpret or downgrade one another.
 
 ## Connection snapshot
 
@@ -510,7 +519,8 @@ validated)
 - Forbid startup metadata, authorization records, activation leases, startup
   selection, hooks, and native mutation. Successful format-2 publication ends
   with `activation=no lease=no restart-required=no`.
-- Do not extend generic authorization until the separate E2 checkpoint.
+- Keep E1 inert; generic authorization belongs only to the separate E2
+  capability.
 
 The authorized E1 live gate published and then reused format-2 content ID
 `668bd36a1a2f686975277291032a2d3bef6048057660310d2673d4f5403fa645`.
@@ -520,6 +530,32 @@ unchanged. An immediate format-1 regression retained Bullworth content ID
 `6a090231416e0298eb78e671eba91d4c58ed1f9c16dfae94d162a81a52464824`
 and produced the expected inert pending authorization. This proves E1's
 transport/cache separation, not generic startup or a second-city load.
+
+### Checkpoint E2: generic static-world authorization/startup (implemented and
+live validated)
+
+- Add a separate append-only format-2 startup-authorization capability while
+  preserving E1 `N` and format-1 `N`/`A` byte-for-byte.
+- Accept only the closed tuple `(format=2, wire=2, mode=one-shot,
+  policy=static-world-v1)` and persist the common record with its format/policy
+  identity.
+- Select only the exact canonical v2 cache object; never seed or recreate
+  format-2 startup content during launch.
+- Carry the format/policy pair through cache lookup, pending lease, one-shot
+  claim, model-store preparation, second-session validation, native commit, and
+  process-lease promotion.
+- Keep publish-only E1 inert and preserve the complete format-1 startup route.
+
+The authorized E2 fixture reused Bullworth bytes and format-2 content ID
+`668bd36a1a2f686975277291032a2d3bef6048057660310d2673d4f5403fa645`.
+Ticket `f9d7b810` reached `state=active lease=process` with archive 6, 952
+models, 166 TXDs, collision slot 252, and seven IPL slots. Exact reconnect and
+resource stop/start preserved the active process. Pending ResourceStop produced
+`.revoked`, while a missing exact v2 object produced terminal `cache-invalid`,
+spent the ticket, created no replacement, and was restored byte-for-byte. E1
+still created no authorization record, format 1 still activated, and a no-URI
+launch remained absent. The fixture proves generic startup mechanics, not a
+second city or a multi-pack plan.
 
 ## Required negative tests
 
@@ -637,3 +673,17 @@ world-sync resource remain prescribed coverage rather than claimed D evidence.
 After the final credential-ordering and single-write loader hardening review,
 ticket `93e09b84` repeated the passwordless restart with new process IDs and
 again reached `state=active lease=process`.
+
+Checkpoint E2's explicitly authorized automated gate validated the complete
+format-2 transaction with ticket `f9d7b810`, including restart, exact existing
+v2 cache audit, executable preflight, claim, model-store preparation,
+second-session identity validation, native postconditions, and typed process
+lease. Active clear/restart refusal, exact reconnect, resource lifecycle,
+Bullworth travel/return, X=+9500, water at X=-9990, and all three
+COL/`moveObject` matrices passed. A pending resource stop revoked its ticket;
+an absent exact cache object produced terminal `cache-invalid` without
+recreation and with unchanged restored hashes. Publish-only E1 and complete v1
+activation both regressed cleanly. The six affected client/server projects
+built with zero errors, and the focused suite reports 81 tests with two
+optional environment-dependent skips. Three independent architecture,
+security, and code/ABI reviews found no actionable P0-P2 issue.

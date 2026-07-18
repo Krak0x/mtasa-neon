@@ -53,7 +53,7 @@ public:
 
     bool IsValid() const;
     bool RevalidateClosedObject(std::string& error) const;
-    bool Commit(const std::string& policy, const std::string& contentId, const std::string& ticketId, std::string& error);
+    bool Commit(unsigned int format, const std::string& policy, const std::string& contentId, const std::string& ticketId, std::string& error);
     void Release();
 
 private:
