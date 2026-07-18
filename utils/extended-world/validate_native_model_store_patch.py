@@ -240,8 +240,8 @@ def validate_manifest(records: dict[str, list[dict[str, object]]]) -> None:
     definitions = {item["kind"]: item for item in records["definitions"]}
     if set(definitions) != {"Atomic", "DamageAtomic", "Time"}:
         raise ValueError("unexpected model-store kinds")
-    if [definitions[name]["new_capacity"] for name in ("Atomic", "DamageAtomic", "Time")] != [15000, 160, 200]:
-        raise ValueError("model-store capacities do not match the Bullworth contract")
+    if [definitions[name]["new_capacity"] for name in ("Atomic", "DamageAtomic", "Time")] != [32000, 512, 1024]:
+        raise ValueError("model-store capacities do not match the aggregate static-world contract")
     if records["collision_definitions"][0] != {"stock_capacity": 32768, "new_capacity": 327680}:
         raise ValueError("collision-buffer capacities do not match the Bullworth contract")
 

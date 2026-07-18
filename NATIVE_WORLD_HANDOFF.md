@@ -538,8 +538,11 @@ resources and is never Git-indexed. Do not commit generated city assets.
 - Current generated Bullworth IPL placements use `lod_index = -1`; native
   spatial streaming and collision are validated, but GTA UG-equivalent
   long-distance LOD behavior is not.
-- Radar tiles, path nodes, zones/population, audio/environment data, interiors,
-  and similar city subsystems are separate from static IDE/IMG/IPL streaming.
+- Radar tiles, water, CULL/occlusion, audio/environment data and interiors are
+  separate from static IDE/IMG/IPL streaming. Path nodes, vehicle/ped paths,
+  DAT expansion, streamed SCM, new IFP/RRR content, missions/savegames and
+  ambient population are outside the multi-city capacity target. A later
+  FileID relocation must still preserve their stock partitions and references.
   Missing Bullworth radar tiles are expected at this checkpoint.
 - General multi-city capacities still require aggregate audits for model and
   streaming infos, TXDs, COL/IPL stores, archive/stream slots, buildings and
@@ -751,6 +754,25 @@ changing the closed TXD profile.
 
 ## Remaining global roadmap
 
+The aggregate static model-store foundation is implemented on `master`: the
+existing fully manifested relocation is sized to `32000` Atomic, `512`
+DamageAtomic and `1024` Time. Its policy reads back the manifest capacities
+before pack mutation. This is intentionally independent of the future FileID
+relocation and does not make IDs >= 20000 valid.
+
+The user-run Checkpoint 1 live gate completed on 2026-07-18 with format-1
+ticket `46a33f60`. The clean restart selected, audited and claimed the exact
+Bullworth cache object, revalidated the `127.0.0.1:22003` session, and reached
+`state=active activation=yes lease=process`. The registrar reported archive 6,
+952 models, 166 TXDs, collision slot 252 and seven IPL slots. Runtime
+diagnostics proved the new stores active at `14854/32000` Atomic, `136/512`
+DamageAtomic and `175/1024` Time; the same occupancy remained stable after an
+exact reconnect. The streaming-buffer floor clamped both observed requests to
+4008 blocks. Client logs contained no fatal, preflight, capacity, exception or
+crash diagnostic, and the server recorded clean join/quit/reconnect cycles.
+The expected post-activation transport refusals preserved the existing native
+world rather than attempting to republish into the active registrar.
+
 After authorized activation, item 1 is complete: E2 extends the E1 format-2
 transport boundary with strict authorization/startup without weakening format
 1. Continue with:
@@ -763,9 +785,10 @@ transport boundary with strict authorization/startup without weakening format
    process through native GTA streaming.
 4. Tune streaming memory, buffers, request lists, spatial IPL behavior and
    LOD/prefetch behavior for seamless repeated flights and stable FPS.
-5. Add optional pack components and validators for radar, paths, zones,
-   population, water, CULL/occlusion, audio, timecycle, interiors, and other
-   city systems.
+5. Add optional pack components and validators for radar, water,
+   CULL/occlusion, audio, timecycle and interiors. Do not expand paths/nodes,
+   DAT, streamed SCM, IFP/RRR, missions/savegames or ambient population as part
+   of the static multi-city target.
 6. Add server/admin/client status APIs for cached, restart-required, active,
    refused, and planned packs, with explicit process-lifetime semantics.
 7. Provide reproducible pack conversion, canonical-manifest generation,
@@ -778,7 +801,7 @@ transport boundary with strict authorization/startup without weakening format
 
 Practical milestones are: Bullworth without preinstallation; Carcer through the
 same generic path; Bullworth and Carcer simultaneously; seamless native flights;
-city radar/path/environment support; then production hardening.
+city radar/environment support; then production hardening.
 
 ## VM and verification quick reference
 

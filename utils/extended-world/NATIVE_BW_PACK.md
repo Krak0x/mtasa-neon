@@ -283,15 +283,33 @@ second city. A pending ticket was revoked by ResourceStop, and another pending
 ticket refused `cache-invalid` while the exact object was quarantined. The
 object was not recreated and all three restored hashes were unchanged.
 
-The compiled model-store policy records the relocated foundation capacities
-(`15000` Atomic, `160` DamageAtomic, and `200` Time). Preflight requires the
-exact stock occupancy and proves each derived IDE addition fits its remaining
-headroom before `AddArchive` or any pool mutation. It also hashes every DFF
-stem with GTA's own `CKeyGen::GetUppercaseKey` routine, rejects collisions
+The compiled model-store policy records the aggregate static-world foundation
+capacities (`32000` Atomic, `512` DamageAtomic, and `1024` Time). The frozen
+four-city inventory requires `24339`, `152`, and `640`, leaving explicit
+headroom of `7661`, `360`, and `384`. This checkpoint changes no FileID
+partition: IDs at or above the stock DFF boundary remain invalid until the
+separate FileID/streaming-table relocation is complete. Preflight reads the
+capacities back from the actual relocation manifest, requires an exact match
+with the selected compiled policy, then requires exact stock occupancy and
+proves each derived IDE addition fits before `AddArchive` or any pool mutation.
+It also hashes every DFF stem with GTA's own `CKeyGen::GetUppercaseKey` routine,
+rejects collisions
 within the pack, and scans all 20,000 occupied model-info pointers for the same
 key. Stock model infos retain only the key rather than the original source
 name, so a stock collision diagnostic can identify its model ID, key, and the
 custom stem but not reconstruct the stock spelling.
+
+The user-run 2026-07-18 live gate used format-1 ticket `46a33f60`. The exact
+cached Bullworth payload passed its semantic and executable preflights, the
+authorized restart reached `state=active activation=yes lease=process`, and
+the registrar committed archive 6, 952 models, 166 TXDs, collision slot 252
+and IPL slots 191 through 197. Post-registration diagnostics reported
+`14854/32000` Atomic, `136/512` DamageAtomic and `175/1024` Time. Those values
+remained unchanged after an exact reconnect, with no fatal, capacity,
+preflight, exception or crash diagnostic. Requests below the pack's streaming
+floor were safely clamped to 4008 blocks. Once active, duplicate transport
+offers were refused with `existing-native-world=preserved`, which is the
+intended process-lease behavior rather than a failed activation.
 
 Format 1 accepts exterior static binary IPLs only: every placement has area
 flags zero, no LOD link (`lodIndex == -1`), X/Y in `[-10000, 9999]`, and Z in

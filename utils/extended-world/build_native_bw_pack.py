@@ -63,9 +63,9 @@ MODEL_STORE_STOCK_OCCUPIED = {
     "timed-object": 160,
 }
 MODEL_STORE_PADDED_TARGETS = {
-    "object": 15000,
-    "object-damageable": 160,
-    "timed-object": 200,
+    "object": 32000,
+    "object-damageable": 512,
+    "timed-object": 1024,
 }
 POOL_CAPACITIES = {"model_ids": 20000, "txd_slots": 5000, "col_slots": 255, "ipl_slots": 256}
 # The standalone stock inventory contains 3607 TXDs. MTA's initialized runtime

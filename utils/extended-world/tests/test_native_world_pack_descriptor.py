@@ -47,7 +47,7 @@ class NativeWorldPackDescriptorTest(unittest.TestCase):
             self.assertIn(value, self.policy)
         for payload_value in ("bw.ide", "bw.img", "bw.col", "18631", "19582", "4007", "1126"):
             self.assertNotIn(payload_value, self.policy)
-        for trusted_value in ("15000", "160", "200", "5000", "252", "255", "191", "256"):
+        for trusted_value in ("32000", "512", "1024", "5000", "252", "255", "191", "256"):
             self.assertIn(trusted_value, self.policy)
 
     def test_checked_in_manifest_preserves_bullworth_payload_contract(self) -> None:
@@ -129,6 +129,8 @@ class NativeWorldPackDescriptorTest(unittest.TestCase):
             "modelStoreCapacities.atomic",
             "modelStoreCapacities.damageAtomic",
             "modelStoreCapacities.time",
+            "CNativeModelStoreSA::GetCapacities",
+            "native model-store foundation differs from the compiled pack policy",
             "model->ulHashKey",
             "DFF native-key collision",
             "DFF native-key collides with occupied stock model",

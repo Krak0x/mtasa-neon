@@ -1,0 +1,266 @@
+{
+  "aggregate": {
+    "asset_bytes": 1356226383,
+    "custom_models": 10918,
+    "img_bytes": 1310607360,
+    "model_store_requirements": {
+      "object": {
+        "additions": 10355,
+        "exact_required": 24339,
+        "stock_occupied": 13984
+      },
+      "object-damageable": {
+        "additions": 83,
+        "exact_required": 152,
+        "stock_occupied": 69
+      },
+      "timed-object": {
+        "additions": 480,
+        "exact_required": 640,
+        "stock_occupied": 160
+      }
+    },
+    "placements": 33849,
+    "source_ipls": 121,
+    "txds": 1324
+  },
+  "cities": [
+    {
+      "fingerprints": {
+        "all_static_assets": {
+          "bytes": 169381156,
+          "files": 2070,
+          "sha256": "f830f5fa5713ab375d011f71df96e893e95f70fc26ec73707c2f85336f9821ba"
+        },
+        "col": {
+          "bytes": 8205604,
+          "files": 952,
+          "sha256": "806d29027f0bdd8b502e0b4952dc057d5611c2c3a80f4f4a4e56bd8f73a0abd3"
+        },
+        "dff": {
+          "bytes": 41205760,
+          "files": 952,
+          "sha256": "25b6b6880c45896dedc4cbc46a308e53e0f5d26c94c7087f9899b73d9373934a"
+        },
+        "map_data.lua": {
+          "bytes": 781250,
+          "sha256": "b5fe44847754d24060fc809cac2acc451ff6019d2d4ebd3c432eab76616070ad"
+        },
+        "txd": {
+          "bytes": 119969792,
+          "files": 166,
+          "sha256": "b1635cd0791e789d1d3b937cedfa4f7f34bfcdee5828ec7240dfe5926ed34166"
+        }
+      },
+      "img": [
+        {
+          "bytes": 41236480,
+          "entries": 952,
+          "extensions": {"dff": 952},
+          "path": "bw_models.img",
+          "sectors": 20135,
+          "sha256": "3838ddfafb60547247551490732525e373dc2667a08548165a5f5f5ec7a3cad4"
+        },
+        {
+          "bytes": 119975936,
+          "entries": 166,
+          "extensions": {"txd": 166},
+          "path": "bw_textures.img",
+          "sectors": 58582,
+          "sha256": "e5dff3ae13576de19c205f69df8aeb4fa13f7810d496eae64f808f24d615da86"
+        }
+      ],
+      "map": {
+        "model_types": {"object": 870, "object-damageable": 67, "timed-object": 15},
+        "models_custom": 952,
+        "models_native": 0,
+        "placements": 2962,
+        "placements_native": 0,
+        "source_ipls": 7
+      },
+      "pack_id": "bullworth"
+    },
+    {
+      "fingerprints": {
+        "all_static_assets": {
+          "bytes": 238625320,
+          "files": 7646,
+          "sha256": "99a3c7654c7739f34f2ff8201036ed53cbdb266383e518c7addd1b86fe0d384e"
+        },
+        "col": {
+          "bytes": 4350504,
+          "files": 3495,
+          "sha256": "da37d9f44a029b127d066ede7e7eb381df417b98f3cd22cb70233faa364fa732"
+        },
+        "dff": {
+          "bytes": 78913536,
+          "files": 3497,
+          "sha256": "88d719bbd7fddc3afd1733fb34e8443f2c8bd064b3b0f2792c16196baae8f484"
+        },
+        "map_data.lua": {
+          "bytes": 2489550,
+          "sha256": "677b91a08730b6e503cfa9ae0a4ae6bded252f4f3112a49505ae852c18eaca4f"
+        },
+        "txd": {
+          "bytes": 155361280,
+          "files": 654,
+          "sha256": "ceb384f16051ddfa010d28975d928eff14c8d4c1484fdf2d58ff482a9c071662"
+        }
+      },
+      "img": [
+        {
+          "bytes": 79026176,
+          "entries": 3497,
+          "extensions": {"dff": 3497},
+          "path": "vc_models.img",
+          "sectors": 38587,
+          "sha256": "5cf4ac75011fed4df05c72373b1495d41db64de8adb2b186392371d83b43c260"
+        },
+        {
+          "bytes": 155383808,
+          "entries": 654,
+          "extensions": {"txd": 654},
+          "path": "vc_textures.img",
+          "sectors": 75871,
+          "sha256": "60b2b4aa762192db240a13d6c9336f8367eb8292337b901bf792e21303ba43ab"
+        }
+      ],
+      "map": {
+        "model_types": {"object": 3105, "object-damageable": 1, "timed-object": 391},
+        "models_custom": 3497,
+        "models_native": 4,
+        "placements": 8588,
+        "placements_native": 31,
+        "source_ipls": 56
+      },
+      "pack_id": "vice-city"
+    },
+    {
+      "fingerprints": {
+        "all_static_assets": {
+          "bytes": 124593269,
+          "files": 6436,
+          "sha256": "b3af590cd1253c3536ae5dd26633ed1056bd3c3637bb3429252a0893a55b8e03"
+        },
+        "col": {
+          "bytes": 4299108,
+          "files": 3019,
+          "sha256": "88fdba76c07f74aaa6025b523a6e6c66d024bab23e81efd7e411ef2bce9f3c24"
+        },
+        "dff": {
+          "bytes": 68322065,
+          "files": 3019,
+          "sha256": "3a1ccc3dcf3ae279e6dd0edc4a09b961a2ab02e022441656f34c64a107547944"
+        },
+        "map_data.lua": {
+          "bytes": 2648697,
+          "sha256": "1597f9c3026fc8641202b03ccb03f019292e29a270d0c00052ac2c81c684feab"
+        },
+        "txd": {
+          "bytes": 51972096,
+          "files": 398,
+          "sha256": "da5310c09eaecc35a179c45c6eaab6b0693eeacc2dc2a6af63d3f4e50ae93416"
+        }
+      },
+      "img": [
+        {
+          "bytes": 68421632,
+          "entries": 3019,
+          "extensions": {"dff": 3019},
+          "path": "lc_models.img",
+          "sectors": 33409,
+          "sha256": "ee7093fd33b003f73f4f9261a93edb899a8ce76d34f9fca41f95314e76a2dc77"
+        },
+        {
+          "bytes": 51986432,
+          "entries": 398,
+          "extensions": {"txd": 398},
+          "path": "lc_textures.img",
+          "sectors": 25384,
+          "sha256": "47d11b1e19624131db1133083b83d530dc1a076d06ec6c99639b6ac52e2ef731"
+        }
+      ],
+      "map": {
+        "model_types": {"object": 2982, "object-damageable": 11, "timed-object": 26},
+        "models_custom": 3019,
+        "models_native": 4,
+        "placements": 9824,
+        "placements_native": 17,
+        "source_ipls": 46
+      },
+      "pack_id": "liberty-city"
+    },
+    {
+      "fingerprints": {
+        "all_static_assets": {
+          "bytes": 823626638,
+          "files": 7006,
+          "sha256": "ab1ee6b0a8e9bcc92fa1c1911d2878cf67a537a7fbb46ca00f63d5b1c6ed968b"
+        },
+        "col": {
+          "bytes": 32748752,
+          "files": 3450,
+          "sha256": "3f6429357ba5fea37b6a06f378944121124c46e63fbb0f2c7ce6a6b25a27fa54"
+        },
+        "dff": {
+          "bytes": 181542510,
+          "files": 3450,
+          "sha256": "f6949b52dac2b93bae25d1501233468e781b80499c2082818c066e37a4648968"
+        },
+        "map_data.lua": {
+          "bytes": 3220041,
+          "sha256": "702b33ef689e28fe22c2d782d5a288fb83481c5f033007786e52584501dd6ed1"
+        },
+        "txd": {
+          "bytes": 609335376,
+          "files": 106,
+          "sha256": "5d80464728d094b0b0191d031a6543d6548f8aba0d5c2ef4d62a02d8988f21d1"
+        }
+      },
+      "img": [
+        {
+          "bytes": 185102336,
+          "entries": 3450,
+          "extensions": {"dff": 3450},
+          "path": "carcer_models.img",
+          "sectors": 90382,
+          "sha256": "6512451bd6fc9bf94a83775ab43cc40d221ae8971f90da91a0065787b31c952e"
+        },
+        {
+          "bytes": 609474560,
+          "entries": 106,
+          "extensions": {"txd": 106},
+          "path": "carcer_textures.img",
+          "sectors": 297595,
+          "sha256": "52ba43a35f08197cbeb3395c1e48e17f5385d36f78a4bd3e5859d198be508903"
+        }
+      ],
+      "map": {
+        "model_types": {"object": 3398, "object-damageable": 4, "timed-object": 48},
+        "models_custom": 3450,
+        "models_native": 8,
+        "placements": 12475,
+        "placements_native": 56,
+        "source_ipls": 12
+      },
+      "pack_id": "carcer-city"
+    }
+  ],
+  "schema": 1,
+  "scope": {
+    "core": ["dff", "txd", "col", "ipl"],
+    "excluded_from_multi_city_capacity": [
+      "path-nodes",
+      "traffic-and-ped-paths",
+      "dat-expansion",
+      "streamed-scm",
+      "ifp-expansion",
+      "rrr-expansion",
+      "missions-and-savegames",
+      "ambient-population"
+    ],
+    "note": "Excluded partitions still need stock-compatible relocation references when FileID is redesigned.",
+    "optional_later": ["radar", "water", "cull-and-occlusion", "audio", "timecycle", "interiors"],
+    "preserve_stock_layout_only": ["dat", "ifp", "rrr", "scm"]
+  }
+}

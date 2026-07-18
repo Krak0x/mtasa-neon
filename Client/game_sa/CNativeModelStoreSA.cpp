@@ -15,6 +15,7 @@
 
 #include <cstdarg>
 #include <cstddef>
+#include <limits>
 
 namespace
 {
@@ -420,6 +421,16 @@ namespace
 
     bool ValidateManifest(DWORD imageSize)
     {
+        for (const SStoreDefinition& definition : STORE_DEFINITIONS)
+        {
+            if (!definition.originalCapacity || definition.newCapacity < definition.originalCapacity || !definition.stride ||
+                definition.newCapacity > (std::numeric_limits<size_t>::max() - offsetof(SStoreHeader, objects)) / definition.stride)
+            {
+                DebugLog("[NativeBW] preflight failed: invalid %s capacity/stride contract stock=%u new=%u stride=%u", definition.name,
+                         definition.originalCapacity, definition.newCapacity, definition.stride);
+                return false;
+            }
+        }
         for (const SConstructorSignature& signature : CONSTRUCTOR_SIGNATURES)
         {
             if (!ValidateBytes(signature.address, signature.expected, sizeof(signature.expected), imageSize, "model constructor"))
@@ -742,6 +753,13 @@ bool CNativeModelStoreSA::IsInstalled()
 const char* CNativeModelStoreSA::GetExecutableIdentityName()
 {
     return g_executableIdentity ? g_executableIdentity->name : nullptr;
+}
+
+void CNativeModelStoreSA::GetCapacities(unsigned int& atomic, unsigned int& damageAtomic, unsigned int& time)
+{
+    atomic = GetDefinition(EStoreKind::Atomic).newCapacity;
+    damageAtomic = GetDefinition(EStoreKind::DamageAtomic).newCapacity;
+    time = GetDefinition(EStoreKind::Time).newCapacity;
 }
 
 bool CNativeModelStoreSA::GetUsage(unsigned int& atomic, unsigned int& damageAtomic, unsigned int& time)

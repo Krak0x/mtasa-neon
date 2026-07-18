@@ -1413,6 +1413,15 @@ namespace
 
     bool PreflightRuntime(SIdePlan& ide, std::string& error)
     {
+        unsigned int atomicCapacity = 0, damageCapacity = 0, timeCapacity = 0;
+        CNativeModelStoreSA::GetCapacities(atomicCapacity, damageCapacity, timeCapacity);
+        if (atomicCapacity != g_policy->modelStoreCapacities.atomic || damageCapacity != g_policy->modelStoreCapacities.damageAtomic ||
+            timeCapacity != g_policy->modelStoreCapacities.time)
+        {
+            error = "native model-store foundation differs from the compiled pack policy";
+            return false;
+        }
+
         unsigned int atomic = 0, damage = 0, time = 0;
         if (!CNativeModelStoreSA::GetUsage(atomic, damage, time) || atomic != Pack().stockModelStores.atomic ||
             damage != Pack().stockModelStores.damageAtomic || time != Pack().stockModelStores.time)

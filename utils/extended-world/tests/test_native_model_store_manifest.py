@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import json
 import os
 import sys
 import unittest
@@ -29,6 +30,21 @@ class NativeModelStoreManifestTest(unittest.TestCase):
         self.assertEqual(51, sum(item["action"] == "Patch" for item in records["pointers"]))
         self.assertEqual(6, len(records["crt_routines"]))
         self.assertEqual(12, len(records["collision_pointers"]))
+
+    def test_capacities_cover_the_frozen_multi_city_inventory(self) -> None:
+        records = parse_manifest()
+        definitions = {item["kind"]: item for item in records["definitions"]}
+        baseline = json.loads((TOOLS / "native_world_catalog_baseline.json").read_text(encoding="utf-8"))
+        required = baseline["aggregate"]["model_store_requirements"]
+        mapping = {
+            "Atomic": required["object"]["exact_required"],
+            "DamageAtomic": required["object-damageable"]["exact_required"],
+            "Time": required["timed-object"]["exact_required"],
+        }
+        capacities = {kind: int(definition["new_capacity"]) for kind, definition in definitions.items()}
+        self.assertEqual({"Atomic": 32_000, "DamageAtomic": 512, "Time": 1_024}, capacities)
+        headroom = {kind: capacities[kind] - mapping[kind] for kind in mapping}
+        self.assertEqual({"Atomic": 7_661, "DamageAtomic": 360, "Time": 384}, headroom)
 
     def test_executable_allowlist_is_exact(self) -> None:
         actual = {

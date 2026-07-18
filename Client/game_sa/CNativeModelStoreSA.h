@@ -31,6 +31,7 @@ public:
 
     static bool        IsInstalled();
     static const char* GetExecutableIdentityName();
+    static void        GetCapacities(unsigned int& atomic, unsigned int& damageAtomic, unsigned int& time);
     static bool        GetUsage(unsigned int& atomic, unsigned int& damageAtomic, unsigned int& time);
 
     // Emits read-only occupancy/high-water diagnostics when the opt-in patch is

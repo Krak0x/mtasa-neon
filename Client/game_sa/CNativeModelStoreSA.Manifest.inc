@@ -3,9 +3,12 @@
 // these same records, so runtime writes cannot silently drift from the audited
 // executable bytes.
 
-NATIVE_MODEL_STORE_DEFINITION(Atomic, 0x00AAE950, 14000, 15000, 0x20, 0x004C5540, 0x0085BBF0)
-NATIVE_MODEL_STORE_DEFINITION(DamageAtomic, 0x00B1BF58, 70, 160, 0x24, 0x004C55A0, 0x0085BC30)
-NATIVE_MODEL_STORE_DEFINITION(Time, 0x00B1C960, 169, 200, 0x24, 0x004C5640, 0x0085BCB0)
+// Capacities cover the checkpoint-1 aggregate requirements (24339/152/640)
+// plus explicit headroom for later static cities. FileID partitions remain
+// stock in this checkpoint; increasing a store does not make new IDs valid.
+NATIVE_MODEL_STORE_DEFINITION(Atomic, 0x00AAE950, 14000, 32000, 0x20, 0x004C5540, 0x0085BBF0)
+NATIVE_MODEL_STORE_DEFINITION(DamageAtomic, 0x00B1BF58, 70, 512, 0x24, 0x004C55A0, 0x0085BC30)
+NATIVE_MODEL_STORE_DEFINITION(Time, 0x00B1C960, 169, 1024, 0x24, 0x004C5640, 0x0085BCB0)
 
 NATIVE_MODEL_STORE_CONSTRUCTOR(Atomic, 0x004C5540, 0x56, 0x8B, 0xF1, 0xE8, 0x18, 0xF5, 0xFF, 0xFF, 0xC7, 0x06, 0xF0, 0xBB, 0x85, 0x00, 0x8B, 0xC6)
 NATIVE_MODEL_STORE_CONSTRUCTOR(DamageAtomic, 0x004C55A0, 0x56, 0x8B, 0xF1, 0xE8, 0xB8, 0xF4, 0xFF, 0xFF, 0xC7, 0x06, 0x30, 0xBC, 0x85, 0x00, 0x8B, 0xC6)
