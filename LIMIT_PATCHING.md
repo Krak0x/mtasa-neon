@@ -1143,6 +1143,20 @@ all 98 runnable extended-world tests, two fixture-dependent skips and
 `git diff --check`. Gameplay validation must now cover stock San Andreas first,
 without activating a native-world pack.
 
+The first attempted stock launch then stopped safely before any native write at
+model-pointer operand `0x006B2187`. The FLA expression used the name
+`MODEL_SKIMMER`, but the generator's hand-maintained map had selected ID 190
+from another Rockstar title instead of GTA SA ID 460; the same audit found
+`MODEL_HUNTER` mapped as 155 instead of GTA SA ID 425. The regenerated
+operands are respectively `0x00A9B7F8` with target offset `0x730`, and
+`0x00A9B76C` with target offset `0x6A4`, matching both GTA reversed and the VM
+executable. The generator and off-game validator now compare every file-stable
+pointer/base operand with the raw executable and exempt only five explicitly
+listed operands reconstructed by the HOODLUM unpacker. A regression test pins
+both GTA SA model IDs. The corrected gate passes 99 tests with two skips, and
+both Win32 projects rebuild successfully; the stock gameplay retry remains
+pending.
+
 The preceding read-only baseline gate completed on 2026-07-18 with format-1 ticket
 `7a1a461a`. Both the initial stock process and the authorized replacement
 process captured the exact stock partitions and 26,316-entry table with

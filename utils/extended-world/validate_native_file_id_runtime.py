@@ -68,6 +68,17 @@ EXPECTED_RELOCATION_COUNTS = {
     "RedirectLoad": 1,
 }
 
+# These five pointer operands only take their stock values after the HOODLUM
+# unpacker reconstructs GTA's code in memory. All remaining pointer and base
+# operands are stable in the packed executable and can be checked off-game.
+PACKED_RUNTIME_ONLY_OPERANDS = {
+    0x0040122D,
+    0x00404C97,
+    0x004063F4,
+    0x00406B14,
+    0x00409BBF,
+}
+
 
 @dataclass(frozen=True)
 class Anchor:
@@ -278,16 +289,15 @@ def validate_executable(image: PeImage, anchors: list[Anchor]) -> None:
 
 
 def validate_relocation_executable(image: PeImage, patches: list[RelocationPatch]) -> None:
-    """Check only operands that remain stable in the packed stock executable.
-
-    Most pointer/base operands are validated after HOODLUM has unpacked itself,
-    immediately before installation. The linked-list opcodes, initializer
-    sentinels, and function prologues are also stable in the on-disk image and
-    give the generator an independent off-game byte gate.
-    """
+    """Check every operand that remains stable in the packed executable."""
 
     for patch in patches:
-        if patch.kind == "Movzx":
+        if patch.address in PACKED_RUNTIME_ONLY_OPERANDS:
+            continue
+        if patch.kind in {"ModelPointer", "StreamingPointer", "Value32"}:
+            assert isinstance(patch.expected, int)
+            expected = struct.pack("<I", patch.expected)
+        elif patch.kind == "Movzx":
             expected = b"\x0f\xbf"
         elif patch.kind == "Value16":
             assert isinstance(patch.expected, int)

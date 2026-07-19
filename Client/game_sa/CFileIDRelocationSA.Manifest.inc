@@ -891,7 +891,7 @@ NATIVE_FILE_ID_POINTER(Model, 0x006B1389, 0x00A9B0C8, 0x00000000)  // CModelInfo
 NATIVE_FILE_ID_POINTER(Model, 0x006B14B9, 0x00A9B0C8, 0x00000000)  // CModelInfo__ms_modelInfoPtrs.gta_sa
 NATIVE_FILE_ID_POINTER(Model, 0x006B16AA, 0x00A9B0C8, 0x00000000)  // CModelInfo__ms_modelInfoPtrs.gta_sa
 NATIVE_FILE_ID_POINTER(Model, 0x006B16F2, 0x00A9B0C8, 0x00000000)  // CModelInfo__ms_modelInfoPtrs.gta_sa
-NATIVE_FILE_ID_POINTER(Model, 0x006B2187, 0x00A9B3C0, 0x000002F8)  // CModelInfo__ms_modelInfoPtrs.gta_sa + MODEL_SKIMMER
+NATIVE_FILE_ID_POINTER(Model, 0x006B2187, 0x00A9B7F8, 0x00000730)  // CModelInfo__ms_modelInfoPtrs.gta_sa + MODEL_SKIMMER
 NATIVE_FILE_ID_POINTER(Model, 0x006B3F80, 0x00A9B0C8, 0x00000000)  // CModelInfo__ms_modelInfoPtrs.gta_sa
 NATIVE_FILE_ID_POINTER(Model, 0x006B4103, 0x00A9B0C8, 0x00000000)  // CModelInfo__ms_modelInfoPtrs.gta_sa
 NATIVE_FILE_ID_POINTER(Model, 0x006B67ED, 0x00A9B0C8, 0x00000000)  // CModelInfo__ms_modelInfoPtrs.gta_sa
@@ -916,7 +916,7 @@ NATIVE_FILE_ID_POINTER(Model, 0x006C7E86, 0x00A9B0C8, 0x00000000)  // CModelInfo
 NATIVE_FILE_ID_POINTER(Model, 0x006C7FBF, 0x00A9B0C8, 0x00000000)  // CModelInfo__ms_modelInfoPtrs.gta_sa
 NATIVE_FILE_ID_POINTER(Model, 0x006C8E63, 0x00A9B0C8, 0x00000000)  // CModelInfo__ms_modelInfoPtrs.gta_sa
 NATIVE_FILE_ID_POINTER(Model, 0x006C94D8, 0x00A9B0C8, 0x00000000)  // CModelInfo__ms_modelInfoPtrs.gta_sa
-NATIVE_FILE_ID_POINTER(Model, 0x006CC3DD, 0x00A9B334, 0x0000026C)  // CModelInfo__ms_modelInfoPtrs.gta_sa + MODEL_HUNTER
+NATIVE_FILE_ID_POINTER(Model, 0x006CC3DD, 0x00A9B76C, 0x000006A4)  // CModelInfo__ms_modelInfoPtrs.gta_sa + MODEL_HUNTER
 NATIVE_FILE_ID_POINTER(Streaming, 0x006CD355, 0x008E4CD0, 0x00000010)  // &CStreaming__ms_aInfoForModel.gta_sa->m_status
 NATIVE_FILE_ID_POINTER(Model, 0x006CE3BC, 0x00A9B0C8, 0x00000000)  // CModelInfo__ms_modelInfoPtrs.gta_sa
 NATIVE_FILE_ID_POINTER(Model, 0x006CEAF8, 0x00A9B0C8, 0x00000000)  // CModelInfo__ms_modelInfoPtrs.gta_sa

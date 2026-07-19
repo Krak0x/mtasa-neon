@@ -810,6 +810,17 @@ verification to the naked IMG-chain hook. The final `Game SA` and `Client
 Deathmatch` builds completed with zero errors. The remaining gate is stock-SA
 runtime validation before any city pack is activated.
 
+The first runtime attempt failed closed during capture, before native writes,
+at operand `0x006B2187`. The generated FLA manifest had resolved the shared
+name `MODEL_SKIMMER` through a non-SA enum as ID 190 instead of GTA SA ID 460;
+the complete named-model audit also corrected `MODEL_HUNTER` from 155 to 425.
+The generator now validates all file-stable pointer operands against the raw
+HOODLUM executable, with only five exact unpacker-reconstructed sites exempted,
+and tests pin both SA IDs. The corrected manifest, richer expected/actual
+runtime diagnostic, 99-test suite, `Game SA` build/hookcheck and `Client
+Deathmatch` build all pass. Repeat the stock-SA runtime gate with this rebuilt
+DLL.
+
 The user-run live gate completed on 2026-07-18 with format-1 ticket `7a1a461a`.
 The initial stock process and the authorized replacement process both emitted
 the exact `[NativeFileID] state=captured layout=stock ... total=26316 ...

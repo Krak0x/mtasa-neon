@@ -261,7 +261,9 @@ namespace
             }
             else if (std::memcmp(current.data(), &patch.expected, size) != 0)
             {
-                error = SString("FileID relocation operand failed validation at 0x%08X", patch.address);
+                DWORD actual{};
+                std::memcpy(&actual, current.data(), size);
+                error = SString("FileID relocation operand failed validation at 0x%08X: expected 0x%08X, got 0x%08X", patch.address, patch.expected, actual);
                 return false;
             }
             ranges.push_back({patch.address, patch.address + static_cast<DWORD>(size), index});

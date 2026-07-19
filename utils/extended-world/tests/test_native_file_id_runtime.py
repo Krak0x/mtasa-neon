@@ -56,6 +56,15 @@ class NativeFileIDRuntimeTest(unittest.TestCase):
         for left, right in (("dat", "ifp"), ("ifp", "rrr"), ("rrr", "scm"), ("scm", "loaded")):
             self.assertEqual(STOCK_LAYOUT[right] - STOCK_LAYOUT[left], TARGET_LAYOUT[right] - TARGET_LAYOUT[left])
 
+    def test_named_gta_sa_model_operands_use_sa_ids(self) -> None:
+        relocation = {patch.address: patch for patch in parse_relocation_manifest()}
+        model_base = EXPECTED_STOCK_LAYOUT["ModelInfoBegin"]
+        for address, model_id in ((0x006B2187, 460), (0x006CC3DD, 425)):
+            patch = relocation[address]
+            self.assertEqual("ModelPointer", patch.kind)
+            self.assertEqual(model_base + model_id * 4, patch.expected)
+            self.assertEqual(model_id * 4, patch.replacement)
+
     def test_mta_consumers_have_no_legacy_static_file_id_captures(self) -> None:
         roots = (
             REPOSITORY / "Client/core",

@@ -64,8 +64,8 @@ STREAMING_FIELDS = {
 
 MODEL_IDS = {
     "MODEL_MALE01": 7,
-    "MODEL_HUNTER": 155,
-    "MODEL_SKIMMER": 190,
+    "MODEL_HUNTER": 425,
+    "MODEL_SKIMMER": 460,
     "MODEL_JETPACK": 370,
     "MODEL_CAR_DOOR": 374,
     "MODEL_CAR_BUMPER": 375,
@@ -81,6 +81,18 @@ MODEL_IDS = {
     "MODEL_FHANDL": 396,
     "MODEL_FHANDR": 397,
     "MODEL_FORKLIFT": 530,
+}
+
+# HOODLUM reconstructs these operands while unpacking the normal executable,
+# so their on-disk bytes are not the values seen by GTA code at runtime. Every
+# other generated pointer operand is file-stable and must match the reference
+# executable; this catches model-name resolution errors before manifest output.
+PACKED_RUNTIME_ONLY_POINTERS = {
+    0x0040122D,
+    0x00404C97,
+    0x004063F4,
+    0x00406B14,
+    0x00409BBF,
 }
 
 PURE_BASE_EXPRESSIONS = {
@@ -296,7 +308,17 @@ def build_pointer_patches(function: str, image: PeImage) -> list[PointerPatch]:
         previous = by_address.setdefault(patch.address, patch)
         if previous != patch:
             raise ValueError(f"conflicting pointer patch at 0x{patch.address:08X}")
-    return sorted(by_address.values(), key=lambda patch: patch.address)
+    result = sorted(by_address.values(), key=lambda patch: patch.address)
+    for patch in result:
+        if patch.address in PACKED_RUNTIME_ONLY_POINTERS:
+            continue
+        actual = dword(image, patch.address)
+        if actual != patch.expected:
+            raise ValueError(
+                f"pointer operand mismatch at 0x{patch.address:08X}: "
+                f"expected 0x{patch.expected:08X}, got 0x{actual:08X} ({patch.source})"
+            )
+    return result
 
 
 def build_value_patches(function: str, image: PeImage) -> list[ValuePatch]:
