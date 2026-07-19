@@ -318,6 +318,10 @@ TAGUP = {
             {event = 37441, key = "SWE1_BT", speaker = "sweet"},
             {event = 37442, key = "SWE1_BU", speaker = "sweet"},
         },
+        -- start_talking_sweet1 applies the generic GTA FACTALK request for
+        -- exactly two seconds, then stop_talking_sweet1 clears it when the
+        -- mission-audio sample finishes.
+        facialTalkDuration = 2000,
         audioStartDelay = 700,
         leaderIdleChatLine = 4,
         handshakeLine = 6,

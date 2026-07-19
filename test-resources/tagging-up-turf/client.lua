@@ -1535,6 +1535,75 @@ local function releaseFinalSceneAudio(scene)
     return ok and result ~= false
 end
 
+local function stopFinalSceneFacialTalk(scene, reason)
+    if not scene or not scene.facialTalkPed then
+        return true
+    end
+
+    local ped = scene.facialTalkPed
+    local lineKey = scene.facialTalkLineKey
+    local speechMuted = scene.facialTalkSpeechMuted == true
+    scene.facialTalkPed = nil
+    scene.facialTalkLineKey = nil
+    scene.facialTalkSpeechMuted = nil
+
+    local stopped = true
+    if isElement(ped) then
+        if speechMuted and type(setPedScriptedSpeechMuted) == "function" then
+            local unmutedOk, unmuted = pcall(setPedScriptedSpeechMuted, ped, false)
+            stopped = stopped and unmutedOk and unmuted == true
+        end
+        if type(stopPedFacialTalk) == "function" then
+            local stopOk, stopResult = pcall(stopPedFacialTalk, ped)
+            stopped = stopped and stopOk and stopResult == true
+        else
+            stopped = false
+        end
+    end
+
+    outputDebugString(("[tagging-up-turf] Final Grove scene #%d facial stop line=%s result=%s reason=%s"):format(
+                          scene.id, tostring(lineKey), tostring(stopped), tostring(reason or "cleanup")), stopped and 3 or 2)
+    return stopped
+end
+
+local function startFinalSceneFacialTalk(scene, line)
+    stopFinalSceneFacialTalk(scene, "next_line")
+
+    local ped = line.speaker == "leader" and scene.leader or scene.sweet
+    -- GTA owns a remote player's facial controller on that player's client.
+    -- The leader starts CJ's request locally and normal player synchronization
+    -- carries that presentation to the other mission participants.
+    if line.speaker == "leader" and ped ~= localPlayer then
+        outputDebugString(("[tagging-up-turf] Final Grove scene #%d facial start line=%s delegated to leader client"):format(
+                              scene.id, line.key))
+        return true
+    end
+    if not isElement(ped) or type(setPedFacialTalk) ~= "function" then
+        return false
+    end
+
+    local speechMuted = false
+    if type(setPedScriptedSpeechMuted) == "function" and (ped == localPlayer or isElementSyncer(ped)) then
+        local mutedOk, muted = pcall(setPedScriptedSpeechMuted, ped, true)
+        speechMuted = mutedOk and muted == true
+    end
+
+    local facialOk, facialStarted = pcall(setPedFacialTalk, ped, TAGUP.finalScene.facialTalkDuration)
+    if not facialOk or facialStarted ~= true then
+        if speechMuted then
+            pcall(setPedScriptedSpeechMuted, ped, false)
+        end
+        return false
+    end
+
+    scene.facialTalkPed = ped
+    scene.facialTalkLineKey = line.key
+    scene.facialTalkSpeechMuted = speechMuted
+    outputDebugString(("[tagging-up-turf] Final Grove scene #%d facial start line=%s speaker=%s duration=%d"):format(
+                          scene.id, line.key, line.speaker, TAGUP.finalScene.facialTalkDuration))
+    return true
+end
+
 local function releaseFinalSceneCamera(scene, preserveFade)
     if not scene or not scene.cameraToken then
         return true
@@ -1568,13 +1637,14 @@ local function clearFinalScene(reason, preserveFade)
     if scene.walkAcceptedLocal and isElement(scene.sweet) and isElementSyncer(scene.sweet) and type(killPedTask) == "function" then
         killPedTask(scene.sweet, "primary", 3, false)
     end
+    local facialStopped = stopFinalSceneFacialTalk(scene, reason or "cleanup")
     local audioReleased = releaseFinalSceneAudio(scene)
     local cameraReleased = releaseFinalSceneCamera(scene, preserveFade)
-    outputDebugString(("[tagging-up-turf] Final Grove scene #%d cleanup camera=%s audio=%s reason=%s"):format(
-                          scene.id, tostring(cameraReleased), tostring(audioReleased), tostring(reason or "cleanup")),
-                      cameraReleased and audioReleased and 3 or 2)
+    outputDebugString(("[tagging-up-turf] Final Grove scene #%d cleanup camera=%s audio=%s facial=%s reason=%s"):format(
+                          scene.id, tostring(cameraReleased), tostring(audioReleased), tostring(facialStopped),
+                          tostring(reason or "cleanup")), cameraReleased and audioReleased and facialStopped and 3 or 2)
     state.finalScene = nil
-    return cameraReleased and audioReleased
+    return cameraReleased and audioReleased and facialStopped
 end
 
 local function reportFinalSceneReady(scene, result, details)
@@ -1668,7 +1738,7 @@ addEventHandler("tagup:finalScenePrepare", resourceRoot, function(sceneId, sweet
                       "setScriptCameraWidescreen", "setScriptCameraNearClip", "setScriptCameraFixed", "setScriptCameraPersist",
                       "moveScriptCamera", "trackScriptCamera", "fadeScriptCamera", "isScriptCameraFading", "setPedLookAt", "setPedGoTo",
                       "getElementBonePosition", "requestMissionAudio", "isMissionAudioLoaded", "playMissionAudio", "isMissionAudioFinished",
-                      "releaseMissionAudio"}
+                      "releaseMissionAudio", "setPedFacialTalk", "stopPedFacialTalk", "setPedScriptedSpeechMuted"}
     for _, name in ipairs(required) do
         if type(_G[name]) ~= "function" then
             state.finalScene = {id = sceneId}
@@ -1869,6 +1939,10 @@ addEventHandler("tagup:finalScenePlayAudio", resourceRoot, function(sceneId, lin
         return triggerServerEvent("tagup:finalSceneAudioFinished", resourceRoot, scene.id, lineIndex, "play_refused")
     end
     printMissionText(line.key, 4000)
+    if not startFinalSceneFacialTalk(scene, line) then
+        releaseFinalSceneAudio(scene)
+        return triggerServerEvent("tagup:finalSceneAudioFinished", resourceRoot, scene.id, lineIndex, "facial_start_refused")
+    end
     scene.audioStartedAt = getTickCount()
     if localPlayer == state.leader and lineIndex == 1 then
         local sx, sy, sz = getElementPosition(scene.sweet)
@@ -1894,11 +1968,13 @@ addEventHandler("tagup:finalScenePlayAudio", resourceRoot, function(sceneId, lin
         if not queried then
             killTimer(active.audioFinishTimer)
             active.audioFinishTimer = nil
+            stopFinalSceneFacialTalk(active, "audio_query_failed")
             triggerServerEvent("tagup:finalSceneAudioFinished", resourceRoot, active.id, lineIndex, "query_failed")
         elseif finished then
             killTimer(active.audioFinishTimer)
             active.audioFinishTimer = nil
             local elapsed = getTickCount() - active.audioStartedAt
+            stopFinalSceneFacialTalk(active, "natural_audio_finish")
             releaseFinalSceneAudio(active)
             outputDebugString(("[tagging-up-turf] Final Grove scene #%d %s finished naturally after %d ms"):format(
                                   active.id, line.key, elapsed))
