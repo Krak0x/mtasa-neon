@@ -334,6 +334,13 @@ CTaskComplexPartnerChat* CTasksSA::CreateTaskComplexPartnerChatEx(CPed* pPartner
     return pTask;
 }
 
+CTaskComplex* CTasksSA::CreateTaskComplexTurnToFaceEntity(CPed* pTarget)
+{
+    auto* pTask = NewTask<CTaskComplexTurnToFaceEntityOrCoordSA>(pTarget);
+    m_pTaskManagementSystem->AddTask(pTask);
+    return pTask;
+}
+
 CTaskSimpleStandStill* CTasksSA::CreateTaskSimpleStandStill(int iDuration)
 {
     auto* pTask = NewTask<CTaskSimpleStandStillSA>(iDuration);

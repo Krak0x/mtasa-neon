@@ -1329,7 +1329,7 @@ addEventHandler("tagup:introScenePrepare", resourceRoot, function(sceneId, sweet
     local required = {"acquireScriptCamera", "releaseScriptCamera", "isScriptCameraLeaseActive", "resetScriptCamera",
                       "setScriptCameraWidescreen", "setScriptCameraNearClip", "setScriptCameraFixed", "setScriptCameraPersist",
                       "moveScriptCamera", "trackScriptCamera", "fadeScriptCamera", "enginePreloadWorldArea", "setPedGoTo", "setPedEnterVehicle",
-                      "setPedLookAt", "killPedTask",
+                      "setPedLookAt", "setPedTurnToFace", "killPedTask",
                       "requestMissionAudio", "isMissionAudioLoaded", "playMissionAudio", "isMissionAudioFinished", "releaseMissionAudio"}
     for _, name in ipairs(required) do
         if type(_G[name]) ~= "function" then
@@ -1483,6 +1483,15 @@ addEventHandler("tagup:introScenePlayAudio", resourceRoot, function(sceneId, lin
             releaseIntroSceneAudio(active)
             outputDebugString(("[tagging-up-turf] Intro world scene #%d %s finished naturally after %d ms"):format(
                                   active.id, line.key, elapsed))
+            if lineIndex == 1 and localPlayer == state.leader then
+                local turnAccepted = setPedTurnToFace(localPlayer, active.sweet)
+                outputDebugString(("[tagging-up-turf] Intro world scene #%d native 0639 CJ -> Sweet accepted=%s"):format(
+                                      active.id, tostring(turnAccepted)), turnAccepted and 3 or 2)
+                if not turnAccepted then
+                    triggerServerEvent("tagup:introSceneAudioFinished", resourceRoot, active.id, lineIndex, "turn_refused", elapsed)
+                    return
+                end
+            end
             triggerServerEvent("tagup:introSceneAudioFinished", resourceRoot, active.id, lineIndex, "finished", elapsed)
         end
     end, 100, 0)

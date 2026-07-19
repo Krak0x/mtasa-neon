@@ -125,6 +125,7 @@ public:
     static bool SetPedChatWith(CClientPed* ped, CClientPed* partner, bool leadSpeaker, std::optional<bool> updateDirection,
                                std::optional<bool> conversationEnabled);
     static bool SetPedStandStill(CClientPed* ped, std::optional<int> duration);
+    static bool SetPedTurnToFace(CClientPed* ped, CClientPed* target);
     static bool SetPedGoToOffset(CClientPed* ped, CClientPed* target, std::optional<int> timeout, std::optional<float> radius, std::optional<float> angle,
                                  std::optional<bool> repeatTask);
     static bool SetPedKillOnFoot(CClientPed* ped, CClientPed* target);

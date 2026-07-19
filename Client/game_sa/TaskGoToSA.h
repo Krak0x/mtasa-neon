@@ -26,6 +26,7 @@ typedef DWORD CTaskUtilityLineUpPedWithCar;
 #define FUNC_CTaskComplexGoToPointAndStandStill__Constructor      0x668120
 #define FUNC_CTaskComplexGoToPointAndStandStillTimed__Constructor 0x6685E0
 #define FUNC_CTaskComplexSeekEntityRadiusAngleOffset__Constructor 0x493730
+#define FUNC_CTaskComplexTurnToFaceEntityOrCoord__Constructor     0x66B890
 #define FUNC_CTaskComplexSequence__Constructor                    0x632BD0
 #define FUNC_CTaskComplexSequence__AddTask                        0x632D10
 #define FUNC_CTaskComplexSequence__Flush                          0x632C10
@@ -156,6 +157,27 @@ class CTaskComplexSeekEntityRadiusAngleOffsetSA : public virtual CTaskComplexSA,
 public:
     CTaskComplexSeekEntityRadiusAngleOffsetSA() {};
     CTaskComplexSeekEntityRadiusAngleOffsetSA(CPed* pTarget, int iTimeout, float fRadius, float fAngleDegrees);
+};
+
+class CTaskComplexTurnToFaceEntityOrCoordSAInterface : public CTaskComplexSAInterface
+{
+public:
+    CEntitySAInterface* m_pEntityToFace;
+    bool                m_bFaceEntity;
+    unsigned char       m_ucPadding[3];
+    CVector             m_vecCoordsToFace;
+    float               m_fChangeRateMultiplier;
+    float               m_fMaxHeading;
+};
+static_assert(sizeof(CTaskComplexTurnToFaceEntityOrCoordSAInterface) == 0x28, "Unexpected CTaskComplexTurnToFaceEntityOrCoordSAInterface size");
+static_assert(offsetof(CTaskComplexTurnToFaceEntityOrCoordSAInterface, m_pEntityToFace) == 0x0C, "Invalid turn-to-face entity offset");
+static_assert(offsetof(CTaskComplexTurnToFaceEntityOrCoordSAInterface, m_fChangeRateMultiplier) == 0x20, "Invalid turn-to-face change-rate offset");
+
+class CTaskComplexTurnToFaceEntityOrCoordSA : public virtual CTaskComplexSA
+{
+public:
+    CTaskComplexTurnToFaceEntityOrCoordSA() {};
+    explicit CTaskComplexTurnToFaceEntityOrCoordSA(CPed* pTarget);
 };
 
 class CTaskComplexSequenceSAInterface : public CTaskComplexSAInterface

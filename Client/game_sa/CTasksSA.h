@@ -126,6 +126,7 @@ public:
     CTaskComplexKillPedOnFoot* CreateTaskComplexKillPedOnFoot(CPed* pTarget);
     bool                       AddPedScriptCommandTask(CPed* pPed, CTask* pTask, bool bAffectsDeadPeds = false);
     CTaskComplexPartnerChat*   CreateTaskComplexPartnerChatEx(CPed* pPartner, bool bLeadSpeaker, bool bUpdateDirection, bool bConversationEnabled);
+    CTaskComplex*              CreateTaskComplexTurnToFaceEntity(CPed* pTarget);
 
     static void StaticSetHooks();
 };

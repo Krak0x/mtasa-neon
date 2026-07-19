@@ -153,4 +153,7 @@ public:
     // factory remain ABI-compatible. Disabling conversation audio selects
     // GTA's own timed PartnerChat fallback for installations with silent speech.
     virtual CTaskComplexPartnerChat* CreateTaskComplexPartnerChatEx(CPed* pPartner, bool bLeadSpeaker, bool bUpdateDirection, bool bConversationEnabled) = 0;
+
+    // Appended to preserve every established CTasks vtable index.
+    virtual CTaskComplex* CreateTaskComplexTurnToFaceEntity(CPed* pTarget) = 0;
 };

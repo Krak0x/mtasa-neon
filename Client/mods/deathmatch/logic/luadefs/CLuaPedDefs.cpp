@@ -106,6 +106,7 @@ void CLuaPedDefs::LoadFunctions()
         {"setPedGoTo", ArgumentParser<SetPedGoTo>},
         {"setPedChatWith", ArgumentParser<SetPedChatWith>},
         {"setPedStandStill", ArgumentParser<SetPedStandStill>},
+        {"setPedTurnToFace", ArgumentParser<SetPedTurnToFace>},
         {"setPedGoToOffset", ArgumentParser<SetPedGoToOffset>},
         {"setPedKillOnFoot", ArgumentParser<SetPedKillOnFoot>},
         {"setPedWander", ArgumentParser<SetPedWander>},
@@ -277,6 +278,7 @@ void CLuaPedDefs::AddClass(lua_State* luaVM)
     lua_classfunction(luaVM, "setGoTo", "setPedGoTo");
     lua_classfunction(luaVM, "setChatWith", "setPedChatWith");
     lua_classfunction(luaVM, "setStandStill", "setPedStandStill");
+    lua_classfunction(luaVM, "setTurnToFace", "setPedTurnToFace");
     lua_classfunction(luaVM, "setGoToOffset", "setPedGoToOffset");
     lua_classfunction(luaVM, "setKillOnFoot", "setPedKillOnFoot");
     lua_classfunction(luaVM, "setWander", "setPedWander");
@@ -2752,6 +2754,18 @@ bool CLuaPedDefs::SetPedStandStill(CClientPed* ped, std::optional<int> duration)
     }
 
     auto* task = g_pGame->GetTasks()->CreateTaskSimpleStandStill(taskDuration);
+    return DispatchPedScriptCommandTask(ped->GetGamePlayer(), task);
+}
+
+bool CLuaPedDefs::SetPedTurnToFace(CClientPed* ped, CClientPed* target)
+{
+    if (!ped || !target || ped == target || !ped->IsStreamedIn() || !target->IsStreamedIn() || ped->IsDead() || target->IsDead() || !ped->GetGamePlayer() ||
+        !target->GetGamePlayer() || (!ped->IsLocalPlayer() && !ped->IsLocalEntity() && !ped->IsSyncing()))
+    {
+        return false;
+    }
+
+    auto* task = g_pGame->GetTasks()->CreateTaskComplexTurnToFaceEntity(target->GetGamePlayer());
     return DispatchPedScriptCommandTask(ped->GetGamePlayer(), task);
 }
 

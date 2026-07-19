@@ -221,6 +221,9 @@ CTaskSA* CTaskManagementSystemSA::CreateAppropriateTask(CTaskSAInterface* pTaskI
         case TASK_COMPLEX_SEEK_ENTITY:
             pTaskSA = new CTaskComplexSeekEntityRadiusAngleOffsetSA;
             break;
+        case TASK_COMPLEX_TURN_TO_FACE_ENTITY:
+            pTaskSA = new CTaskComplexTurnToFaceEntityOrCoordSA;
+            break;
         case TASK_COMPLEX_FACIAL:
             pTaskSA = new CTaskComplexFacialSA(false);
             break;

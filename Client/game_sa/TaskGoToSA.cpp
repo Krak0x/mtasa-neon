@@ -158,6 +158,22 @@ CTaskComplexSeekEntityRadiusAngleOffsetSA::CTaskComplexSeekEntityRadiusAngleOffs
     pInterface->m_fAngleRadians = fAngleDegrees * (3.14159265358979323846f / 180.0f);
 }
 
+CTaskComplexTurnToFaceEntityOrCoordSA::CTaskComplexTurnToFaceEntityOrCoordSA(CPed* pTarget)
+{
+    CreateTaskInterface(sizeof(CTaskComplexTurnToFaceEntityOrCoordSAInterface));
+    if (!IsValid() || !pTarget)
+        return;
+
+    auto* pInterface = static_cast<CTaskComplexTurnToFaceEntityOrCoordSAInterface*>(GetInterface());
+    auto* pTargetInterface = static_cast<CEntitySAInterface*>(pTarget->GetPedInterface());
+
+    // Opcode 0639 uses GTA's entity constructor with these exact turn-rate and
+    // angular-tolerance constants. The task keeps a safe reference to the live
+    // target and builds its own AchieveHeading subtask.
+    using Constructor = void(__thiscall*)(CTaskComplexTurnToFaceEntityOrCoordSAInterface*, CEntitySAInterface*, float, float);
+    reinterpret_cast<Constructor>(FUNC_CTaskComplexTurnToFaceEntityOrCoord__Constructor)(pInterface, pTargetInterface, 0.5f, 0.2f);
+}
+
 CTaskComplexUseSequenceSA::CTaskComplexUseSequenceSA(CTaskSA* pTask, bool bRepeat)
 {
     if (!pTask)
