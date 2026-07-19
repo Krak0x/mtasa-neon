@@ -1172,7 +1172,10 @@ operands and seven signed-to-unsigned reads. Generation and validation use the
 pinned MTA ProgramData executable hash
 `77485627b4ef17f92819318050d501e171c7ab84ceffe5091b973b9e29f9cc98`;
 all 1,398 writes match it, including the crash-site opcode. This corrective
-branch has not yet been synchronized or built while another agent owns master.
+checkpoint was fast-forwarded into `master` as `fd50b6e07`, synchronized with
+verified hashes to the VM-local tree on 2026-07-19, and rebuilt successfully as
+`Game SA` plus `Client Deathmatch` in `Release|Win32`. The corrected stock
+gameplay retry remains pending.
 
 The preceding read-only baseline gate completed on 2026-07-18 with format-1 ticket
 `7a1a461a`. Both the initial stock process and the authorized replacement

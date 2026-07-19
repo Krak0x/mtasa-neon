@@ -825,14 +825,16 @@ The retry passed capture/installation but crashed in the active appended
 HOODLUM body at `0x01567513`. FileID 40,001 (`ESI=0x9C41`) had been
 sign-extended at `0x01567506`, producing a negative streaming-list index. The
 root cause was Neon's blanket exclusion of FLA addresses above `0x01000000`;
-the MTA ProgramData executable demonstrably executes those bodies. The isolated
-corrective branch now includes 122 previously omitted high sites (28 model
+the MTA ProgramData executable demonstrably executes those bodies. The
+corrective checkpoint now includes 122 previously omitted high sites (28 model
 pointers, 51 streaming pointers, 36 bases and seven `movsx` conversions), for
 1,398 total writes, and validates them against ProgramData hash `77485627...`.
 This also invalidates the same low-only assumption in the world-sector manifest;
 its five omitted high CodeMover sites require a separate completeness audit.
-Do not sync or build the corrective branch while the other agent owns master
-and the shared VM transaction.
+The checkpoint was fast-forwarded into `master` as `fd50b6e07`, synchronized
+with verified hashes on 2026-07-19, and rebuilt successfully as `Game SA` plus
+`Client Deathmatch` in `Release|Win32`. The corrected stock-SA live retry is the
+remaining gate.
 
 The user-run live gate completed on 2026-07-18 with format-1 ticket `7a1a461a`.
 The initial stock process and the authorized replacement process both emitted

@@ -364,9 +364,11 @@ python3 utils/extended-world/validate_native_file_id_runtime.py \
 python3 -m unittest utils.extended-world.tests.test_native_file_id_runtime
 ```
 
-The relocation follow-up is locally validated but has not been VM-synchronized,
-compiled or tested in game. No consumer may regain a private pointer or
-reconstruct a partition from a constant.
+The relocation follow-up is locally validated, VM-synchronized with verified
+hashes and compiled successfully in `Game SA` plus `Client Deathmatch` as
+`Release|Win32`. It has not yet passed the corrected stock-SA live gate. No
+consumer may regain a private pointer or reconstruct a partition from a
+constant.
 
 The user-run 2026-07-18 live gate used format-1 ticket `46a33f60`. The exact
 cached Bullworth payload passed its semantic and executable preflights, the
