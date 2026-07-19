@@ -441,7 +441,7 @@ dynamic vehicles, peds, and objects keeps its original dimensions and storage;
 the Fastman92 references to it are retained so the whole world-sector patch
 remains coherent.
 
-The generated normal-executable manifests currently install:
+The existing low-address manifests currently install:
 
 ```text
 Moved instruction sites       392
@@ -452,11 +452,15 @@ Redirected functions/hooks      12
 Total direct patch entries     905
 ```
 
-Fastman92 lists 397 `CCodeMover` calls. Five target compact-executable mirror
-addresses above `0x01000000`; MTA runs the normal HOODLUM image, so the generator
-intentionally excludes those five and emits 392 moved sites. Of the 12 redirects,
-11 come from Fastman92 and one is Neon's additional `CWorld::GetSector` fix
-described below.
+Fastman92 lists 397 `CCodeMover` calls. The generator historically excluded five
+addresses above `0x01000000` and emitted 392 moved sites. The FileID stock gate
+subsequently proved that current MTA executes HOODLUM code from the appended
+`0x0156xxxx` region of its ProgramData executable. Therefore the earlier claim
+that only the low image executes is false: those five world-sector sites are a
+known completeness gap and must be regenerated and validated against the pinned
+expanded executable before this patch can be considered production-complete.
+Of the 12 redirects, 11 come from Fastman92 and one is Neon's additional
+`CWorld::GetSector` fix described below.
 
 All direct patch operands and relocation sources are read and prepared before
 the first executable write. The captured bytes are checked again immediately
@@ -1102,20 +1106,20 @@ SCM and new IFP/RRR content remain out of scope, but their bases must move to
 preserve the namespace.
 
 `CFileIDRelocationSA.Manifest.inc` is generated from Fastman92
-`FileIDlimit.cpp` and `GTASA_int32_base_movsx_patches.h`. Its 1,276 disjoint
-writes comprise 712 model-table operands, 308 streaming-table operands, 222
-pure partition-base operands, 27 linked-list `movsx` to `movzx` corrections,
+`FileIDlimit.cpp` and `GTASA_int32_base_movsx_patches.h`. Its 1,398 disjoint
+writes comprise 740 model-table operands, 359 streaming-table operands, 258
+pure partition-base operands, 34 linked-list `movsx` to `movzx` corrections,
 four 16-bit sentinel IDs, two save/load compatibility hooks, and one Neon
 control-flow hook for `nextModelOnCd`. That extra hook preserves `0xFFFF` as the
 end-of-IMG-chain condition after the corresponding load becomes unsigned; a
 plain `movzx` would otherwise compare 65,535 with stock `-1` and index out of
-range. The generator intentionally excludes compact-executable mirrors above
-`0x01000000`, as MTA runs the normal HOODLUM image.
+range. The manifest covers both low entry code and the active HOODLUM bodies in
+MTA's expanded ProgramData executable.
 
 The installer allocates 32,001 model pointers and 42,342 streaming records,
 copies every stock partition into its new base, copies the four list sentinels,
 prepares all writes before commit, and publishes the relocated arrays only
-after all writes succeed. Since non-model FileIDs now exceed 32,767, the 27
+after all writes succeed. Since non-model FileIDs now exceed 32,767, the 34
 linked-list reads are made unsigned while DFF IDs remain at or below 31,999 and
 retain the signed 16-bit model-ID contract. Save/load hooks continue to
 serialize exactly the stock 26,316 records in stock partition order, including
@@ -1138,7 +1142,7 @@ the model pointers around `FileIDlimit.cpp:7427`, streaming pointers around
 save/load patching around `:9376` and `:15887`; GTA reversed documents the
 stock save/load loops in `source/game_sa/Streaming.cpp:1187`.
 
-The final pre-game gate passed the native FileID validator with 1,276 writes,
+The initial pre-game gate passed the native FileID validator with 1,276 writes,
 all 98 runnable extended-world tests, two fixture-dependent skips and
 `git diff --check`. Gameplay validation must now cover stock San Andreas first,
 without activating a native-world pack.
@@ -1156,6 +1160,19 @@ listed operands reconstructed by the HOODLUM unpacker. A regression test pins
 both GTA SA model IDs. The corrected gate passes 99 tests with two skips, and
 both Win32 projects rebuild successfully; the stock gameplay retry remains
 pending.
+
+That retry installed the relocation and then crashed in
+`CStreamingInfo::AddToList` at `gta_sa.exe+0x01167513`. The dump held
+`ESI=0x9C41` (FileID 40,001): the active high body at `0x01567506` still used
+`movsx`, converted the valid uint16 ID into a negative array index and wrote out
+of range at `0x01567513`. This proved that excluding all FLA sites above
+`0x01000000` was unsafe. The corrected isolated checkpoint adds all 122 relevant
+high sites: 28 model pointers, 51 streaming pointers, 36 partition-base
+operands and seven signed-to-unsigned reads. Generation and validation use the
+pinned MTA ProgramData executable hash
+`77485627b4ef17f92819318050d501e171c7ab84ceffe5091b973b9e29f9cc98`;
+all 1,398 writes match it, including the crash-site opcode. This corrective
+branch has not yet been synchronized or built while another agent owns master.
 
 The preceding read-only baseline gate completed on 2026-07-18 with format-1 ticket
 `7a1a461a`. Both the initial stock process and the authorized replacement

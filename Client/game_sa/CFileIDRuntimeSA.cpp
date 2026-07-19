@@ -105,7 +105,7 @@ namespace
 #undef NATIVE_FILE_ID_UINT16
 #undef NATIVE_FILE_ID_REDIRECT
     };
-    static_assert(std::size(RELOCATION_PATCHES) == 1276);
+    static_assert(std::size(RELOCATION_PATCHES) == 1398);
 
     struct SStockPartition
     {

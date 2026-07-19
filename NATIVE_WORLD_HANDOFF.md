@@ -789,8 +789,8 @@ DAT is the path-node partition and is now explicitly kept at its stock count of
 64. IFP/RRR/SCM counts also remain stock. Only DFF/TXD/COL/IPL address space is
 reserved at this checkpoint; TXD/COL/IPL store counts are not enlarged yet.
 
-The generated manifest contains 1,276 non-overlapping normal-executable writes:
-712 model pointers, 308 streaming pointers, 222 base operands, 27 unsigned
+The generated manifest contains 1,398 non-overlapping expanded-executable writes:
+740 model pointers, 359 streaming pointers, 258 base operands, 34 unsigned
 linked-list opcode fixes, four sentinel IDs, two save/load redirects and one
 `nextModelOnCd` sentinel-control hook. The latter prevents unsigned `0xFFFF`
 from bypassing GTA's stock 32-bit `-1` end-of-chain comparison. The new tables
@@ -802,7 +802,7 @@ Existing runtime `CGame` accessors still route Game SA, Multiplayer SA, Client
 Core and Client Deathmatch consumers through the relocated state.
 
 The focused static suite and off-game raw HOODLUM validator pass, including
-deterministic regeneration from the local FLA sources: 1,276 writes, 98
+deterministic regeneration from the local FLA sources: initially 1,276 writes, 98
 runnable extended-world tests, two fixture-dependent skips and a clean diff
 check. The reviewed `utils/vm-build.ps1` transaction copied all ten checkpoint
 files, then a one-file corrective transaction added the mandatory local-size
@@ -820,6 +820,19 @@ and tests pin both SA IDs. The corrected manifest, richer expected/actual
 runtime diagnostic, 99-test suite, `Game SA` build/hookcheck and `Client
 Deathmatch` build all pass. Repeat the stock-SA runtime gate with this rebuilt
 DLL.
+
+The retry passed capture/installation but crashed in the active appended
+HOODLUM body at `0x01567513`. FileID 40,001 (`ESI=0x9C41`) had been
+sign-extended at `0x01567506`, producing a negative streaming-list index. The
+root cause was Neon's blanket exclusion of FLA addresses above `0x01000000`;
+the MTA ProgramData executable demonstrably executes those bodies. The isolated
+corrective branch now includes 122 previously omitted high sites (28 model
+pointers, 51 streaming pointers, 36 bases and seven `movsx` conversions), for
+1,398 total writes, and validates them against ProgramData hash `77485627...`.
+This also invalidates the same low-only assumption in the world-sector manifest;
+its five omitted high CodeMover sites require a separate completeness audit.
+Do not sync or build the corrective branch while the other agent owns master
+and the shared VM transaction.
 
 The user-run live gate completed on 2026-07-18 with format-1 ticket `7a1a461a`.
 The initial stock process and the authorized replacement process both emitted

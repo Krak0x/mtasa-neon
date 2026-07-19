@@ -336,7 +336,7 @@ The capture manifest is `Client/game_sa/CFileIDRuntimeSA.Manifest.inc`; the
 generated relocation manifest is `Client/game_sa/CFileIDRelocationSA.Manifest.inc`.
 Runtime startup checks the PE32 headers, exact instruction bytes and operands,
 strict partition ordering, sentinel positions, table stride/count, and full
-readability of both arrays. It rechecks all 1,276 relocation writes directly
+readability of both arrays. It rechecks all 1,398 relocation writes directly
 before commit. A mismatch aborts before FileID mutation. Successful diagnostics
 first end in `state=prepared ... nativeWrites=no`, then
 `state=installed ... total=42341 ... nativeWrites=yes datExpansion=no
@@ -344,11 +344,17 @@ pathsExpansion=no`.
 
 The relocation reserves 32,000 DFF, 8,000 TXD, 512 COL and 1,024 IPL FileIDs,
 but leaves the actual TXD/COL/IPL store counts unchanged for the next checkpoint.
-It patches all relocated table pointers and pure base operands, makes 27
+It patches all relocated table pointers and pure base operands, makes 34
 16-bit streaming-list reads unsigned, preserves the `nextModelOnCd` `0xFFFF`
 termination branch with a dedicated hook, relocates the four sentinels, and
 hooks save/load so the vanilla 26,316-byte flag block, including four sentinel
 records, remains compatible.
+
+The 1,398-write manifest includes 122 operands/opcodes in MTA's active appended
+HOODLUM region above `0x01000000`. Omitting that region sign-extended FileID
+40,001 in `CStreamingInfo::AddToList` and crashed at `0x01567513`; the expanded
+ProgramData executable is therefore the required regeneration/validation
+reference, not the low raw executable alone.
 
 The same contract can be checked off-game with:
 

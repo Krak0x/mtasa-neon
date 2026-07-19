@@ -40,11 +40,20 @@ class NativeFileIDRuntimeTest(unittest.TestCase):
         self.assertEqual(10, len(anchors))
         self.assertEqual(EXPECTED_STOCK_LAYOUT, {anchor.kind: anchor.stock_value for anchor in anchors})
         self.assertEqual(EXPECTED_RELOCATION_COUNTS, Counter(patch.kind for patch in relocation))
-        self.assertEqual(1_276, len(relocation))
+        self.assertEqual(1_398, len(relocation))
         next_on_cd = [patch for patch in relocation if patch.kind == "RedirectNextOnCd"]
         self.assertEqual(1, len(next_on_cd))
         self.assertEqual(0x0040CD10, next_on_cd[0].address)
         self.assertEqual(b"\x83\xfe\xff\x0f\x84", next_on_cd[0].expected)
+        high_movzx = [patch for patch in relocation if patch.address == 0x01567506]
+        self.assertEqual(1, len(high_movzx))
+        self.assertEqual("Movzx", high_movzx[0].kind)
+        high_patches = [patch for patch in relocation if patch.address >= 0x01000000]
+        self.assertEqual(
+            {"ModelPointer": 28, "StreamingPointer": 51, "Value32": 36, "Movzx": 7},
+            dict(Counter(patch.kind for patch in high_patches)),
+        )
+        self.assertEqual(122, len(high_patches))
 
     def test_target_layout_reserves_only_static_world_partitions(self) -> None:
         self.assertEqual((31_999, 32_000), (TARGET_LAYOUT["txd"] - 1, TARGET_LAYOUT["txd"]))
@@ -136,12 +145,12 @@ class NativeFileIDRuntimeTest(unittest.TestCase):
         )
         executable = Path(
             os.environ.get(
-                "GTA_SA_REFERENCE_EXE",
-                "/Users/salimtrouve/Documents/GitHub/gta-reversed-dryxio/gta_sa_compact1.0.exe",
+                "MTA_GTA_SA_RUNTIME_EXE",
+                str(REPOSITORY / ".tmp/mta-programdata-gta_sa.exe"),
             )
         )
         if not all(path.is_file() for path in (file_id_limit, int32_header, executable)):
-            self.skipTest("FLA source or raw HOODLUM reference executable is unavailable")
+            self.skipTest("FLA source or expanded MTA HOODLUM executable is unavailable")
         with tempfile.TemporaryDirectory() as temporary:
             generated = Path(temporary) / "CFileIDRelocationSA.Manifest.inc"
             subprocess.run(
@@ -162,13 +171,12 @@ class NativeFileIDRuntimeTest(unittest.TestCase):
 
     def test_local_stock_executable_when_available(self) -> None:
         candidates = (
-            Path(os.environ["GTA_SA_EXE"]) if "GTA_SA_EXE" in os.environ else None,
-            Path("/Users/salimtrouve/Documents/GitHub/gta-reversed-dryxio/gta_sa_compact1.0.exe"),
-            Path("/Users/salimtrouve/Documents/GTA-SanAndreas/gta_sa.exe"),
+            Path(os.environ["MTA_GTA_SA_RUNTIME_EXE"]) if "MTA_GTA_SA_RUNTIME_EXE" in os.environ else None,
+            REPOSITORY / ".tmp/mta-programdata-gta_sa.exe",
         )
         candidate = next((path for path in candidates if path is not None and path.is_file()), None)
         if candidate is None:
-            self.skipTest("stock GTA SA 1.0 US HOODLUM executable is unavailable")
+            self.skipTest("expanded MTA HOODLUM executable is unavailable")
         anchors = parse_manifest()
         relocation = parse_relocation_manifest()
         validate_manifest(anchors)

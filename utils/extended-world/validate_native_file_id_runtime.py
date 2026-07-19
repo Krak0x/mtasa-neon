@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import re
 import struct
 from dataclasses import dataclass
@@ -16,6 +17,8 @@ TOOLS = Path(__file__).resolve().parent
 REPOSITORY = TOOLS.parents[1]
 DEFAULT_MANIFEST = REPOSITORY / "Client/game_sa/CFileIDRuntimeSA.Manifest.inc"
 DEFAULT_RELOCATION_MANIFEST = REPOSITORY / "Client/game_sa/CFileIDRelocationSA.Manifest.inc"
+EXPECTED_EXPANDED_IMAGE_END = 0x01577000
+EXPECTED_MTA_RUNTIME_SHA256 = "77485627b4ef17f92819318050d501e171c7ab84ceffe5091b973b9e29f9cc98"
 
 CALL = re.compile(r"^NATIVE_FILE_ID_ANCHOR\((.*)\)$")
 RELOCATION_CALL = re.compile(r"^NATIVE_FILE_ID_(POINTER|VALUE|MOVZX|UINT16|REDIRECT)\((.*?)\)(?:\s*//.*)?$")
@@ -58,10 +61,10 @@ TARGET_LAYOUT = {
     "total": 42_341,
 }
 EXPECTED_RELOCATION_COUNTS = {
-    "ModelPointer": 712,
-    "StreamingPointer": 308,
-    "Value32": 222,
-    "Movzx": 27,
+    "ModelPointer": 740,
+    "StreamingPointer": 359,
+    "Value32": 258,
+    "Movzx": 34,
     "Value16": 4,
     "RedirectNextOnCd": 1,
     "RedirectSave": 1,
@@ -213,8 +216,8 @@ def validate_relocation_manifest(patches: list[RelocationPatch]) -> None:
         if patch.kind not in counts:
             raise ValueError(f"unexpected FileID relocation kind: {patch.kind}")
         counts[patch.kind] += 1
-        if not 0x00400000 <= patch.address < 0x01000000:
-            raise ValueError(f"FileID relocation address outside the normal executable at 0x{patch.address:08X}")
+        if not 0x00400000 <= patch.address < EXPECTED_EXPANDED_IMAGE_END:
+            raise ValueError(f"FileID relocation address outside MTA's expanded executable at 0x{patch.address:08X}")
         ranges.append((patch.address, patch.address + patch.size, patch.kind))
 
         if patch.kind == "ModelPointer":
@@ -279,6 +282,9 @@ def validate_relocation_manifest(patches: list[RelocationPatch]) -> None:
 
 
 def validate_executable(image: PeImage, anchors: list[Anchor]) -> None:
+    digest = hashlib.sha256(image.data).hexdigest()
+    if digest != EXPECTED_MTA_RUNTIME_SHA256:
+        raise ValueError(f"unexpected expanded MTA gta_sa.exe SHA-256: {digest}")
     if image.machine != 0x14C or image.magic != 0x10B or image.image_base != 0x00400000:
         raise ValueError("FileID anchors require a 32-bit PE32 image based at 0x00400000")
     for anchor in anchors:
@@ -327,7 +333,7 @@ def main() -> None:
     validate_executable(image, anchors)
     validate_relocation_executable(image, relocation)
     print(
-        "native FileID manifests OK: 10 capture anchors, 1,276 relocation writes, "
+        "native FileID manifests OK: 10 capture anchors, 1,398 relocation writes, "
         "target total=42341, DAT/path expansion=no"
     )
 
