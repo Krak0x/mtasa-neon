@@ -50,15 +50,15 @@ STOCK_LAYOUT = {
 TARGET_LAYOUT = {
     "dff": 0,
     "txd": 32_000,
-    "col": 40_000,
-    "ipl": 40_512,
-    "dat": 41_536,
-    "ifp": 41_600,
-    "rrr": 41_780,
-    "scm": 42_255,
-    "loaded": 42_337,
-    "requested": 42_339,
-    "total": 42_341,
+    "col": 37_000,
+    "ipl": 37_255,
+    "dat": 37_511,
+    "ifp": 37_575,
+    "rrr": 37_755,
+    "scm": 38_230,
+    "loaded": 38_312,
+    "requested": 38_314,
+    "total": 38_316,
 }
 EXPECTED_RELOCATION_COUNTS = {
     "ModelPointer": 740,
@@ -268,12 +268,12 @@ def validate_relocation_manifest(patches: list[RelocationPatch]) -> None:
 
     if TARGET_LAYOUT["txd"] - TARGET_LAYOUT["dff"] != 32_000:
         raise ValueError("target DFF partition is not 32,000 entries")
-    if TARGET_LAYOUT["col"] - TARGET_LAYOUT["txd"] != 8_000:
-        raise ValueError("target TXD partition is not 8,000 entries")
-    if TARGET_LAYOUT["ipl"] - TARGET_LAYOUT["col"] != 512:
-        raise ValueError("target COL partition is not 512 entries")
-    if TARGET_LAYOUT["dat"] - TARGET_LAYOUT["ipl"] != 1_024:
-        raise ValueError("target IPL partition is not 1,024 entries")
+    if TARGET_LAYOUT["col"] - TARGET_LAYOUT["txd"] != 5_000:
+        raise ValueError("target TXD partition does not match the current 5,000-entry pool")
+    if TARGET_LAYOUT["ipl"] - TARGET_LAYOUT["col"] != 255:
+        raise ValueError("target COL partition does not match the stock 255-entry pool")
+    if TARGET_LAYOUT["dat"] - TARGET_LAYOUT["ipl"] != 256:
+        raise ValueError("target IPL partition does not match the stock 256-entry pool")
     for left, right in (("dat", "ifp"), ("ifp", "rrr"), ("rrr", "scm"), ("scm", "loaded")):
         if TARGET_LAYOUT[right] - TARGET_LAYOUT[left] != STOCK_LAYOUT[right] - STOCK_LAYOUT[left]:
             raise ValueError(f"excluded {left.upper()} partition changed size")
@@ -334,7 +334,7 @@ def main() -> None:
     validate_relocation_executable(image, relocation)
     print(
         "native FileID manifests OK: 10 capture anchors, 1,398 relocation writes, "
-        "target total=42341, DAT/path expansion=no"
+        "target total=38316, store spans=current, DAT/path expansion=no"
     )
 
 

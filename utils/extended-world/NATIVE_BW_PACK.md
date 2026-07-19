@@ -311,19 +311,20 @@ DAT 25511      IFP 25575      RRR 25755      SCM 26230
 loaded 26312   requested 26314 total 26316
 ```
 
-The isolated `codex/native-world-fileid-relocation` follow-up then validates and
-installs this target layout:
+The isolated corrective follow-up validates and installs this intermediate
+layout before the stores/pools checkpoint:
 
 ```text
-DFF 0          TXD 32000      COL 40000      IPL 40512
-DAT 41536      IFP 41600      RRR 41780      SCM 42255
-loaded 42337   requested 42339 total 42341
+DFF 0          TXD 32000      COL 37000      IPL 37255
+DAT 37511      IFP 37575      RRR 37755      SCM 38230
+loaded 38312   requested 38314 total 38316
 ```
 
-DAT is GTA's path-node partition. It stays at 64 entries, while IFP, RRR and
-SCM keep their stock counts. Paths/nodes, missions and new DAT/IFP/RRR/SCM
-content remain outside the static-world scope. This is why the scope-reduced
-table has 42,341 entries rather than the old 44,325 estimate with DAT 2,048.
+DFF expands to 32,000. TXD, COL and IPL keep the capacities of their currently
+installed pools (5,000, 255 and 256), because native code also uses partition
+spans as pool-loop bounds. DAT stays at 64 entries, while IFP, RRR and SCM keep
+their stock counts. Paths/nodes, missions and new DAT/IFP/RRR/SCM content remain
+outside the static-world scope.
 
 `CGame` now exposes the captured layout plus the model-pointer and streaming
 arrays. Game SA, Multiplayer SA, Client Core and Client Deathmatch consume that
@@ -339,12 +340,13 @@ strict partition ordering, sentinel positions, table stride/count, and full
 readability of both arrays. It rechecks all 1,398 relocation writes directly
 before commit. A mismatch aborts before FileID mutation. Successful diagnostics
 first end in `state=prepared ... nativeWrites=no`, then
-`state=installed ... total=42341 ... nativeWrites=yes datExpansion=no
+`state=installed ... total=38316 ... nativeWrites=yes datExpansion=no
 pathsExpansion=no`.
 
-The relocation reserves 32,000 DFF, 8,000 TXD, 512 COL and 1,024 IPL FileIDs,
-but leaves the actual TXD/COL/IPL store counts unchanged for the next checkpoint.
-It patches all relocated table pointers and pure base operands, makes 34
+The relocation reserves 32,000 DFF IDs and relocates the remaining current-size
+partitions. The final 8,000 TXD, 512 COL and 1,024 IPL spans move atomically
+with their stores in the next checkpoint. It patches all relocated table
+pointers and pure base operands, makes 34
 16-bit streaming-list reads unsigned, preserves the `nextModelOnCd` `0xFFFF`
 termination branch with a dedicated hook, relocates the four sentinels, and
 hooks save/load so the vanilla 26,316-byte flag block, including four sentinel
@@ -356,6 +358,15 @@ HOODLUM region above `0x01000000`. Omitting that region sign-extended FileID
 ProgramData executable is therefore the required regeneration/validation
 reference, not the low raw executable alone.
 
+The first 1,398-site live retry exposed why the final store spans cannot be
+reserved early. `CStreaming::Update` uses the relocated pointers at
+`0x00410B32` and `0x00410BE0` as its COL loop bounds while indexing the
+separately allocated stock `CColStore` pool. The 512-entry reservation reached
+slot 466 and crashed at `0x00410B57`; only 255 slots existed. FLA implements
+the pool-count/allocation changes as a separate patch family. The compact
+layout and validator now require exact 5,000/255/256 TXD/COL/IPL spans, and the
+test suite pins this crash loop's pointer distance.
+
 The same contract can be checked off-game with:
 
 ```sh
@@ -364,11 +375,10 @@ python3 utils/extended-world/validate_native_file_id_runtime.py \
 python3 -m unittest utils.extended-world.tests.test_native_file_id_runtime
 ```
 
-The relocation follow-up is locally validated, VM-synchronized with verified
-hashes and compiled successfully in `Game SA` plus `Client Deathmatch` as
-`Release|Win32`. It has not yet passed the corrected stock-SA live gate. No
-consumer may regain a private pointer or reconstruct a partition from a
-constant.
+The earlier expanded-span build was VM-synchronized and compiled successfully,
+but failed the stock-SA live gate above. The compact correction is locally
+validated and awaits rebuild/live testing. No consumer may regain a private
+pointer or reconstruct a partition from a constant.
 
 The user-run 2026-07-18 live gate used format-1 ticket `46a33f60`. The exact
 cached Bullworth payload passed its semantic and executable preflights, the
@@ -391,8 +401,8 @@ store occupancy and 4008-block streaming floor, and `/nativebw` returned to the
 native city afterwards. No new client/server dump, FileID mismatch, native
 preflight failure, capacity failure, exception or fatal diagnostic appeared.
 This proves the abstraction against the stock table; it does not constitute a
-runtime test of the new 42,341-entry relocation or authorize any new streamed
-content type.
+runtime test of the new 38,316-entry compact relocation or authorize any new
+streamed content type.
 
 Format 1 accepts exterior static binary IPLs only: every placement has area
 flags zero, no LOD link (`lodIndex == -1`), X/Y in `[-10000, 9999]`, and Z in

@@ -773,21 +773,20 @@ crash diagnostic, and the server recorded clean join/quit/reconnect cycles.
 The expected post-activation transport refusals preserved the existing native
 world rather than attempting to republish into the active registrar.
 
-The FileID abstraction and stock-only relocation checkpoints are complete on
-`master`. The relocation was developed in the isolated
+The FileID abstraction is complete, while the stock-only relocation is on its
+compact corrective pass. The relocation was developed in the isolated
 `codex/native-world-fileid-relocation` worktree, rebased without conflict over
 the story changes, then fast-forwarded into `master`. On 2026-07-19 its exact
 file set was synchronized with verified hashes to the VM-local tree. `Game SA`
 and `Client Deathmatch` both built successfully as `Release|Win32`, including
 the Game SA post-link hook verifier. It has not yet been launched in game.
 
-The checkpoint installs the stock-only FileID relocation after the optional
-model-store preflight. The resulting layout is DFF 0, TXD 32,000, COL 40,000,
-IPL 40,512, DAT 41,536, IFP 41,600, RRR 41,780, SCM 42,255, loaded 42,337,
-requested 42,339 and total 42,341. The old 44,325 figure assumed DAT 2,048;
-DAT is the path-node partition and is now explicitly kept at its stock count of
-64. IFP/RRR/SCM counts also remain stock. Only DFF/TXD/COL/IPL address space is
-reserved at this checkpoint; TXD/COL/IPL store counts are not enlarged yet.
+The corrected checkpoint installs DFF 0, TXD 32,000, COL 37,000, IPL 37,255,
+DAT 37,511, IFP 37,575, RRR 37,755, SCM 38,230, loaded 38,312, requested
+38,314 and total 38,316. DFF expands to 32,000; TXD/COL/IPL retain the current
+5,000/255/256 pool spans. DAT remains the stock 64-entry path-node partition,
+and IFP/RRR/SCM counts also remain stock. The final TXD/COL/IPL partition sizes
+must be installed atomically with their enlarged stores.
 
 The generated manifest contains 1,398 non-overlapping expanded-executable writes:
 740 model pointers, 359 streaming pointers, 258 base operands, 34 unsigned
@@ -836,6 +835,17 @@ with verified hashes on 2026-07-19, and rebuilt successfully as `Game SA` plus
 `Client Deathmatch` in `Release|Win32`. The corrected stock-SA live retry is the
 remaining gate.
 
+That live retry reached the 1,398-site installation and then crashed at
+`0x00410B57`. `CStreaming::Update` used the relocated COL-to-IPL pointer span
+as a 512-slot loop bound while indexing the still-stock 255-slot `CColStore`
+pool; the dump captured invalid slot 466. FLA keeps the streaming pointer
+patches (`FileIDlimit.cpp:8351`) separate from the COL count/allocation patches
+(`:15743` onward), proving that bases cannot safely reserve uninstalled pool
+capacity. The isolated `codex/native-world-fileid-compact` correction now uses
+5,000/255/256 TXD/COL/IPL spans and total 38,316. Its static regression pins the
+exact `0x00410B32` to `0x00410BE0` COL-loop distance. Rebuild and live testing
+of this compact correction are still pending.
+
 The user-run live gate completed on 2026-07-18 with format-1 ticket `7a1a461a`.
 The initial stock process and the authorized replacement process both emitted
 the exact `[NativeFileID] state=captured layout=stock ... total=26316 ...
@@ -847,7 +857,7 @@ and process lease, retained `14854/32000` Atomic, `136/512` DamageAtomic and
 The client/server logs contained no FileID mismatch, preflight/capacity failure,
 exception or fatal diagnostic, and no new dump was created. DFF/TXD
 replace/restore must be repeated as a focused regression when the new
-42,341-entry relocation is first run. Do not reintroduce any private pointer or
+38,316-entry relocation is first run. Do not reintroduce any private pointer or
 partition constant.
 
 After the preceding authorized activation, item 1 is complete: E2 extends the E1 format-2

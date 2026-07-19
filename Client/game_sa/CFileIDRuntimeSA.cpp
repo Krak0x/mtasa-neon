@@ -22,16 +22,20 @@ namespace
     constexpr DWORD STOCK_STREAMING_INFO_COUNT = 26316;
     constexpr DWORD STOCK_MODEL_INFO_COUNT = 20000;
     constexpr DWORD TARGET_MODEL_INFO_COUNT = 32000;
-    constexpr DWORD TARGET_STREAMING_INFO_COUNT = 42341;
+    constexpr DWORD TARGET_STREAMING_INFO_COUNT = 38316;
 
     constexpr SFileIDLayout STOCK_LAYOUT = {0, 20000, 25000, 25255, 25511, 25575, 25755, 26230, 26312, 26314, 26316};
-    constexpr SFileIDLayout TARGET_LAYOUT = {0, 32000, 40000, 40512, 41536, 41600, 41780, 42255, 42337, 42339, 42341};
+    // FileID partition spans are also native loop bounds for the TXD, COL and
+    // IPL pools. Keep those spans equal to the currently installed pool sizes;
+    // widening the namespace before relocating the pools makes GTA walk past
+    // their allocations (CStreaming::Update crashed this way at 0x410B57).
+    constexpr SFileIDLayout TARGET_LAYOUT = {0, 32000, 37000, 37255, 37511, 37575, 37755, 38230, 38312, 38314, 38316};
 
     static_assert(sizeof(SFileIDLayout) == 11 * sizeof(std::uint32_t));
     static_assert(TARGET_LAYOUT.txd - TARGET_LAYOUT.dff == 32000);
-    static_assert(TARGET_LAYOUT.col - TARGET_LAYOUT.txd == 8000);
-    static_assert(TARGET_LAYOUT.ipl - TARGET_LAYOUT.col == 512);
-    static_assert(TARGET_LAYOUT.dat - TARGET_LAYOUT.ipl == 1024);
+    static_assert(TARGET_LAYOUT.col - TARGET_LAYOUT.txd == 5000);
+    static_assert(TARGET_LAYOUT.ipl - TARGET_LAYOUT.col == 255);
+    static_assert(TARGET_LAYOUT.dat - TARGET_LAYOUT.ipl == 256);
     static_assert(TARGET_LAYOUT.ifp - TARGET_LAYOUT.dat == 64);
     static_assert(TARGET_LAYOUT.rrr - TARGET_LAYOUT.ifp == 180);
     static_assert(TARGET_LAYOUT.scm - TARGET_LAYOUT.rrr == 475);

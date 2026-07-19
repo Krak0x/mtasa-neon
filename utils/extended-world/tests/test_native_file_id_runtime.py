@@ -55,15 +55,28 @@ class NativeFileIDRuntimeTest(unittest.TestCase):
         )
         self.assertEqual(122, len(high_patches))
 
-    def test_target_layout_reserves_only_static_world_partitions(self) -> None:
+    def test_target_layout_matches_current_store_loop_bounds(self) -> None:
         self.assertEqual((31_999, 32_000), (TARGET_LAYOUT["txd"] - 1, TARGET_LAYOUT["txd"]))
-        self.assertEqual((39_999, 40_000), (TARGET_LAYOUT["col"] - 1, TARGET_LAYOUT["col"]))
-        self.assertEqual((40_511, 40_512), (TARGET_LAYOUT["ipl"] - 1, TARGET_LAYOUT["ipl"]))
-        self.assertEqual(42_341, TARGET_LAYOUT["total"])
+        self.assertEqual((36_999, 37_000), (TARGET_LAYOUT["col"] - 1, TARGET_LAYOUT["col"]))
+        self.assertEqual((37_254, 37_255), (TARGET_LAYOUT["ipl"] - 1, TARGET_LAYOUT["ipl"]))
+        self.assertEqual(5_000, TARGET_LAYOUT["col"] - TARGET_LAYOUT["txd"])
+        self.assertEqual(255, TARGET_LAYOUT["ipl"] - TARGET_LAYOUT["col"])
+        self.assertEqual(256, TARGET_LAYOUT["dat"] - TARGET_LAYOUT["ipl"])
+        self.assertEqual(38_316, TARGET_LAYOUT["total"])
         self.assertLessEqual(TARGET_LAYOUT["total"], 0xFFFF)
         self.assertLessEqual(TARGET_LAYOUT["txd"] - 1, 0x7FFF)
         for left, right in (("dat", "ifp"), ("ifp", "rrr"), ("rrr", "scm"), ("scm", "loaded")):
             self.assertEqual(STOCK_LAYOUT[right] - STOCK_LAYOUT[left], TARGET_LAYOUT[right] - TARGET_LAYOUT[left])
+
+        # CStreaming::Update uses these relocated streaming pointers as its
+        # CColStore loop bounds while indexing the separate stock pool. Pin the
+        # exact relationship that prevents another read past slot 254.
+        relocation = {patch.address: patch for patch in parse_relocation_manifest()}
+        col_slot_one_status = relocation[0x00410B32]
+        ipl_begin_status = relocation[0x00410BE0]
+        self.assertEqual("StreamingPointer", col_slot_one_status.kind)
+        self.assertEqual("StreamingPointer", ipl_begin_status.kind)
+        self.assertEqual((255 - 1) * 20, ipl_begin_status.replacement - col_slot_one_status.replacement)
 
     def test_named_gta_sa_model_operands_use_sa_ids(self) -> None:
         relocation = {patch.address: patch for patch in parse_relocation_manifest()}

@@ -1077,7 +1077,7 @@ and 71/72/73 mirror capacity boundaries, visible mirror-plane behavior,
 vanilla disable/restore, and mirror off/on transitions. These remain test cases,
 not confirmed runtime results.
 
-## FileID stock-only relocation (built; gameplay validation pending)
+## FileID stock-only relocation (compact corrective layout pending rebuild)
 
 The integrated master checkpoint extends the existing read-only abstraction
 into a validated process-lifetime relocation. On 2026-07-19 its exact ten-file
@@ -1089,21 +1089,21 @@ Startup still captures ten exact HOODLUM anchors before native-world mutation,
 then validates every relocation operand twice: once during capture and once
 immediately before the first native write.
 
-The target contiguous layout is:
+The corrected stock-only layout is:
 
 ```text
-DFF 0          TXD 32000      COL 40000      IPL 40512
-DAT 41536      IFP 41600      RRR 41780      SCM 42255
-loaded 42337   requested 42339 total 42341
+DFF 0          TXD 32000      COL 37000      IPL 37255
+DAT 37511      IFP 37575      RRR 37755      SCM 38230
+loaded 38312   requested 38314 total 38316
 ```
 
-This reserves 32,000 DFF IDs, 8,000 TXD IDs, 512 COL IDs and 1,024 IPL IDs.
-DAT is GTA's path-node FileID partition and remains exactly 64 entries; IFP,
-RRR and SCM also retain their stock counts of 180, 475 and 82. Consequently the
-correct scope-reduced total is 42,341, not the earlier 44,325 estimate that
-included a 2,048-entry DAT partition. Paths/nodes, new DAT content, streamed
-SCM and new IFP/RRR content remain out of scope, but their bases must move to
-preserve the namespace.
+This relocates the 32,000-entry DFF range while keeping the other partition
+spans equal to the currently installed stores: 5,000 TXD, 255 COL and 256 IPL.
+Those spans are native loop bounds as well as FileID ranges, so the final
+8,000/512/1,024 values cannot be installed before their pools. DAT is GTA's
+path-node FileID partition and remains exactly 64 entries; IFP, RRR and SCM
+also retain their stock counts of 180, 475 and 82. Paths/nodes, new DAT
+content, streamed SCM and new IFP/RRR content remain out of scope.
 
 `CFileIDRelocationSA.Manifest.inc` is generated from Fastman92
 `FileIDlimit.cpp` and `GTASA_int32_base_movsx_patches.h`. Its 1,398 disjoint
@@ -1116,7 +1116,7 @@ plain `movzx` would otherwise compare 65,535 with stock `-1` and index out of
 range. The manifest covers both low entry code and the active HOODLUM bodies in
 MTA's expanded ProgramData executable.
 
-The installer allocates 32,001 model pointers and 42,342 streaming records,
+The installer allocates 32,001 model pointers and 38,317 streaming records,
 copies every stock partition into its new base, copies the four list sentinels,
 prepares all writes before commit, and publishes the relocated arrays only
 after all writes succeed. Since non-model FileIDs now exceed 32,767, the 34
@@ -1126,12 +1126,12 @@ serialize exactly the stock 26,316 records in stock partition order, including
 the four list sentinels, so this checkpoint does not resize or misalign GTA's
 save block.
 
-This checkpoint reserves FileID address space only. It deliberately does not
-patch CTxdStore, CColStore or CIplStore counts and does not adopt FLA operands
-derived from enlarged store sizes; those arrays remain at their current
-capacities until the stores/pools checkpoint. The existing MTA runtime accessors
-remain the sole pointer/layout source for Game SA, Multiplayer SA, Client Core
-and Client Deathmatch.
+This checkpoint relocates FileID address space only. It deliberately does not
+patch CTxdStore, CColStore or CIplStore counts and therefore must retain their
+current partition spans. The final expanded bases and the FLA operands derived
+from enlarged store sizes move to the stores/pools checkpoint. The existing
+MTA runtime accessors remain the sole pointer/layout source for Game SA,
+Multiplayer SA, Client Core and Client Deathmatch.
 
 The off-game validator now checks exact coverage/counts, write non-overlap,
 pointer displacement domains, partition boundaries, 16-bit width contracts,
@@ -1176,6 +1176,18 @@ checkpoint was fast-forwarded into `master` as `fd50b6e07`, synchronized with
 verified hashes to the VM-local tree on 2026-07-19, and rebuilt successfully as
 `Game SA` plus `Client Deathmatch` in `Release|Win32`. The corrected stock
 gameplay retry remains pending.
+
+The 1,398-site retry passed the previous crash point, then failed at
+`CStreaming::Update+0x4E7` (`0x00410B57`) on 2026-07-19. The loop derives its
+upper bound from the relocated streaming pointers at `0x00410B32` and
+`0x00410BE0`, but indexes the separate stock `CColStore` pool. Reserving 512
+COL FileIDs therefore made it visit slot 466 (`EDI=0x1D2`) even though the pool
+contains only 255 slots; `mov cl,[esi+0x29]` read beyond the allocation. FLA
+documents the pointer bounds near `FileIDlimit.cpp:8351` and the distinct COL
+count/allocation patch family near `:15743`. The compact corrective layout
+keeps TXD/COL/IPL spans at 5,000/255/256 until that family is installed, and a
+regression test pins the exact `CStreaming::Update` pointer distance. The final
+40,000/40,512 boundaries are deferred to the stores/pools checkpoint.
 
 The preceding read-only baseline gate completed on 2026-07-18 with format-1 ticket
 `7a1a461a`. Both the initial stock process and the authorized replacement
