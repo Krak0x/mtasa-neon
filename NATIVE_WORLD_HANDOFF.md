@@ -844,7 +844,10 @@ patches (`FileIDlimit.cpp:8351`) separate from the COL count/allocation patches
 capacity. The isolated `codex/native-world-fileid-compact` correction now uses
 5,000/255/256 TXD/COL/IPL spans and total 38,316. Its static regression pins the
 exact `0x00410B32` to `0x00410BE0` COL-loop distance. Rebuild and live testing
-of this compact correction are still pending.
+of this compact correction were the remaining gates. Its exact eight-file set
+was synchronized with verified hashes on 2026-07-19, and `Game SA` plus
+`Client Deathmatch` then rebuilt successfully as `Release|Win32`. Only the
+stock-SA live retry remains pending.
 
 The user-run live gate completed on 2026-07-18 with format-1 ticket `7a1a461a`.
 The initial stock process and the authorized replacement process both emitted

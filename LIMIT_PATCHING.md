@@ -1077,7 +1077,7 @@ and 71/72/73 mirror capacity boundaries, visible mirror-plane behavior,
 vanilla disable/restore, and mirror off/on transitions. These remain test cases,
 not confirmed runtime results.
 
-## FileID stock-only relocation (compact corrective layout pending rebuild)
+## FileID stock-only relocation (compact corrective build; live gate pending)
 
 The integrated master checkpoint extends the existing read-only abstraction
 into a validated process-lifetime relocation. On 2026-07-19 its exact ten-file
@@ -1187,7 +1187,10 @@ documents the pointer bounds near `FileIDlimit.cpp:8351` and the distinct COL
 count/allocation patch family near `:15743`. The compact corrective layout
 keeps TXD/COL/IPL spans at 5,000/255/256 until that family is installed, and a
 regression test pins the exact `CStreaming::Update` pointer distance. The final
-40,000/40,512 boundaries are deferred to the stores/pools checkpoint.
+40,000/40,512 boundaries are deferred to the stores/pools checkpoint. The
+compact eight-file correction was synchronized with verified hashes on
+2026-07-19 and `Game SA` plus `Client Deathmatch` rebuilt successfully as
+`Release|Win32`; its stock-SA live retry remains pending.
 
 The preceding read-only baseline gate completed on 2026-07-18 with format-1 ticket
 `7a1a461a`. Both the initial stock process and the authorized replacement

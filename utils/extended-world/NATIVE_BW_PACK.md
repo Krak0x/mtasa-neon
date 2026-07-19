@@ -377,8 +377,10 @@ python3 -m unittest utils.extended-world.tests.test_native_file_id_runtime
 
 The earlier expanded-span build was VM-synchronized and compiled successfully,
 but failed the stock-SA live gate above. The compact correction is locally
-validated and awaits rebuild/live testing. No consumer may regain a private
-pointer or reconstruct a partition from a constant.
+validated, VM-synchronized with verified hashes and rebuilt successfully in
+`Game SA` plus `Client Deathmatch` as `Release|Win32`. It awaits the stock-SA
+live retry. No consumer may regain a private pointer or reconstruct a partition
+from a constant.
 
 The user-run 2026-07-18 live gate used format-1 ticket `46a33f60`. The exact
 cached Bullworth payload passed its semantic and executable preflights, the
