@@ -23,6 +23,8 @@ local state = {
     returnPhase = nil,
     returnScene = nil,
     hoodFailure = nil,
+    damageTrace = nil,
+    nativeEventProfileLeases = {},
 }
 
 local SCM_DESTINATION_BLIP_COLOR = {226, 192, 99, 255}
@@ -169,11 +171,23 @@ local function applyActorPolicies(ped)
     local role = getElementData(ped, DRIVETHRU.actorRoleData)
     if role == "ballas_driver" or role == "ballas_passenger" then
         if type(setPedSuffersCriticalHits) ~= "function" or type(getPedSuffersCriticalHits) ~= "function" or
-            type(setPedWeaponAccuracy) ~= "function" then
+            type(setPedWeaponAccuracy) ~= "function" or type(acquirePedNativeEventProfile) ~= "function" or
+            type(isPedNativeEventProfileActive) ~= "function" then
             return false
         end
+        local eventProfileToken = state.nativeEventProfileLeases[ped]
+        if not eventProfileToken then
+            eventProfileToken = acquirePedNativeEventProfile(ped, "mission")
+            if not eventProfileToken then
+                return false
+            end
+            state.nativeEventProfileLeases[ped] = eventProfileToken
+            outputDebugString(("[drive-thru] Native mission event profile leased for %s token=%d"):format(
+                                  tostring(role), eventProfileToken))
+        end
         local profile = role == "ballas_driver" and DRIVETHRU.restaurant.ballasDriver or DRIVETHRU.chase.ballasPassenger
-        return setPedSuffersCriticalHits(ped, false) == true and getPedSuffersCriticalHits(ped) == false and
+        return isPedNativeEventProfileActive(ped, eventProfileToken) == true and setPedSuffersCriticalHits(ped, false) == true and
+                   getPedSuffersCriticalHits(ped) == false and
                    setPedWeaponAccuracy(ped, profile.accuracy) == true
     elseif role == "grove_support" then
         if type(setPedStayInSamePlace) ~= "function" or type(getPedStayInSamePlace) ~= "function" or
@@ -404,7 +418,114 @@ local function clearHoodFailure(reason, preserveFade)
     return released
 end
 
+local function damageTraceActorName(element)
+    for _, name in ipairs({"ballas_passenger", "ryder", "sweet"}) do
+        if element == state.actors[name] then
+            return name
+        end
+    end
+    return nil
+end
+
+local function sampleClientDamageTrace(reason)
+    local trace = state.damageTrace
+    if not trace then
+        return
+    end
+    for _, name in ipairs({"greenwood", "voodoo"}) do
+        local vehicle = trace.vehicles[name]
+        if isElement(vehicle) then
+            local health = getElementHealth(vehicle)
+            local previous = trace.lastHealth[name]
+            trace.minHealth[name] = math.min(trace.minHealth[name] or health, health)
+            if type(previous) == "number" and math.abs(health - previous) >= 0.05 then
+                trace.healthChanges[name] = trace.healthChanges[name] + 1
+                outputDebugString(("[drive-thru] DAMAGE TRACE client vehicle=%s health=%.1f delta=%+.1f stage=%s reason=%s"):format(
+                                      name, health, health - previous, tostring(state.stage), tostring(reason or "sample")))
+            end
+            trace.lastHealth[name] = health
+        end
+    end
+end
+
+
+local function finishClientDamageTrace(reason)
+    local trace = state.damageTrace
+    if not trace then
+        return
+    end
+    for _, timer in ipairs({trace.sampleTimer, trace.progressTimer}) do
+        if isTimer(timer) then
+            killTimer(timer)
+        end
+    end
+    sampleClientDamageTrace("finish")
+    outputDebugString(("[drive-thru] DAMAGE TRACE client summary reason=%s elapsed=%dms " ..
+                          "greenwood=%.1f->%.1f min=%.1f changes=%d events=%d eventLoss=%.1f " ..
+                          "voodoo=%.1f->%.1f min=%.1f changes=%d events=%d eventLoss=%.1f"):format(
+                          tostring(reason or "finished"), getTickCount() - trace.startedAt, trace.initialHealth.greenwood,
+                          trace.lastHealth.greenwood, trace.minHealth.greenwood, trace.healthChanges.greenwood,
+                          trace.damageEvents.greenwood, trace.eventLoss.greenwood, trace.initialHealth.voodoo,
+                          trace.lastHealth.voodoo, trace.minHealth.voodoo, trace.healthChanges.voodoo,
+                          trace.damageEvents.voodoo, trace.eventLoss.voodoo))
+    for _, name in ipairs({"ballas_passenger", "ryder", "sweet"}) do
+        local shooter = trace.shooters[name]
+        outputDebugString(("[drive-thru] DAMAGE TRACE client shooter=%s shots=%d expectedVehicleHits=%d " ..
+                              "otherVehicleHits=%d otherElementHits=%d misses=%d lastWeapon=%s"):format(
+                              name, shooter.shots, shooter.expectedHits, shooter.otherVehicleHits, shooter.otherElementHits,
+                              shooter.misses, tostring(shooter.lastWeapon or "none")))
+    end
+    state.damageTrace = nil
+end
+
+local function beginClientDamageTrace(entities)
+    finishClientDamageTrace("replaced")
+    local greenwood, voodoo = entities.vehicle, entities.voodoo
+    local greenwoodHealth = isElement(greenwood) and getElementHealth(greenwood) or -1
+    local voodooHealth = isElement(voodoo) and getElementHealth(voodoo) or -1
+    local trace = {
+        startedAt = getTickCount(),
+        vehicles = {greenwood = greenwood, voodoo = voodoo},
+        initialHealth = {greenwood = greenwoodHealth, voodoo = voodooHealth},
+        lastHealth = {greenwood = greenwoodHealth, voodoo = voodooHealth},
+        minHealth = {greenwood = greenwoodHealth, voodoo = voodooHealth},
+        healthChanges = {greenwood = 0, voodoo = 0},
+        damageEvents = {greenwood = 0, voodoo = 0},
+        eventLoss = {greenwood = 0, voodoo = 0},
+        shooters = {},
+    }
+    for _, name in ipairs({"ballas_passenger", "ryder", "sweet"}) do
+        trace.shooters[name] = {
+            shots = 0,
+            expectedHits = 0,
+            otherVehicleHits = 0,
+            otherElementHits = 0,
+            misses = 0,
+            lastWeapon = nil,
+            expectedTarget = name == "ballas_passenger" and greenwood or voodoo,
+        }
+    end
+    state.damageTrace = trace
+    trace.sampleTimer = setTimer(sampleClientDamageTrace, 250, 0, "timer")
+    trace.progressTimer = setTimer(function()
+        if state.damageTrace ~= trace then
+            return
+        end
+        local ballas = trace.shooters.ballas_passenger
+        local ryder = trace.shooters.ryder
+        local sweet = trace.shooters.sweet
+        outputDebugString(("[drive-thru] DAMAGE TRACE client progress elapsed=%dms health=%.1f/%.1f " ..
+                              "shots=%d/%d/%d expectedHits=%d/%d/%d"):format(
+                              getTickCount() - trace.startedAt, trace.lastHealth.greenwood, trace.lastHealth.voodoo,
+                              ballas.shots, ryder.shots, sweet.shots, ballas.expectedHits, ryder.expectedHits,
+                              sweet.expectedHits))
+    end, 5000, 0)
+    outputDebugString(("[drive-thru] DAMAGE TRACE client start greenwood=%.1f voodoo=%.1f"):format(
+                          greenwoodHealth, voodooHealth))
+end
+
 local function clearClientState(reason)
+    finishClientDamageTrace(reason or "cleanup")
     if isTimer(state.entryTimer) then
         killTimer(state.entryTimer)
     end
@@ -435,6 +556,12 @@ local function clearClientState(reason)
         end
     end
     state.pursuitPedBlips = {}
+    for _, token in pairs(state.nativeEventProfileLeases) do
+        if type(releasePedNativeEventProfile) == "function" then
+            pcall(releasePedNativeEventProfile, token)
+        end
+    end
+    state.nativeEventProfileLeases = {}
     for _, ped in pairs(state.actors) do
         if isElement(ped) then
             if type(setPedMissionActor) == "function" then
@@ -460,6 +587,7 @@ local function clearClientState(reason)
     state.footCombat = false
     state.supportChatAccepted = false
     state.returnPhase = nil
+    state.damageTrace = nil
 end
 
 addEvent("drivethru:start", true)
@@ -1000,11 +1128,16 @@ addEventHandler("drivethru:restaurantRebuilt", resourceRoot, function(entities)
                                                                  tostring(isElement(ped) and getPedOccupiedVehicleSeat(ped) or "none"))
         end
         local cjReady = getPedOccupiedVehicle(localPlayer) == state.vehicle and getPedOccupiedVehicleSeat(localPlayer) == 0
-        local ready = greenwoodReady and voodooReady and actorsReady and cjReady and isElement(state.pursuitBlip)
+        local blipReady = isElement(state.pursuitBlip)
+        -- Radar navigation is presentation state, not part of SWEET3's
+        -- physical reconstruction contract. The chase recreates this blip
+        -- when it starts, so a transient client-side blip allocation failure
+        -- must not prevent the native route and drive-bys from being assigned.
+        local ready = greenwoodReady and voodooReady and actorsReady and cjReady
         stableSamples = ready and stableSamples + 1 or 0
-        lastDetails = ("greenwood[%s] voodoo[%s] cj=%s %s stable=%d/%d"):format(
-                          greenwoodDetails, voodooDetails, tostring(cjReady), table.concat(seatDetails, ","), stableSamples,
-                          DRIVETHRU.restaurant.stableSamples)
+        lastDetails = ("greenwood[%s] voodoo[%s] cj=%s blip=%s %s stable=%d/%d"):format(
+                          greenwoodDetails, voodooDetails, tostring(cjReady), tostring(blipReady), table.concat(seatDetails, ","),
+                          stableSamples, DRIVETHRU.restaurant.stableSamples)
         local now = getTickCount()
         if stableSamples >= DRIVETHRU.restaurant.stableSamples then
             killTimer(state.restaurantRebuildTimer)
@@ -1115,6 +1248,7 @@ addEventHandler("drivethru:pursuitStarted", resourceRoot, function(entities)
     traceCurrent("chase")
     state.footCombat = false
     state.vehicle = entities.vehicle
+    beginClientDamageTrace(entities)
     showPursuitVehicleNavigation(entities.voodoo)
     setCameraTarget(localPlayer)
     fadeCamera(true, 1.0)
@@ -1304,9 +1438,11 @@ addEventHandler("drivethru:hoodFailurePrepare", resourceRoot, function(failureId
     if source ~= resourceRoot or not state.active or state.stage ~= "chase" or type(entities) ~= "table" then
         return
     end
+    finishClientDamageTrace("grove_failure")
     local required = {"acquireScriptCamera", "releaseScriptCamera", "isScriptCameraLeaseActive", "resetScriptCamera",
                       "setScriptCameraWidescreen", "setScriptCameraFixed", "fadeScriptCamera", "isScriptCameraFading",
                       "enginePreloadWorldArea", "enginePreloadWorldAreaInDirection", "acquireElementStreamingLease",
+                      "acquirePedNativeEventProfile", "releasePedNativeEventProfile", "isPedNativeEventProfileActive",
                       "releaseElementStreamingLease", "setPedStayInSamePlace", "getPedStayInSamePlace",
                       "setPedNeverTargeted", "isPedNeverTargeted"}
     for _, name in ipairs(required) do
@@ -1587,6 +1723,7 @@ addEventHandler("drivethru:footCombat", resourceRoot, function(entities, reason)
     if source ~= resourceRoot or not state.active or state.stage ~= "chase" or type(entities) ~= "table" then
         return
     end
+    finishClientDamageTrace("foot_combat:" .. tostring(reason))
     state.footCombat = true
     traceCurrent("foot_combat")
     for _, name in ipairs({"ballas_driver", "ballas_passenger"}) do
@@ -1996,6 +2133,51 @@ addEventHandler("onClientElementStreamIn", root, function()
     elseif getElementData(source, DRIVETHRU.vehicleData) == true or type(getElementData(source, DRIVETHRU.vehicleRoleData)) == "string" then
         applyGreenwoodPolicies(source)
     end
+end)
+
+addEventHandler("onClientPedWeaponFire", root, function(weapon, ammo, ammoInClip, hitX, hitY, hitZ, hitElement)
+    local trace = state.damageTrace
+    local name = trace and damageTraceActorName(source) or nil
+    if not trace or not name then
+        return
+    end
+    local shooter = trace.shooters[name]
+    shooter.shots = shooter.shots + 1
+    shooter.lastWeapon = tonumber(weapon) or weapon
+    if hitElement == shooter.expectedTarget then
+        shooter.expectedHits = shooter.expectedHits + 1
+    elseif isElement(hitElement) and getElementType(hitElement) == "vehicle" then
+        shooter.otherVehicleHits = shooter.otherVehicleHits + 1
+        if shooter.otherVehicleHits <= 3 then
+            local target = hitElement == trace.vehicles.greenwood and "greenwood" or
+                               hitElement == trace.vehicles.voodoo and "voodoo" or "other"
+            outputDebugString(("[drive-thru] DAMAGE TRACE client wrong-vehicle-hit shooter=%s target=%s weapon=%s"):format(
+                                  name, target, tostring(weapon)))
+        end
+    elseif isElement(hitElement) then
+        shooter.otherElementHits = shooter.otherElementHits + 1
+    else
+        shooter.misses = shooter.misses + 1
+    end
+end)
+
+addEventHandler("onClientVehicleDamage", root, function(attacker, weapon, loss)
+    local trace = state.damageTrace
+    local name = trace and (source == trace.vehicles.greenwood and "greenwood" or
+                     source == trace.vehicles.voodoo and "voodoo" or nil) or nil
+    if not trace or not name then
+        return
+    end
+    local numericLoss = tonumber(loss) or 0
+    trace.damageEvents[name] = trace.damageEvents[name] + 1
+    trace.eventLoss[name] = trace.eventLoss[name] + numericLoss
+    local attackerName = damageTraceActorName(attacker) or (attacker == localPlayer and "cj" or nil)
+    if not attackerName and isElement(attacker) then
+        attackerName = getElementType(attacker)
+    end
+    outputDebugString(("[drive-thru] DAMAGE TRACE client event vehicle=%s health=%.1f loss=%.1f attacker=%s weapon=%s"):format(
+                          name, getElementHealth(source), numericLoss, tostring(attackerName or "none"), tostring(weapon)))
+    sampleClientDamageTrace("damage_event")
 end)
 
 addEventHandler("onClientVehicleEnter", root, function(player, seat)

@@ -61,6 +61,10 @@ public:
     unsigned int AcquireElementStreamingLease(class CClientStreamElement* pElement);
     bool         ReleaseElementStreamingLease(unsigned int uiToken);
     void         ReleaseAllElementStreamingLeases();
+    unsigned int AcquirePedNativeEventProfile(class CClientPed* pPed);
+    bool         ReleasePedNativeEventProfile(unsigned int uiToken);
+    bool         IsPedNativeEventProfileActive(class CClientPed* pPed, unsigned int uiToken) const;
+    void         ReleaseAllPedNativeEventProfiles();
 
     CDownloadableResource* AddResourceFile(CDownloadableResource::eResourceType resourceType, const char* szFileName, uint uiDownloadSize,
                                            CChecksum serverChecksum, bool bAutoDownload);
@@ -181,6 +185,14 @@ private:
 
     unsigned int                                                              m_uiNextElementStreamingLeaseToken{1};
     std::unordered_map<unsigned int, std::unique_ptr<SElementStreamingLease>> m_elementStreamingLeases;
+
+    struct SPedNativeEventProfileLease
+    {
+        CClientEntityPtr ped;
+    };
+
+    unsigned int                                                                   m_uiNextPedNativeEventProfileToken{1};
+    std::unordered_map<unsigned int, std::unique_ptr<SPedNativeEventProfileLease>> m_pedNativeEventProfileLeases;
 
     struct
     {

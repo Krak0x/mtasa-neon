@@ -145,6 +145,9 @@ public:
     static bool SetPedDriveBy(CClientPed* ped, std::variant<CClientPed*, CClientVehicle*, CVector> target, float abortRange,
                               std::optional<std::variant<std::string, int>> driveByStyle, std::optional<bool> seatRHS, std::optional<int> frequencyPercentage);
     static bool SetPedMissionActor(CClientPed* ped, bool enabled);
+    LUA_DECLARE(AcquirePedNativeEventProfile);
+    LUA_DECLARE(ReleasePedNativeEventProfile);
+    LUA_DECLARE(IsPedNativeEventProfileActive);
     static bool SetPedStoryProtected(CClientPed* ped, bool enabled);
     static bool SetPedSuffersCriticalHits(CClientPed* ped, bool suffersCriticalHits);
     static bool SetPedStayInSamePlace(CClientPed* ped, bool stayInSamePlace);

@@ -527,6 +527,8 @@ public:
         flags.bStayInCarOnJack = state.stayInCarWhenJacked;
         flags.bGetOutUpsideDownCar = state.getOutOfUpsideDownCar;
     }
+    void SetNativeMissionEventProfileActive(bool active) override { m_bNativeMissionEventProfileActive = active; }
+    bool IsNativeMissionEventProfileActive() const override { return m_bNativeMissionEventProfileActive; }
 
     static void __fastcall RemoveWeaponWhenEnteringVehicle(CPedSAInterface* pedInterface, void*, int jetpack);
     static void            StaticSetHooks();
@@ -548,4 +550,5 @@ private:
 
     std::uint32_t m_type{PLAYER_PED};
     std::uint8_t  m_occupiedSeat;
+    bool          m_bNativeMissionEventProfileActive{false};
 };

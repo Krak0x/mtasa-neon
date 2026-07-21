@@ -3688,6 +3688,7 @@ void CClientPed::_CreateModel()
         // stream in. Reapply their persisted actor classification before GTA
         // starts evaluating ambient task transitions on the new instance.
         ApplyMissionActorState();
+        ApplyNativeMissionEventProfileState();
         ApplyStoryProtectionState();
         ApplySuffersCriticalHitsState();
         ApplyStayInSamePlaceState();
@@ -4293,6 +4294,7 @@ bool CClientPed::SetMissionActor(bool enabled)
 
     if (enabled && m_pPlayerPed)
         ApplyMissionActorState();
+    ApplyNativeMissionEventProfileState();
 
     return true;
 }
@@ -4315,6 +4317,48 @@ void CClientPed::ApplyMissionActorState()
     // the task-owned target, just like a CPed created by main.scm.
     if (m_remoteDataStorage)
         m_remoteDataStorage->SetProcessPlayerWeapon(false);
+}
+
+bool CClientPed::AcquireNativeMissionEventProfile(CResource* owner, unsigned int token)
+{
+    if (!owner || token == 0 || GetType() != CCLIENTPED || !m_bMissionActor || m_nativeMissionEventProfileOwner)
+        return false;
+
+    // Every client remembers the resource-scoped lease, including before it
+    // becomes syncer. Apply gates the native exception to the authoritative
+    // generation and teardown can still revoke a surviving server-owned ped.
+    m_nativeMissionEventProfileOwner = owner;
+    m_uiNativeMissionEventProfileToken = token;
+    ApplyNativeMissionEventProfileState();
+    return true;
+}
+
+bool CClientPed::ReleaseNativeMissionEventProfile(CResource* owner, unsigned int token)
+{
+    if (!owner || token == 0 || m_nativeMissionEventProfileOwner != owner || m_uiNativeMissionEventProfileToken != token)
+        return false;
+
+    m_nativeMissionEventProfileOwner = nullptr;
+    m_uiNativeMissionEventProfileToken = 0;
+    ApplyNativeMissionEventProfileState();
+    return true;
+}
+
+bool CClientPed::IsNativeMissionEventProfileActive(const CResource* owner, unsigned int token) const
+{
+    return owner && token != 0 && m_nativeMissionEventProfileOwner == owner && m_uiNativeMissionEventProfileToken == token && m_bMissionActor && m_bIsSyncing &&
+           m_pPlayerPed && m_pPlayerPed->IsNativeMissionEventProfileActive();
+}
+
+void CClientPed::ApplyNativeMissionEventProfileState()
+{
+    if (!m_pPlayerPed)
+        return;
+
+    // The lease remains logically owned across stream and syncer generations,
+    // but only the authoritative syncer may let GTA consume ambient events.
+    const bool active = m_nativeMissionEventProfileOwner && m_uiNativeMissionEventProfileToken != 0 && m_bMissionActor && m_bIsSyncing;
+    m_pPlayerPed->SetNativeMissionEventProfileActive(active);
 }
 
 bool CClientPed::SetStoryProtected(bool enabled)
@@ -7469,6 +7513,7 @@ void CClientPed::UpdateVehicleInOut()
 void CClientPed::SetSyncing(bool bIsSyncing)
 {
     m_bIsSyncing = bIsSyncing;
+    ApplyNativeMissionEventProfileState();
     if (!bIsSyncing)
     {
         // Reset vehicle in/out stuff in case the ped was entering/exiting

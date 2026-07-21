@@ -35,6 +35,7 @@ class CClientPedManager;
 class CClientPlayer;
 class CClientPlayerClothes;
 class CClientProjectile;
+class CResource;
 class CClientVehicle;
 class CTask;
 class CTaskSimpleSwim;
@@ -416,6 +417,9 @@ public:
 
     bool IsMissionActor() const noexcept { return m_bMissionActor; }
     bool SetMissionActor(bool enabled);
+    bool AcquireNativeMissionEventProfile(CResource* owner, unsigned int token);
+    bool ReleaseNativeMissionEventProfile(CResource* owner, unsigned int token);
+    bool IsNativeMissionEventProfileActive(const CResource* owner, unsigned int token) const;
     bool IsStoryProtected() const noexcept { return m_bStoryProtected; }
     bool SetStoryProtected(bool enabled);
     bool GetSuffersCriticalHits() const noexcept { return m_suffersCriticalHits.value_or(true); }
@@ -612,6 +616,7 @@ protected:
     void _DestroyLocalModel();
     void _ChangeModel();
     void ApplyMissionActorState();
+    void ApplyNativeMissionEventProfileState();
     void ApplyStoryProtectionState();
     void ApplySuffersCriticalHitsState();
     void ApplyStayInSamePlaceState();
@@ -744,6 +749,8 @@ public:
     eMoveAnim                                m_MoveAnim;
     bool                                     m_bUseNativeWalkingStyle{false};
     bool                                     m_bMissionActor{false};
+    CResource*                               m_nativeMissionEventProfileOwner{};
+    unsigned int                             m_uiNativeMissionEventProfileToken{};
     bool                                     m_bStoryProtected{false};
     std::optional<SPedCreatedByState>        m_missionActorNativeState;
     std::optional<SPedStoryProtectionState>  m_storyProtectionNativeState;

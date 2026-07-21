@@ -65,6 +65,10 @@ DWORD RETURN_FxManager_DestroyFxSystem = 0x4A9817;
 #define HOOKPOS_CCam_ProcessFixed                           0x51D470
 #define HOOKPOS_CTaskSimplePlayerOnFoot_ProcessPlayerWeapon 0x6859a0
 #define HOOKPOS_CPed_IsPlayer                               0x5DF8F0
+#define CALL_CEventGroup_Add_ComputeResponseTaskType        0x4AB491
+#define FUNC_CEventEditableResponse_ComputeResponseTaskType 0x4B56C0
+#define RETURN_CEventVehicleOnFire_AffectsPed_IsPlayer      0x4B5005
+constexpr int EVENT_TYPE_VEHICLE_ON_FIRE = 79;
 
 DWORD RETURN_CCam_ProcessFixed = 0x51D475;
 DWORD RETURN_CTaskSimplePlayerOnFoot_ProcessPlayerWeapon = 0x6859A7;
@@ -504,92 +508,93 @@ static void __declspec(naked) HOOK_CWorld_SprayPaintWorld_FromCShotInfoUpdate()
 CEntitySAInterface* dwSavedPlayerPointer = 0;
 CEntitySAInterface* activeEntityForStreaming = 0;  // the entity that the streaming system considers active
 
-void HOOK_FindPlayerCoors();
-void HOOK_FindPlayerCentreOfWorld();
-void HOOK_FindPlayerHeading();
-void HOOK_CStreaming_Update_Caller();
-void HOOK_CHud_Draw_Caller();
-void HOOK_CRunningScript_Process();
-void HOOK_CExplosion_AddExplosion();
-void HOOK_CCustomRoadsignMgr__RenderRoadsignAtomic();
-void HOOK_Trailer_BreakTowLink();
-void HOOK_CRadar__DrawRadarGangOverlay();
-void HOOK_CTaskComplexJump__CreateSubTask();
-void HOOK_FxManager_CreateFxSystem();
-void HOOK_FxManager_DestroyFxSystem();
-void HOOK_CCam_ProcessFixed();
-void HOOK_Render3DStuff();
-void HOOK_CTaskSimplePlayerOnFoot_ProcessPlayerWeapon();
-void HOOK_CPed_IsPlayer();
-void HOOK_CTrain_ProcessControl_Derail();
-void HOOK_CVehicle_SetupRender();
-void HOOK_CVehicle_ResetAfterRender();
-void HOOK_CObject_Render();
-void HOOK_EndWorldColors();
-void HOOK_CWorld_ProcessVerticalLineSectorList();
-void HOOK_ComputeDamageResponse_StartChoking();
-void HOOK_CollisionStreamRead();
-void HOOK_CVehicle_ApplyBoatWaterResistance();
-void HOOK_CPhysical_ApplyGravity();
-void HOOK_VehicleCamStart();
-void HOOK_VehicleCamTargetZTweak();
-void HOOK_VehicleCamLookDir1();
-void HOOK_VehicleCamLookDir2();
-void HOOK_VehicleCamHistory();
-void HOOK_VehicleCamUp();
-void HOOK_VehicleCamEnd();
-void HOOK_VehicleLookBehind();
-void HOOK_VehicleLookAside();
-void HOOK_OccupiedVehicleBurnCheck();
-void HOOK_UnoccupiedVehicleBurnCheck();
-void HOOK_ApplyCarBlowHop();
-void HOOK_CWorld_SetWorldOnFire();
-void HOOK_CTaskSimplePlayerOnFire_ProcessPed();
-void HOOK_CFire_ProcessFire();
-void HOOK_CExplosion_Update();
-void HOOK_CWeapon_FireAreaEffect();
-void HOOK_CGame_Process();
-void HOOK_CWeather_Update();
-void HOOK_Idle();
-void HOOK_RenderScene_Plants();
-void HOOK_RenderScene_end();
-void HOOK_CPlantMgr_Render();
-void HOOK_CEventHandler_ComputeKnockOffBikeResponse();
-void HOOK_CPed_GetWeaponSkill();
-void HOOK_CPed_AddGogglesModel();
-void HOOK_CPhysical_ProcessCollisionSectorList();
-void HOOK_CrashFix_Misc1();
-void HOOK_CrashFix_Misc2();
-void HOOK_CrashFix_Misc4();
-void HOOK_CrashFix_Misc5();
-void HOOK_CrashFix_Misc6();
-void HOOK_CrashFix_Misc7();
-void HOOK_CrashFix_Misc8();
-void HOOK_CrashFix_Misc9();
-void HOOK_CrashFix_Misc10();
-void HOOK_CrashFix_Misc11();
-void HOOK_CrashFix_Misc12();
-void HOOK_CrashFix_Misc13();
-void HOOK_CrashFix_Misc14();
-void HOOK_FreezeFix_Misc15();
-void HOOK_CrashFix_Misc16();
-void HOOK_CrashFix_Misc17();
-void HOOK_CrashFix_Misc18();
-void HOOK_CrashFix_Misc19();
-void HOOK_CrashFix_Misc20();
-void HOOK_CrashFix_Misc21();
-void HOOK_CrashFix_Misc22();
-void HOOK_CrashFix_Misc23();
-void HOOK_CrashFix_Misc24();
-void HOOK_CheckAnimMatrix();
-void HOOK_VehColCB();
-void HOOK_VehCol();
-void HOOK_Transmission_CalculateDriveAcceleration();
-void HOOK_isVehDriveTypeNotRWD();
-void HOOK_isVehDriveTypeNotFWD();
-void HOOK_PreFxRender();
-void HOOK_PostColorFilterRender();
-void HOOK_PreHUDRender();
+void            HOOK_FindPlayerCoors();
+void            HOOK_FindPlayerCentreOfWorld();
+void            HOOK_FindPlayerHeading();
+void            HOOK_CStreaming_Update_Caller();
+void            HOOK_CHud_Draw_Caller();
+void            HOOK_CRunningScript_Process();
+void            HOOK_CExplosion_AddExplosion();
+void            HOOK_CCustomRoadsignMgr__RenderRoadsignAtomic();
+void            HOOK_Trailer_BreakTowLink();
+void            HOOK_CRadar__DrawRadarGangOverlay();
+void            HOOK_CTaskComplexJump__CreateSubTask();
+void            HOOK_FxManager_CreateFxSystem();
+void            HOOK_FxManager_DestroyFxSystem();
+void            HOOK_CCam_ProcessFixed();
+void            HOOK_Render3DStuff();
+void            HOOK_CTaskSimplePlayerOnFoot_ProcessPlayerWeapon();
+void            HOOK_CPed_IsPlayer();
+void __fastcall HOOK_CEventGroup_Add_ComputeResponseTaskType(void* event, void*, CPedSAInterface* ped, bool decisionMakerTypeInGroup);
+void            HOOK_CTrain_ProcessControl_Derail();
+void            HOOK_CVehicle_SetupRender();
+void            HOOK_CVehicle_ResetAfterRender();
+void            HOOK_CObject_Render();
+void            HOOK_EndWorldColors();
+void            HOOK_CWorld_ProcessVerticalLineSectorList();
+void            HOOK_ComputeDamageResponse_StartChoking();
+void            HOOK_CollisionStreamRead();
+void            HOOK_CVehicle_ApplyBoatWaterResistance();
+void            HOOK_CPhysical_ApplyGravity();
+void            HOOK_VehicleCamStart();
+void            HOOK_VehicleCamTargetZTweak();
+void            HOOK_VehicleCamLookDir1();
+void            HOOK_VehicleCamLookDir2();
+void            HOOK_VehicleCamHistory();
+void            HOOK_VehicleCamUp();
+void            HOOK_VehicleCamEnd();
+void            HOOK_VehicleLookBehind();
+void            HOOK_VehicleLookAside();
+void            HOOK_OccupiedVehicleBurnCheck();
+void            HOOK_UnoccupiedVehicleBurnCheck();
+void            HOOK_ApplyCarBlowHop();
+void            HOOK_CWorld_SetWorldOnFire();
+void            HOOK_CTaskSimplePlayerOnFire_ProcessPed();
+void            HOOK_CFire_ProcessFire();
+void            HOOK_CExplosion_Update();
+void            HOOK_CWeapon_FireAreaEffect();
+void            HOOK_CGame_Process();
+void            HOOK_CWeather_Update();
+void            HOOK_Idle();
+void            HOOK_RenderScene_Plants();
+void            HOOK_RenderScene_end();
+void            HOOK_CPlantMgr_Render();
+void            HOOK_CEventHandler_ComputeKnockOffBikeResponse();
+void            HOOK_CPed_GetWeaponSkill();
+void            HOOK_CPed_AddGogglesModel();
+void            HOOK_CPhysical_ProcessCollisionSectorList();
+void            HOOK_CrashFix_Misc1();
+void            HOOK_CrashFix_Misc2();
+void            HOOK_CrashFix_Misc4();
+void            HOOK_CrashFix_Misc5();
+void            HOOK_CrashFix_Misc6();
+void            HOOK_CrashFix_Misc7();
+void            HOOK_CrashFix_Misc8();
+void            HOOK_CrashFix_Misc9();
+void            HOOK_CrashFix_Misc10();
+void            HOOK_CrashFix_Misc11();
+void            HOOK_CrashFix_Misc12();
+void            HOOK_CrashFix_Misc13();
+void            HOOK_CrashFix_Misc14();
+void            HOOK_FreezeFix_Misc15();
+void            HOOK_CrashFix_Misc16();
+void            HOOK_CrashFix_Misc17();
+void            HOOK_CrashFix_Misc18();
+void            HOOK_CrashFix_Misc19();
+void            HOOK_CrashFix_Misc20();
+void            HOOK_CrashFix_Misc21();
+void            HOOK_CrashFix_Misc22();
+void            HOOK_CrashFix_Misc23();
+void            HOOK_CrashFix_Misc24();
+void            HOOK_CheckAnimMatrix();
+void            HOOK_VehColCB();
+void            HOOK_VehCol();
+void            HOOK_Transmission_CalculateDriveAcceleration();
+void            HOOK_isVehDriveTypeNotRWD();
+void            HOOK_isVehDriveTypeNotFWD();
+void            HOOK_PreFxRender();
+void            HOOK_PostColorFilterRender();
+void            HOOK_PreHUDRender();
 
 void HOOK_CTrafficLights_GetPrimaryLightState();
 void HOOK_CTrafficLights_GetSecondaryLightState();
@@ -727,6 +732,7 @@ void CMultiplayerSA::InitHooks()
     HookInstall(HOOKPOS_CCam_ProcessFixed, (DWORD)HOOK_CCam_ProcessFixed, 5);
     HookInstall(HOOKPOS_CTaskSimplePlayerOnFoot_ProcessPlayerWeapon, (DWORD)HOOK_CTaskSimplePlayerOnFoot_ProcessPlayerWeapon, 7);
     HookInstall(HOOKPOS_CPed_IsPlayer, (DWORD)HOOK_CPed_IsPlayer, 6);
+    HookInstallCall(CALL_CEventGroup_Add_ComputeResponseTaskType, (DWORD)HOOK_CEventGroup_Add_ComputeResponseTaskType);
     HookInstall(HOOKPOS_CTrain_ProcessControl_Derail, (DWORD)HOOK_CTrain_ProcessControl_Derail, 6);
     HookInstall(HOOKPOS_CVehicle_SetupRender, (DWORD)HOOK_CVehicle_SetupRender, 5);
     HookInstall(HOOKPOS_CVehicle_ResetAfterRender, (DWORD)HOOK_CVehicle_ResetAfterRender, 5);
@@ -3689,8 +3695,26 @@ static void __declspec(naked) HOOK_CTaskSimplePlayerOnFoot_ProcessPlayerWeapon()
 }
 
 CPedSAInterface* pIsPlayerPed = NULL;
-bool             IsPlayer()
+DWORD            dwIsPlayerReturnAddress = 0;
+
+static CPed* GetPedFromInterface(CPedSAInterface* pedInterface)
 {
+    SClientEntity<CPedSA>* pPedClientEntity = pedInterface ? pGameInterface->GetPools()->GetPed((DWORD*)pedInterface) : nullptr;
+    return pPedClientEntity ? pPedClientEntity->pEntity : nullptr;
+}
+
+static bool HasNativeMissionEventProfile(CPedSAInterface* pedInterface)
+{
+    CPed* pPed = GetPedFromInterface(pedInterface);
+    return pPed && pPed->IsNativeMissionEventProfileActive();
+}
+
+bool IsPlayer()
+{
+    // Only CEventVehicleOnFire::AffectsPed may observe a leased mission ped as
+    // non-player. Normal tasks still see MTA's CPlayerPed identity unchanged.
+    if (dwIsPlayerReturnAddress == RETURN_CEventVehicleOnFire_AffectsPed_IsPlayer && HasNativeMissionEventProfile(pIsPlayerPed))
+        return false;
     return true;
 }
 
@@ -3706,6 +3730,8 @@ static void __declspec(naked) HOOK_CPed_IsPlayer()
     __asm
     {
         mov    pIsPlayerPed, ecx
+        mov    eax, [esp]
+        mov    dwIsPlayerReturnAddress, eax
         pushad
     }
     // clang-format on
@@ -3731,6 +3757,27 @@ static void __declspec(naked) HOOK_CPed_IsPlayer()
         }
         // clang-format on
     }
+}
+
+void __fastcall HOOK_CEventGroup_Add_ComputeResponseTaskType(void* event, void*, CPedSAInterface* ped, bool decisionMakerTypeInGroup)
+{
+    using GetEventType = int(__thiscall*)(void*);
+    using ComputeResponseTaskType = void(__thiscall*)(void*, CPedSAInterface*, bool);
+
+    auto*              intelligence = ped ? ped->pPedIntelligence : nullptr;
+    auto*              vtable = event ? *static_cast<DWORD**>(event) : nullptr;
+    const int          eventType = vtable ? reinterpret_cast<GetEventType>(vtable[1])(event) : -1;
+    const bool         useMissionDecisionMaker = eventType == EVENT_TYPE_VEHICLE_ON_FIRE && intelligence && HasNativeMissionEventProfile(ped);
+    const std::int32_t previousDecisionMaker = useMissionDecisionMaker ? intelligence->decisionMakerType : 0;
+    if (useMissionDecisionMaker)
+        intelligence->decisionMakerType = -1;
+
+    reinterpret_cast<ComputeResponseTaskType>(FUNC_CEventEditableResponse_ComputeResponseTaskType)(event, ped, decisionMakerTypeInGroup);
+
+    // The response constructor is synchronous. Restore the player decision
+    // maker before any ordinary movement or combat task starts processing.
+    if (useMissionDecisionMaker && ped->pPedIntelligence == intelligence)
+        intelligence->decisionMakerType = previousDecisionMaker;
 }
 
 void CRunningScript_Process()

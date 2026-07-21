@@ -315,6 +315,9 @@ void CLuaPedDefs::LoadFunctions()
         {"setPedDriveTo", ArgumentParser<SetPedDriveTo>},
         {"setPedDriveBy", ArgumentParser<SetPedDriveBy>},
         {"setPedMissionActor", ArgumentParser<SetPedMissionActor>},
+        {"acquirePedNativeEventProfile", AcquirePedNativeEventProfile},
+        {"releasePedNativeEventProfile", ReleasePedNativeEventProfile},
+        {"isPedNativeEventProfileActive", IsPedNativeEventProfileActive},
         {"setPedStoryProtected", ArgumentParser<SetPedStoryProtected>},
         {"setPedSuffersCriticalHits", ArgumentParser<SetPedSuffersCriticalHits>},
         {"setPedStayInSamePlace", ArgumentParser<SetPedStayInSamePlace>},
@@ -3475,6 +3478,79 @@ bool CLuaPedDefs::SetPedMissionActor(CClientPed* ped, bool enabled)
     // The policy is stored on the MTA element and reapplied after native model
     // recreation, so callers may set it before the ped is streamed in.
     return ped->SetMissionActor(enabled);
+}
+
+int CLuaPedDefs::AcquirePedNativeEventProfile(lua_State* luaVM)
+{
+    CClientPed*      pPed = nullptr;
+    SString          strProfile;
+    CScriptArgReader argStream(luaVM);
+    argStream.ReadUserData(pPed);
+    argStream.ReadString(strProfile);
+
+    if (!argStream.HasErrors())
+    {
+        CLuaMain*  pLuaMain = m_pLuaManager->GetVirtualMachine(luaVM);
+        CResource* pResource = pLuaMain ? pLuaMain->GetResource() : nullptr;
+        if (pResource && pPed && pPed->GetType() == CCLIENTPED && strProfile == "mission")
+        {
+            const unsigned int uiToken = pResource->AcquirePedNativeEventProfile(pPed);
+            if (uiToken != 0)
+            {
+                lua_pushnumber(luaVM, uiToken);
+                return 1;
+            }
+        }
+    }
+    else
+        m_pScriptDebugging->LogCustom(luaVM, argStream.GetFullErrorMessage());
+
+    lua_pushboolean(luaVM, false);
+    return 1;
+}
+
+int CLuaPedDefs::ReleasePedNativeEventProfile(lua_State* luaVM)
+{
+    unsigned int     uiToken = 0;
+    CScriptArgReader argStream(luaVM);
+    argStream.ReadNumber(uiToken);
+
+    if (!argStream.HasErrors())
+    {
+        CLuaMain*  pLuaMain = m_pLuaManager->GetVirtualMachine(luaVM);
+        CResource* pResource = pLuaMain ? pLuaMain->GetResource() : nullptr;
+        if (pResource && pResource->ReleasePedNativeEventProfile(uiToken))
+        {
+            lua_pushboolean(luaVM, true);
+            return 1;
+        }
+    }
+    else
+        m_pScriptDebugging->LogCustom(luaVM, argStream.GetFullErrorMessage());
+
+    lua_pushboolean(luaVM, false);
+    return 1;
+}
+
+int CLuaPedDefs::IsPedNativeEventProfileActive(lua_State* luaVM)
+{
+    CClientPed*      pPed = nullptr;
+    unsigned int     uiToken = 0;
+    CScriptArgReader argStream(luaVM);
+    argStream.ReadUserData(pPed);
+    argStream.ReadNumber(uiToken);
+
+    if (!argStream.HasErrors())
+    {
+        CLuaMain*  pLuaMain = m_pLuaManager->GetVirtualMachine(luaVM);
+        CResource* pResource = pLuaMain ? pLuaMain->GetResource() : nullptr;
+        lua_pushboolean(luaVM, pResource && pResource->IsPedNativeEventProfileActive(pPed, uiToken));
+        return 1;
+    }
+
+    m_pScriptDebugging->LogCustom(luaVM, argStream.GetFullErrorMessage());
+    lua_pushboolean(luaVM, false);
+    return 1;
 }
 
 bool CLuaPedDefs::SetPedStoryProtected(CClientPed* ped, bool enabled)

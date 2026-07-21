@@ -38,15 +38,19 @@ public:
     DWORD                   taskManager;  // +4 (really CTaskManagerSAInterface)
     BYTE                    bPad[16];
     CFightManagerInterface* fightInterface;  // +24
-    BYTE                    bPad2[160];
-    float                   hearingRange;         // +188
-    float                   seeingRange;          // +192
-    DWORD                   numPedsToScan;        // +196
-    float                   decisionMakerRadius;  // +200
+    BYTE                    bPad2[152];
+    std::int32_t            decisionMakerType;         // +180
+    std::int32_t            decisionMakerTypeInGroup;  // +184
+    float                   hearingRange;              // +188
+    float                   seeingRange;               // +192
+    DWORD                   numPedsToScan;             // +196
+    float                   decisionMakerRadius;       // +200
     BYTE                    bPad3[8];
     DWORD                   vehicleScanner;  // +212 (really CVehicleScannerSAInterface)
 };
 
+static_assert(offsetof(CPedIntelligenceSAInterface, decisionMakerType) == 0xB4, "Invalid ped decision-maker type offset");
+static_assert(offsetof(CPedIntelligenceSAInterface, decisionMakerTypeInGroup) == 0xB8, "Invalid ped group decision-maker type offset");
 static_assert(offsetof(CPedIntelligenceSAInterface, hearingRange) == 0xBC, "Invalid ped hearing range offset");
 static_assert(offsetof(CPedIntelligenceSAInterface, seeingRange) == 0xC0, "Invalid ped seeing range offset");
 static_assert(offsetof(CPedIntelligenceSAInterface, numPedsToScan) == 0xC4, "Invalid ped scan-count offset");

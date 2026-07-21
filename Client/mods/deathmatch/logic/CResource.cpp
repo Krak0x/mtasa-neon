@@ -114,6 +114,10 @@ CResource::~CResource()
     // surviving target elements are still valid.
     ReleaseAllElementStreamingLeases();
 
+    // Native event profiles can also target server-owned peds. Revoke their
+    // narrow GTA AI exception before the resource identity disappears.
+    ReleaseAllPedNativeEventProfiles();
+
     // Mission-audio handles lease GTA-global hardware slots rather than child
     // elements, so resource teardown must stop only this resource's sounds.
     CLuaAudioDefs::ReleaseMissionAudioForResource(this);
@@ -287,6 +291,53 @@ void CResource::ReleaseAllElementStreamingLeases()
 {
     while (!m_elementStreamingLeases.empty())
         ReleaseElementStreamingLease(m_elementStreamingLeases.begin()->first);
+}
+
+unsigned int CResource::AcquirePedNativeEventProfile(CClientPed* pPed)
+{
+    if (!pPed)
+        return 0;
+
+    unsigned int uiToken = 0;
+    do
+    {
+        uiToken = m_uiNextPedNativeEventProfileToken++;
+    } while (uiToken == 0 || m_pedNativeEventProfileLeases.contains(uiToken));
+
+    if (!pPed->AcquireNativeMissionEventProfile(this, uiToken))
+        return 0;
+
+    auto pLease = std::make_unique<SPedNativeEventProfileLease>();
+    pLease->ped = pPed;
+    m_pedNativeEventProfileLeases.emplace(uiToken, std::move(pLease));
+    return uiToken;
+}
+
+bool CResource::ReleasePedNativeEventProfile(unsigned int uiToken)
+{
+    const auto iter = m_pedNativeEventProfileLeases.find(uiToken);
+    if (iter == m_pedNativeEventProfileLeases.end())
+        return false;
+
+    CClientEntity* pEntity = iter->second->ped;
+    if (pEntity && pEntity->GetType() == CCLIENTPED)
+        static_cast<CClientPed*>(pEntity)->ReleaseNativeMissionEventProfile(this, uiToken);
+
+    m_pedNativeEventProfileLeases.erase(iter);
+    return true;
+}
+
+bool CResource::IsPedNativeEventProfileActive(CClientPed* pPed, unsigned int uiToken) const
+{
+    const auto           iter = m_pedNativeEventProfileLeases.find(uiToken);
+    const CClientEntity* pLeasedEntity = iter != m_pedNativeEventProfileLeases.end() ? iter->second->ped : nullptr;
+    return pPed && pLeasedEntity == pPed && pPed->IsNativeMissionEventProfileActive(this, uiToken);
+}
+
+void CResource::ReleaseAllPedNativeEventProfiles()
+{
+    while (!m_pedNativeEventProfileLeases.empty())
+        ReleasePedNativeEventProfile(m_pedNativeEventProfileLeases.begin()->first);
 }
 
 CDownloadableResource* CResource::AddResourceFile(CDownloadableResource::eResourceType resourceType, const char* szFileName, uint uiDownloadSize,

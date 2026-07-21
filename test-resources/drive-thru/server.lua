@@ -31,7 +31,10 @@ local mission = {
     pursuitRoutePollTimer = nil,
     pursuitRouteActivated = false,
     pursuitRouteIndex = nil,
+    damageTrace = nil,
 }
+
+local finishChaseDamageTrace
 
 local function nativeTaskRuntimeRunning()
     local runtime = getResourceFromName("native-task-runtime")
@@ -218,6 +221,7 @@ local function resetMissionState()
     mission.pursuitRoutePollTimer = nil
     mission.pursuitRouteActivated = false
     mission.pursuitRouteIndex = nil
+    mission.damageTrace = nil
 end
 
 local function cleanupMission(reason, restore)
@@ -225,6 +229,9 @@ local function cleanupMission(reason, restore)
         return
     end
     local leader, snapshot = mission.leader, mission.snapshot
+    if finishChaseDamageTrace then
+        finishChaseDamageTrace(reason or "cleanup")
+    end
     clearMissionTimers()
     if isElement(leader) then
         triggerClientEvent(leader, "drivethru:stop", resourceRoot, reason or "cleanup")
@@ -580,6 +587,9 @@ beginHoodFailure = function()
     if not mission.running or mission.finishing or mission.stage ~= "chase" or mission.hoodFailure then
         return
     end
+    if finishChaseDamageTrace then
+        finishChaseDamageTrace("grove_failure")
+    end
     interruptDialogueForReminder()
     mission.hoodFailureSerial = mission.hoodFailureSerial + 1
     mission.stage = "hood_failure_prepare"
@@ -696,6 +706,70 @@ local beginFootCombat
 local completeChase
 local startReturnDrive
 
+local function readChaseVehicleHealth()
+    local result = {}
+    for _, name in ipairs({"vehicle", "voodoo"}) do
+        local element = mission.entities[name]
+        result[name] = isElement(element) and getElementHealth(element) or nil
+    end
+    return result
+end
+
+local function sampleChaseDamageTrace(reason)
+    local trace = mission.damageTrace
+    if not trace then
+        return
+    end
+    local health = readChaseVehicleHealth()
+    for _, name in ipairs({"vehicle", "voodoo"}) do
+        local current = health[name]
+        local previous = trace.lastHealth[name]
+        if type(current) == "number" then
+            trace.minHealth[name] = math.min(trace.minHealth[name] or current, current)
+            if type(previous) == "number" and math.abs(current - previous) >= 0.05 then
+                trace.healthChanges[name] = trace.healthChanges[name] + 1
+                outputDebugString(("[drive-thru] DAMAGE TRACE server vehicle=%s health=%.1f delta=%+.1f stage=%s reason=%s"):format(
+                                      name == "vehicle" and "greenwood" or name, current, current - previous,
+                                      tostring(mission.stage), tostring(reason or "sample")))
+            end
+            trace.lastHealth[name] = current
+        end
+    end
+end
+
+local function beginChaseDamageTrace()
+    local health = readChaseVehicleHealth()
+    mission.damageTrace = {
+        startedAt = getTickCount(),
+        initialHealth = health,
+        lastHealth = {vehicle = health.vehicle, voodoo = health.voodoo},
+        minHealth = {vehicle = health.vehicle, voodoo = health.voodoo},
+        healthChanges = {vehicle = 0, voodoo = 0},
+        damageEvents = {vehicle = 0, voodoo = 0},
+        eventLoss = {vehicle = 0, voodoo = 0},
+    }
+    outputDebugString(("[drive-thru] DAMAGE TRACE server start greenwood=%.1f voodoo=%.1f"):format(
+                          tonumber(health.vehicle) or -1, tonumber(health.voodoo) or -1))
+end
+
+finishChaseDamageTrace = function(reason)
+    local trace = mission.damageTrace
+    if not trace then
+        return
+    end
+    sampleChaseDamageTrace("finish")
+    outputDebugString(("[drive-thru] DAMAGE TRACE server summary reason=%s elapsed=%dms " ..
+                          "greenwood=%.1f->%.1f min=%.1f changes=%d events=%d eventLoss=%.1f " ..
+                          "voodoo=%.1f->%.1f min=%.1f changes=%d events=%d eventLoss=%.1f"):format(
+                          tostring(reason or "finished"), getTickCount() - trace.startedAt,
+                          tonumber(trace.initialHealth.vehicle) or -1, tonumber(trace.lastHealth.vehicle) or -1,
+                          tonumber(trace.minHealth.vehicle) or -1, trace.healthChanges.vehicle, trace.damageEvents.vehicle,
+                          trace.eventLoss.vehicle, tonumber(trace.initialHealth.voodoo) or -1,
+                          tonumber(trace.lastHealth.voodoo) or -1, tonumber(trace.minHealth.voodoo) or -1,
+                          trace.healthChanges.voodoo, trace.damageEvents.voodoo, trace.eventLoss.voodoo))
+    mission.damageTrace = nil
+end
+
 local function monitorChase()
     if not mission.running or mission.finishing or mission.stage ~= "chase" then
         return
@@ -722,6 +796,7 @@ local function monitorChase()
     if not isElement(voodoo) then
         return failMission("The Voodoo element disappeared")
     end
+    sampleChaseDamageTrace("monitor")
     if getElementHealth(voodoo) <= 250 then
         beginFootCombat("Voodoo reached the vanilla 250 health threshold")
     elseif not mission.footCombat then
@@ -748,6 +823,7 @@ beginFootCombat = function(reason)
     if not mission.running or mission.finishing or mission.stage ~= "chase" or mission.footCombat then
         return
     end
+    finishChaseDamageTrace("foot_combat:" .. tostring(reason))
     cancelPursuitRoute("foot_combat_handoff", true)
     mission.footCombat = true
     outputDebugString("[drive-thru] Vehicle-to-foot combat transition: " .. tostring(reason))
@@ -777,6 +853,7 @@ local function beginChase()
     setElementFrozen(mission.leader, false)
     setVehicleEngineState(mission.entities.vehicle, true)
     setVehicleEngineState(mission.entities.voodoo, true)
+    beginChaseDamageTrace()
     triggerClientEvent(mission.leader, "drivethru:pursuitStarted", resourceRoot, mission.entities)
     outputDebugString("[drive-thru] Native pursuit active; three drive-by tasks observed before fade-in")
     rememberTimer(setTimer(function()
@@ -1741,6 +1818,21 @@ addEventHandler("onVehicleExit", root, function(ped, seat)
     end
 end)
 
+addEventHandler("onVehicleDamage", root, function(loss)
+    local trace = mission.damageTrace
+    local name = source == mission.entities.vehicle and "vehicle" or source == mission.entities.voodoo and "voodoo" or nil
+    if not trace or not name then
+        return
+    end
+    local numericLoss = tonumber(loss) or 0
+    trace.damageEvents[name] = trace.damageEvents[name] + 1
+    trace.eventLoss[name] = trace.eventLoss[name] + numericLoss
+    outputDebugString(("[drive-thru] DAMAGE TRACE server event vehicle=%s health=%.1f loss=%.1f stage=%s"):format(
+                          name == "vehicle" and "greenwood" or name, getElementHealth(source), numericLoss,
+                          tostring(mission.stage)))
+    sampleChaseDamageTrace("damage_event")
+end)
+
 addEventHandler("onVehicleExplode", root, function()
     if mission.running and source == mission.entities.vehicle and (greenwoodFailureStages[mission.stage] or mission.stage == "greenwood_failure") then
         failMission("The Greenwood was destroyed", "SWE3_D")
@@ -1838,6 +1930,9 @@ end)
 addEventHandler("onResourceStop", resourceRoot, function()
     if mission.running then
         local leader, snapshot = mission.leader, mission.snapshot
+        if finishChaseDamageTrace then
+            finishChaseDamageTrace("resource_stop")
+        end
         clearMissionTimers()
         destroyMissionEntities()
         if isElement(leader) then

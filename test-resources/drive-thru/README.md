@@ -117,6 +117,7 @@ Status meanings are `implemented`, `adapted`, `excluded`, `missing`, and
 ## Known gaps and pending validation
 
 - The three SCM `DM_PED_MISSION_EMPTY` assignments have no current public primitive. Native mission-actor classification and story protection are applied, but the empty decision-maker policy remains explicit pending work.
+- The first default mission-ped `m_norm.ped` adapter is implemented behind a resource-owned, syncer-only event-profile lease. It restores native `EVENT_VEHICLE_ON_FIRE` admission and response selection without changing identity during normal task execution. The 2026-07-21 integrated run confirmed leases for both Ballas, preserved normal Grove crew entry, completed the vehicle-to-foot transition, and passed the chase checkpoint. The isolated harness separately observed syncer-cycle reactivation, urgent vehicle exit, and the native smart-flee subtree; its terminal resumed-combat guard was not reached before manual cleanup.
 - Cooperative support-vehicle policy is not active in this single-leader harness. `/drivethru` assigns one mission leader so the canonical Greenwood retains CJ, Ryder, Smoke, and Sweet in its four seats.
 - The apparent Voodoo damage-budget mismatch still needs one controlled chase
   recording synchronized health, incoming shots and damage history.
