@@ -699,6 +699,8 @@ void CVehicle::SetSyncer(CPlayer* pPlayer)
 
         // Set it
         m_pSyncer = pPlayer;
+        if (!pPlayer)
+            m_bSyncerPersistent = false;
     }
 }
 

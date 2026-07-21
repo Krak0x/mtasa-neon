@@ -21,6 +21,8 @@
 #include <array>
 #include <future>
 #include <list>
+#include <memory>
+#include <unordered_map>
 
 #define MAX_RESOURCE_NAME_LENGTH 255
 #define MAX_FUNCTION_NAME_LENGTH 50
@@ -55,6 +57,10 @@ public:
     void    Load();
     void    Stop();
     SString GetState();
+
+    unsigned int AcquireElementStreamingLease(class CClientStreamElement* pElement);
+    bool         ReleaseElementStreamingLease(unsigned int uiToken);
+    void         ReleaseAllElementStreamingLeases();
 
     CDownloadableResource* AddResourceFile(CDownloadableResource::eResourceType resourceType, const char* szFileName, uint uiDownloadSize,
                                            CChecksum serverChecksum, bool bAutoDownload);
@@ -167,6 +173,14 @@ private:
     std::list<SNoClientCacheScript>       m_NoClientCacheScriptList;
 
     CResourceModelStreamer m_modelStreamer{};
+
+    struct SElementStreamingLease
+    {
+        CClientEntityPtr element;
+    };
+
+    unsigned int                                                              m_uiNextElementStreamingLeaseToken{1};
+    std::unordered_map<unsigned int, std::unique_ptr<SElementStreamingLease>> m_elementStreamingLeases;
 
     struct
     {

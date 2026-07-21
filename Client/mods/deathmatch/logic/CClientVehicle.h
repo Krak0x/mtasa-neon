@@ -323,6 +323,7 @@ public:
 
     bool IsCollisionEnabled() { return m_bIsCollisionEnabled; };
     void SetCollisionEnabled(bool bCollisionEnabled);
+    bool SetLoadCollisionFlag(bool bLoadCollision);
 
     bool GetCanShootPetrolTank();
     void SetCanShootPetrolTank(bool bCanShoot);
@@ -640,6 +641,7 @@ protected:
     bool                                        m_bTyresCanBurst;
     bool                                        m_bScriptTyresCanBurstOverride;
     std::optional<SVehiclePhysicalProofs>       m_scriptPhysicalProofs;
+    std::optional<bool>                         m_scriptLoadCollisionFlag;
     SFixedArray<unsigned char, MAX_DOORS>       m_ucDoorStates;
     SFixedArray<unsigned char, MAX_WHEELS>      m_ucWheelStates;
     SFixedArray<unsigned char, MAX_PANELS>      m_ucPanelStates;

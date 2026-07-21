@@ -109,6 +109,11 @@ CResource::~CResource()
     if (m_nativeWorldTransport.publication.valid())
         g_pClientGame->GetResourceManager()->RetireNativeWorldTransportPublication(std::move(m_nativeWorldTransport.publication));
 
+    // Streaming leases can target server-owned elements which are not children
+    // of this resource. Release them while both the resource identity and any
+    // surviving target elements are still valid.
+    ReleaseAllElementStreamingLeases();
+
     // Mission-audio handles lease GTA-global hardware slots rather than child
     // elements, so resource teardown must stop only this resource's sounds.
     CLuaAudioDefs::ReleaseMissionAudioForResource(this);
@@ -244,6 +249,44 @@ CResource::~CResource()
         delete (*iterc);
     }
     m_ConfigFiles.clear();
+}
+
+unsigned int CResource::AcquireElementStreamingLease(CClientStreamElement* pElement)
+{
+    if (!pElement || pElement->GetStreamReferences(true) == 0xFFFF)
+        return 0;
+
+    unsigned int uiToken = 0;
+    do
+    {
+        uiToken = m_uiNextElementStreamingLeaseToken++;
+    } while (uiToken == 0 || m_elementStreamingLeases.contains(uiToken));
+
+    auto pLease = std::make_unique<SElementStreamingLease>();
+    pLease->element = pElement;
+    m_elementStreamingLeases.emplace(uiToken, std::move(pLease));
+    pElement->AddStreamReference(true);
+    return uiToken;
+}
+
+bool CResource::ReleaseElementStreamingLease(unsigned int uiToken)
+{
+    const auto iter = m_elementStreamingLeases.find(uiToken);
+    if (iter == m_elementStreamingLeases.end())
+        return false;
+
+    CClientEntity* pEntity = iter->second->element;
+    if (pEntity && pEntity->IsStreamingCompatibleClass())
+        static_cast<CClientStreamElement*>(pEntity)->RemoveStreamReference(true);
+
+    m_elementStreamingLeases.erase(iter);
+    return true;
+}
+
+void CResource::ReleaseAllElementStreamingLeases()
+{
+    while (!m_elementStreamingLeases.empty())
+        ReleaseElementStreamingLease(m_elementStreamingLeases.begin()->first);
 }
 
 CDownloadableResource* CResource::AddResourceFile(CDownloadableResource::eResourceType resourceType, const char* szFileName, uint uiDownloadSize,

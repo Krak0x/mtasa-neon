@@ -839,6 +839,17 @@ bool CClientVehicle::SetPhysicalProofs(const SVehiclePhysicalProofs& proofs)
     return true;
 }
 
+bool CClientVehicle::SetLoadCollisionFlag(bool bLoadCollision)
+{
+    // Keep the SCM policy across native vehicle recreation. This is separate
+    // from MTA collision enablement: it controls GTA's mission-car collision
+    // loading and physics-to-ghost transition, not contact generation.
+    m_scriptLoadCollisionFlag = bLoadCollision;
+    if (m_pVehicle)
+        m_pVehicle->SetLoadCollisionFlag(bLoadCollision);
+    return true;
+}
+
 bool CClientVehicle::AreDoorsUndamageable()
 {
     return m_pVehicle ? m_pVehicle->AreDoorsUndamageable() : m_bDoorsUndamageable;
@@ -2684,6 +2695,8 @@ void CClientVehicle::Create()
         m_pVehicle->SetDoorLockMode(m_doorLockMode);
         if (m_scriptPhysicalProofs)
             m_pVehicle->SetPhysicalProofs(*m_scriptPhysicalProofs);
+        if (m_scriptLoadCollisionFlag)
+            m_pVehicle->SetLoadCollisionFlag(*m_scriptLoadCollisionFlag);
         m_pVehicle->SetDoorsUndamageable(m_bDoorsUndamageable);
         m_pVehicle->SetCanShootPetrolTank(m_bCanShootPetrolTank);
         m_pVehicle->SetTaxiLightOn(m_bTaxiLightOn);

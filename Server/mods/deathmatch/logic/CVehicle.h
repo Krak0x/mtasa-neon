@@ -280,6 +280,8 @@ public:
 
     bool IsUnoccupiedSyncable() { return m_bUnoccupiedSyncable; };
     void SetUnoccupiedSyncable(bool bUnoccupiedSynced) { m_bUnoccupiedSyncable = bUnoccupiedSynced; };
+    bool IsSyncerPersistent() const { return m_bSyncerPersistent; }
+    void SetSyncerPersistent(bool bPersistent) { m_bSyncerPersistent = bPersistent; }
 
     unsigned char GetMaxPassengers();
     unsigned char GetFreePassengerSeat();
@@ -442,6 +444,7 @@ private:
 
     bool m_bIsFrozen;
     bool m_bUnoccupiedSyncable;
+    bool m_bSyncerPersistent{false};
 
     CVehicleUpgrades* m_pUpgrades;
 

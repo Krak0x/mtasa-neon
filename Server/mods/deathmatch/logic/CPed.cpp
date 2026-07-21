@@ -479,6 +479,8 @@ void CPed::SetSyncer(CPlayer* pPlayer)
 
         // Set it
         m_pSyncer = pPlayer;
+        if (!pPlayer)
+            m_bSyncerPersistent = false;
 
         // Check if we are in an enter/exit action
         // We need to complete the process by warping the ped in or out, because the syncer changed

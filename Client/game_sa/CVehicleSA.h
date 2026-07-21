@@ -507,6 +507,13 @@ public:
         physical->bCollisionProof = proofs.collision;
         physical->bMeeleProof = proofs.melee;
     }
+    void SetLoadCollisionFlag(bool bLoadCollision) override
+    {
+        // SCM opcode 0587 stores the inverse of its argument in physical flag
+        // 0x4000. GTA's mission-car AI uses it to switch to ghost physics when
+        // the route reaches world collision that is not currently loaded.
+        GetVehicleInterface()->b0x4000 = !bLoadCollision;
+    }
     bool AreDoorsUndamageable() { return m_doorsUndamageable; }
     void SetDoorsUndamageable(bool bUndamageable) { m_doorsUndamageable = bUndamageable; }
 

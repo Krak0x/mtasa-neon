@@ -39,6 +39,7 @@ public:
     void                    AddStreamReference(bool bScript = false);
     void                    RemoveStreamReference(bool bScript = false);
     unsigned short          GetStreamReferences(bool bScript = false);
+    bool                    SetLegacyScriptStreamable(bool bStreamable);
     unsigned long           GetTotalStreamReferences() { return m_usStreamReferences + m_usStreamReferencesScript; }
     std::uint32_t           GetLastStreamOutTime() const { return m_lastStreamOutTime; }
     void                    StreamOutForABit();
@@ -61,6 +62,7 @@ private:
     CVector                 m_vecStreamPosition;
     float                   m_fExpDistance;
     unsigned short          m_usStreamReferences, m_usStreamReferencesScript;
+    bool                    m_bLegacyScriptStreamReference;
 
 protected:
     CClientStreamer* m_pStreamer;

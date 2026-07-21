@@ -94,6 +94,8 @@ public:
     LUA_DECLARE(SetElementAlpha);
     LUA_DECLARE(SetElementHealth);
     LUA_DECLARE(SetElementStreamable);
+    LUA_DECLARE(AcquireElementStreamingLease);
+    LUA_DECLARE(ReleaseElementStreamingLease);
     LUA_DECLARE(SetElementModel);
     LUA_DECLARE(SetElementCollidableWith);
     LUA_DECLARE(SetElementDoubleSided);

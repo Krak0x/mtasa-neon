@@ -23,6 +23,7 @@ CClientStreamElement::CClientStreamElement(CClientStreamer* pStreamer, ElementID
     m_lastStreamOutTime = 0u;
     m_usStreamReferences = 0;
     m_usStreamReferencesScript = 0;
+    m_bLegacyScriptStreamReference = false;
     m_pStreamer->AddElement(this);
 
     m_fCachedRadius = 0;
@@ -141,6 +142,23 @@ unsigned short CClientStreamElement::GetStreamReferences(bool bScript)
 {
     unsigned short* pRefs = (bScript) ? &m_usStreamReferencesScript : &m_usStreamReferences;
     return (*pRefs);
+}
+
+bool CClientStreamElement::SetLegacyScriptStreamable(bool bStreamable)
+{
+    const bool bNeedsReference = !bStreamable;
+    if (m_bLegacyScriptStreamReference == bNeedsReference)
+        return false;
+
+    // The legacy boolean owns exactly one reference. Resource-owned streaming
+    // leases use the same aggregate counter, but must not be consumed by a
+    // different resource calling setElementStreamable(element, true).
+    m_bLegacyScriptStreamReference = bNeedsReference;
+    if (bNeedsReference)
+        AddStreamReference(true);
+    else
+        RemoveStreamReference(true);
+    return true;
 }
 
 // Force the element to stream out now. It will stream back in next frame if close enough.

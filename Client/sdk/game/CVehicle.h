@@ -356,4 +356,5 @@ public:
     virtual eDoorLock GetDoorLockMode() const = 0;
     virtual void      SetDoorLockMode(eDoorLock mode) = 0;
     virtual void      SetPhysicalProofs(const SVehiclePhysicalProofs& proofs) = 0;
+    virtual void      SetLoadCollisionFlag(bool bLoadCollision) = 0;
 };

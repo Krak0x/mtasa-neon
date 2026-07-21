@@ -97,6 +97,7 @@ public:
     static bool SetVehicleDoorLockMode(CClientVehicle* vehicle, int mode);
     static bool SetVehicleTyresCanBurst(CClientVehicle* vehicle, bool canBurst);
     static bool SetVehiclePhysicalProofs(CClientVehicle* vehicle, bool bullet, bool fire, bool explosion, bool collision, bool melee);
+    static bool SetVehicleLoadCollisionFlag(CClientVehicle* vehicle, bool loadCollision);
     LUA_DECLARE(SetVehicleModel);
     LUA_DECLARE(SetVehicleDoorsUndamageable);
     LUA_DECLARE(SetVehicleSirensOn);

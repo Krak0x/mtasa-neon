@@ -309,6 +309,8 @@ public:
 
     bool     IsSyncable() { return m_bSyncable; };
     void     SetSyncable(bool bSynced) { m_bSyncable = bSynced; };
+    bool     IsSyncerPersistent() const { return m_bSyncerPersistent; }
+    void     SetSyncerPersistent(bool bPersistent) { m_bSyncerPersistent = bPersistent; }
     CPlayer* m_pSyncer;
 
     CVehicle* GetJackingVehicle() { return m_pJackingVehicle; }
@@ -390,6 +392,7 @@ protected:
     unsigned int m_uiVehicleAction;
 
     bool m_bSyncable;
+    bool m_bSyncerPersistent{false};
     bool m_bCollisionsEnabled;
 
     long long             m_llLastFarSyncTick = 0;

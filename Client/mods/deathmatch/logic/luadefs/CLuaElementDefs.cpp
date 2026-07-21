@@ -93,6 +93,8 @@ void CLuaElementDefs::LoadFunctions()
         {"setElementHealth", SetElementHealth},
         {"setElementModel", SetElementModel},
         {"setElementStreamable", SetElementStreamable},
+        {"acquireElementStreamingLease", AcquireElementStreamingLease},
+        {"releaseElementStreamingLease", ReleaseElementStreamingLease},
         {"setElementCollisionsEnabled", SetElementCollisionsEnabled},
         {"setElementCollidableWith", SetElementCollidableWith},
         {"setElementDoubleSided", SetElementDoubleSided},
@@ -2455,16 +2457,7 @@ int CLuaElementDefs::SetElementStreamable(lua_State* luaVM)
         {
             CClientStreamElement* pStreamElement = static_cast<CClientStreamElement*>(pEntity);
 
-            // TODO: maybe use a better VM-based reference system (rather than a boolean one)
-            if (bStreamable && (pStreamElement->GetStreamReferences(true) > 0))
-            {
-                pStreamElement->RemoveStreamReference(true);
-            }
-            else if (!bStreamable && (pStreamElement->GetStreamReferences(true) == 0))
-            {
-                pStreamElement->AddStreamReference(true);
-            }
-            else
+            if (!pStreamElement->SetLegacyScriptStreamable(bStreamable))
             {
                 lua_pushboolean(luaVM, false);
                 return 1;
@@ -2479,6 +2472,56 @@ int CLuaElementDefs::SetElementStreamable(lua_State* luaVM)
         m_pScriptDebugging->LogCustom(luaVM, argStream.GetFullErrorMessage());
 
     // We failed
+    lua_pushboolean(luaVM, false);
+    return 1;
+}
+
+int CLuaElementDefs::AcquireElementStreamingLease(lua_State* luaVM)
+{
+    CClientEntity*   pEntity = nullptr;
+    CScriptArgReader argStream(luaVM);
+    argStream.ReadUserData(pEntity);
+
+    if (!argStream.HasErrors() && pEntity->IsStreamingCompatibleClass())
+    {
+        CLuaMain*  pLuaMain = m_pLuaManager->GetVirtualMachine(luaVM);
+        CResource* pResource = pLuaMain ? pLuaMain->GetResource() : nullptr;
+        if (pResource)
+        {
+            const unsigned int uiToken = pResource->AcquireElementStreamingLease(static_cast<CClientStreamElement*>(pEntity));
+            if (uiToken != 0)
+            {
+                lua_pushnumber(luaVM, uiToken);
+                return 1;
+            }
+        }
+    }
+    else if (argStream.HasErrors())
+        m_pScriptDebugging->LogCustom(luaVM, argStream.GetFullErrorMessage());
+
+    lua_pushboolean(luaVM, false);
+    return 1;
+}
+
+int CLuaElementDefs::ReleaseElementStreamingLease(lua_State* luaVM)
+{
+    unsigned int     uiToken = 0;
+    CScriptArgReader argStream(luaVM);
+    argStream.ReadNumber(uiToken);
+
+    if (!argStream.HasErrors())
+    {
+        CLuaMain*  pLuaMain = m_pLuaManager->GetVirtualMachine(luaVM);
+        CResource* pResource = pLuaMain ? pLuaMain->GetResource() : nullptr;
+        if (pResource && pResource->ReleaseElementStreamingLease(uiToken))
+        {
+            lua_pushboolean(luaVM, true);
+            return 1;
+        }
+    }
+    else
+        m_pScriptDebugging->LogCustom(luaVM, argStream.GetFullErrorMessage());
+
     lua_pushboolean(luaVM, false);
     return 1;
 }
