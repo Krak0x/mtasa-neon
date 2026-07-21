@@ -7795,13 +7795,32 @@ static void __declspec(naked) HOOK_FxManager_c__DestroyFxSystem()
     // clang-format on
 }
 
-DWORD pProcessedGangDriveBySimpleTask;
-void  CTaskSimpleGangDriveBy__ProcessPed()
+DWORD            pProcessedGangDriveBySimpleTask;
+CPedSAInterface* pProcessedGangDriveByPed;
+
+bool ShouldPreserveNativeGangDriveByAnimation()
+{
+    if (!pProcessedGangDriveBySimpleTask || !pProcessedGangDriveByPed || IsLocalPlayer(pProcessedGangDriveByPed))
+        return false;
+
+    const bool fromScriptCommand = *reinterpret_cast<const bool*>(pProcessedGangDriveBySimpleTask + 0x0E);
+    if (!fromScriptCommand)
+        return false;
+
+    CRemoteDataStorageSA* remoteData = CRemoteDataSA::GetRemoteDataStorage(pProcessedGangDriveByPed);
+
+    // Mission actors deliberately give GTA AI ownership of their weapon target.
+    // Keep GTA's matching cross-vehicle animations for that same ownership mode,
+    // while ordinary player drive-bys retain MTA's anti-invulnerability fix.
+    return remoteData && !remoteData->ProcessPlayerWeapon();
+}
+
+void CTaskSimpleGangDriveBy__ProcessPed()
 {
     AnimationId* pRequiredAnim = ((AnimationId*)(pProcessedGangDriveBySimpleTask + 0x24));
     AssocGroupId requiredAnimGroup = *((AssocGroupId*)(pProcessedGangDriveBySimpleTask + 0x28));
 
-    if (m_pDrivebyAnimationHandler != NULL)
+    if (m_pDrivebyAnimationHandler != NULL && !ShouldPreserveNativeGangDriveByAnimation())
         *pRequiredAnim = m_pDrivebyAnimationHandler(*pRequiredAnim, requiredAnimGroup);
 }
 
@@ -7815,6 +7834,7 @@ static void __declspec(naked) HOOK_CTaskSimpleGangDriveBy__ProcessPed()
     __asm
     {
         mov pProcessedGangDriveBySimpleTask, esi
+        mov pProcessedGangDriveByPed, ebp
         pushad
     }
     // clang-format on

@@ -56,15 +56,15 @@ local function destroySession(player, restore)
     sessions[player] = nil
 end
 
-local function targetPosition()
+local function targetPosition(phase)
     local origin = NATIVE_DRIVE_BY.origin
-    local offset = NATIVE_DRIVE_BY.targetOffset
+    local offset = NATIVE_DRIVE_BY.targetOffsets[phase]
     return origin[1] + offset[1], origin[2] + offset[2], origin[3] + offset[3]
 end
 
 local function createPhaseTarget(session, phase)
     destroyTarget(session)
-    local x, y, z = targetPosition()
+    local x, y, z = targetPosition(phase)
     local target
     if phase == "vehicle" then
         target = createVehicle(536, x, y, z, 0, 0, 0)
@@ -89,7 +89,9 @@ local function createPhaseTarget(session, phase)
     session.target = target
     session.phase = phase
     session.initialTargetHealth = getElementHealth(target)
+    session.initialShooterVehicleHealth = getElementHealth(session.vehicle)
     session.serverDamageObserved = false
+    session.serverShooterVehicleDamageObserved = false
 
     local coordinate = phase == "coordinate" and {x, y, z + 0.65} or false
     triggerClientEvent(session.player, "nativeDriveBy:phase", resourceRoot, session.id, phase, session.shooter, session.vehicle, target, coordinate)
@@ -110,6 +112,16 @@ local function startMonitor(session)
                               100, 230, 130)
                 outputDebugString(("[native drive-by] DAMAGE server id=%d phase=%s initial=%.1f current=%.1f"):format(
                     session.id, session.phase, session.initialTargetHealth, health), 3)
+            end
+        end
+        if isElement(session.vehicle) and type(session.initialShooterVehicleHealth) == "number" then
+            local health = getElementHealth(session.vehicle)
+            if health < session.initialShooterVehicleHealth and not session.serverShooterVehicleDamageObserved then
+                session.serverShooterVehicleDamageObserved = true
+                outputChatBox(("[native drive-by] ECHEC vehicule tireur endommage: %.1f -> %.1f"):format(
+                                  session.initialShooterVehicleHealth, health), session.player, 255, 80, 80)
+                outputDebugString(("[native drive-by] SHOOTER VEHICLE DAMAGE server id=%d phase=%s initial=%.1f current=%.1f"):format(
+                    session.id, session.phase, session.initialShooterVehicleHealth, health), 2)
             end
         end
     end, 100, 0)
@@ -185,6 +197,12 @@ addEventHandler("nativeDriveBy:evidence", resourceRoot, function(sessionId, phas
         outputChatBox(("[native drive-by] FIRE %s ammo %d -> %d"):format(phase, tonumber(a) or -1, tonumber(b) or -1), player, unpack(colour))
     elseif evidence == "damage" then
         outputChatBox(("[native drive-by] DAMAGE client %s %.1f -> %.1f"):format(phase, tonumber(a) or -1, tonumber(b) or -1), player, unpack(colour))
+    elseif evidence == "source_vehicle_intact" then
+        outputChatBox(("[native drive-by] VEHICULE TIREUR intact %s %.1f -> %.1f"):format(
+                          phase, tonumber(a) or -1, tonumber(b) or -1), player, unpack(colour))
+    elseif evidence == "source_vehicle_damage" then
+        outputChatBox(("[native drive-by] ECHEC vehicule tireur %s %.1f -> %.1f"):format(
+                          phase, tonumber(a) or -1, tonumber(b) or -1), player, 255, 80, 80)
     elseif evidence == "cancel_queued" then
         outputChatBox(("[native drive-by] CANCEL queued %s"):format(phase), player, unpack(colour))
     elseif evidence == "cancel_call" then

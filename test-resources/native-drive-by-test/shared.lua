@@ -1,6 +1,10 @@
 NATIVE_DRIVE_BY = {
     origin = {1550.0, -2495.0, 13.2, 0.0},
-    targetOffset = {12.0, 0.0, 0.5},
+    targetOffsets = {
+        vehicle = {12.0, 0.0, 0.5},
+        ped = {-12.0, 0.0, 0.5},
+        coordinate = {-12.0, 0.0, 0.5},
+    },
     shooterModel = 103,
     vehicleModel = 412,
     weapon = 32,

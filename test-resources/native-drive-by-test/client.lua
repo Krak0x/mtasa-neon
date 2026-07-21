@@ -130,6 +130,7 @@ local function beginPhase()
     local target = test.coordinate and Vector3(test.coordinate[1], test.coordinate[2], test.coordinate[3]) or test.target
     test.initialAmmo = getPedTotalAmmo(test.shooter)
     test.initialHealth = getElementHealth(test.target)
+    test.initialShooterVehicleHealth = getElementHealth(test.vehicle)
     test.startedAt = getTickCount()
     test.accepted = setPedDriveBy(test.shooter, target, NATIVE_DRIVE_BY.abortRange, NATIVE_DRIVE_BY.style, NATIVE_DRIVE_BY.seatRHS,
                                   NATIVE_DRIVE_BY.frequency)
@@ -165,7 +166,18 @@ local function beginPhase()
             end
         end
 
+        local shooterVehicleHealth = getElementHealth(current.vehicle)
+        if shooterVehicleHealth < current.initialShooterVehicleHealth then
+            report("source_vehicle_damage", current.initialShooterVehicleHealth, shooterVehicleHealth)
+            return fail(("vehicule tireur endommage %.1f -> %.1f"):format(
+                current.initialShooterVehicleHealth, shooterVehicleHealth))
+        end
+
         if current.taskObserved and current.fireObserved and current.damageObserved then
+            if not current.sourceVehicleIntactObserved then
+                current.sourceVehicleIntactObserved = true
+                report("source_vehicle_intact", current.initialShooterVehicleHealth, shooterVehicleHealth)
+            end
             if current.phase == "ped" then
                 requestPedTargetDestruction()
             else

@@ -96,6 +96,8 @@ VOID InitShotsyncHooks()
     HookInstallCall(HOOKPOS_CTaskSimpleGangDriveBy__IsPlayerC, (DWORD)HOOK_CTaskSimpleGangDriveBy__IsPlayer);
     HookInstallCall(HOOKPOS_CTaskSimpleGangDriveBy__IsPlayerD, (DWORD)HOOK_CTaskSimpleGangDriveBy__IsPlayer);
     HookInstallCall(HOOKPOS_CTaskSimpleGangDriveBy__IsPlayerE, (DWORD)HOOK_CTaskSimpleGangDriveBy__IsPlayer);
+    HookInstallCall(HOOKPOS_CTaskSimpleGangDriveBy__IsPlayerF, (DWORD)HOOK_CTaskSimpleGangDriveByHelper__IsPlayer);
+    HookInstallCall(HOOKPOS_CTaskSimpleGangDriveBy__IsPlayerG, (DWORD)HOOK_CTaskSimpleGangDriveByHelper__IsPlayer);
     HookInstall(HOOKPOS_CWeapon__Fire_Sniper, (DWORD)HOOK_CWeapon__Fire_Sniper, 6);
     HookInstall(HOOKPOS_CEventDamage__AffectsPed, (DWORD)HOOK_CEventDamage__AffectsPed, 6);
     HookInstall(HOOKPOS_CEventVehicleExplosion__AffectsPed, (DWORD)HOOK_CEventVehicleExplosion__AffectsPed, 5);
@@ -175,6 +177,35 @@ static void __declspec(naked) HOOK_CTaskSimpleGangDriveBy__IsPlayer()
 
     NativeIsPlayer:
         mov     ecx, ebp
+        mov     eax, 0x5DF8F0
+        jmp     eax
+    }
+    // clang-format on
+}
+
+static void __declspec(naked) HOOK_CTaskSimpleGangDriveByHelper__IsPlayer()
+{
+    MTA_VERIFY_HOOK_LOCAL_SIZE;
+
+    // The fire and IK helpers repeat the same player test after ProcessPed has
+    // selected AI control. Keep those helpers on the task-owned target too, or
+    // a CPlayerPed-backed mission actor aims its weapon with the local camera
+    // even though CWeapon::Fire still shoots at the scripted target.
+    // clang-format off
+    __asm
+    {
+        push    edi
+        push    ebp
+        call    ShouldUseGangDriveByAIControl
+        add     esp, 8
+        test    al, al
+        jz      NativeIsPlayer
+
+        xor     al, al
+        ret
+
+    NativeIsPlayer:
+        mov     ecx, edi
         mov     eax, 0x5DF8F0
         jmp     eax
     }

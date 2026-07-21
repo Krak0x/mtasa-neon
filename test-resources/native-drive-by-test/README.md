@@ -12,7 +12,13 @@ running the Drive-Thru mission or approximating weapon fire in Lua.
    synchronized by the tester.
 3. Let the three automatic phases run. Each phase must independently report
    `ACCEPT`, observation of `TASK_SIMPLE_GANG_DRIVEBY`, an ammo decrease, and
-   real target-health damage on both client and server.
+   real target-health damage on both client and server. The vehicle target is
+   placed on the passenger side; the ped and coordinate targets are placed
+   across the cabin so GTA must select its native cross-vehicle animation.
+   Rotate the gameplay camera throughout all three phases: the passenger's
+   weapon and arms must remain aligned with the target instead of following
+   the camera. Every phase also proves that the shooter's own Voodoo retained
+   its health.
 4. The vehicle phase queues cancellation after returning from the monitor
    callback, logs entry and return from `killPedTask`, then verifies that the
    native primary task is no longer active.
@@ -26,8 +32,9 @@ running the Drive-Thru mission or approximating weapon fire in Lua.
    destroy the harness and restore the tester's original position.
 
 Acceptance, task activity, shots, client damage, server damage, cancellation,
-target destruction, and cleanup are deliberately separate observations. A
-successful Lua return alone is not a pass.
+cross-vehicle targeting, shooter-vehicle health, target destruction, and
+cleanup are deliberately separate observations. A successful Lua return alone
+is not a pass.
 
 ## Native gate
 
@@ -44,3 +51,23 @@ The constructor registers a safe entity reference and copies the coordinate;
 the destructor cleans that reference. The current `gta-reversed-dryxio`
 constructor, clone, destructor, parameter types, offsets, and `0x44` size agree
 with the target assembly, so this checkpoint requires no reverse correction.
+
+MTA normally replaces animation `232` with `235` and `236` with `231` to keep
+ordinary players vulnerable while leaning out of a vehicle. Neon now skips
+that visual substitution only for a script-command task whose non-local ped
+has already relinquished MTA player-weapon processing to GTA AI through the
+mission-actor policy. Player drive-bys retain the established MTA correction,
+while SCM-style actors keep GTA's matching cross-vehicle pose and task-owned
+target.
+
+The target executable selects the player or AI direction path at `0x62D58F`,
+using `0x621960` or `0x627600`, before the required animation is consumed at
+`0x62D5A7`. Five player tests in `ProcessPed` and the repeated tests at
+`0x627D81` in the firing helper and `0x62838D` in the IK helper must all select
+AI control. Otherwise `CWeapon::Fire` still receives the task target at
+`0x628328`, but `CPedIK::PointGunInDirection` receives camera-derived angles
+at `0x62876D`. In the target-directed instant-hit path,
+`0x740697` writes the shooter's occupied vehicle to `CWorld::pIgnoreEntity` at
+`0xB7CD68`. The current `gta-reversed-dryxio` control flow agrees with those
+instructions, including the own-vehicle exclusion, so no reverse correction
+or GTA-reversed build is required.

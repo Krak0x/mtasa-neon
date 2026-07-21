@@ -28,6 +28,8 @@
 #define HOOKPOS_CTaskSimpleGangDriveBy__IsPlayerC    0x62D58F
 #define HOOKPOS_CTaskSimpleGangDriveBy__IsPlayerD    0x62D862
 #define HOOKPOS_CTaskSimpleGangDriveBy__IsPlayerE    0x62D919
+#define HOOKPOS_CTaskSimpleGangDriveBy__IsPlayerF    0x627D81
+#define HOOKPOS_CTaskSimpleGangDriveBy__IsPlayerG    0x62838D
 #define HOOKPOS_CWeapon__Fire_Sniper                 0x7424A6
 #define HOOKRET_CWeapon__Fire_Sniper                 0x7424D7
 #define HOOKPOS_CEventDamage__AffectsPed             0x4B35A0
@@ -57,6 +59,7 @@ VOID HOOK_CWeapon__PostFire2();
 VOID HOOK_CPedIK__PointGunInDirection();
 VOID HOOK_CTaskSimpleGangDriveBy__PlayerTarget();
 VOID HOOK_CTaskSimpleGangDriveBy__IsPlayer();
+VOID HOOK_CTaskSimpleGangDriveByHelper__IsPlayer();
 VOID HOOK_CWeapon__Fire_Sniper();
 VOID HOOK_CEventDamage__AffectsPed();
 VOID HOOK_CEventVehicleExplosion__AffectsPed();
