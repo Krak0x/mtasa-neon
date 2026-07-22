@@ -51,7 +51,12 @@ Var ServerExePath
 Var UninstallExePath
 
 ; Games explorer: With each new X.X, update this GUID and the file at MTA10\launch\NEU\Multi Theft Auto.gdf.xml
-!define GUID "{8A7FC5C7-0023-4CD7-B1D6-89073CFD838F}"
+!ifdef MTA_NEON
+    ; Keep the fork separate from an official MTA installation in Games Explorer.
+    !define GUID "{5529E5F1-90B2-43D3-85C1-4F7C6FDCD43F}"
+!else
+    !define GUID "{8A7FC5C7-0023-4CD7-B1D6-89073CFD838F}"
+!endif
 
 !ifndef MAJOR_VER
     !define MAJOR_VER "1"
@@ -61,21 +66,37 @@ Var UninstallExePath
 !define 0.0 "${MAJOR_VER}.${MINOR_VER}"
 !define 0.0.0 "${MAJOR_VER}.${MINOR_VER}.${MAINT_VER}"
 
-!define APPLICATION_ID "Multi Theft Auto ${0.0}"
+!ifdef MTA_NEON
+    !define APPLICATION_ID "MTA Neon ${0.0}"
+!else
+    !define APPLICATION_ID "Multi Theft Auto ${0.0}"
+!endif
 
 ; ###########################################################################################################
 !ifndef FILES_ROOT
     !define LIGHTBUILD    ; enable LIGHTBUILD for nightly
     !define FILES_ROOT "../../Bin"
+!endif
+!ifndef SERVER_FILES_ROOT
     !define SERVER_FILES_ROOT "${FILES_ROOT}/server"
+!endif
+!ifndef FILES_MODULE_SDK
     !define FILES_MODULE_SDK "${FILES_ROOT}/development/publicsdk"
+!endif
+!ifndef INSTALL_OUTPUT
     !define INSTALL_OUTPUT "mtasa-${0.0.0}-unstable-00000-0-000-nsis.exe"
+!endif
+!ifndef PRODUCT_VERSION
     !define PRODUCT_VERSION "v${0.0.0}-unstable-00000-0-000"
+!endif
+!ifndef REVISION
     !define REVISION "0"
 !endif
 !ifndef LIGHTBUILD
-    !define INCLUDE_DEVELOPMENT
-    !define INCLUDE_EDITOR
+    !ifndef CLIENT_ONLY
+        !define INCLUDE_DEVELOPMENT
+        !define INCLUDE_EDITOR
+    !endif
 !endif
 !ifndef PRODUCT_VERSION
     !define PRODUCT_VERSION "v${0.0.0}"
@@ -92,12 +113,23 @@ Var UninstallExePath
     !define REVISION_TAG ""
 !endif
 
-!define PRODUCT_NAME "MTA:SA ${0.0}"
-!define PRODUCT_NAME_NO_VER "MTA:SA"
-
-!define PRODUCT_PUBLISHER "Multi Theft Auto"
-!define PRODUCT_WEB_SITE "https://www.multitheftauto.com"
-!define PRODUCT_DIR_REGKEY "Software\Microsoft\Windows\CurrentVersion\App Paths\Multi Theft Auto ${0.0}.exe"
+!ifdef MTA_NEON
+    !define PRODUCT_NAME "MTA Neon ${0.0}"
+    !define PRODUCT_NAME_NO_VER "MTA Neon"
+    !define PRODUCT_PUBLISHER "Dryxio"
+    !define PRODUCT_WEB_SITE "https://github.com/Dryxio/mtasa-neon"
+    !define PRODUCT_DIR_REGKEY "Software\Microsoft\Windows\CurrentVersion\App Paths\MTA Neon ${0.0}.exe"
+    !define PRODUCT_INSTALL_REGKEY "SOFTWARE\MTA Neon\${0.0}"
+    !define PRODUCT_INSTALL_DIR_NAME "MTA Neon"
+!else
+    !define PRODUCT_NAME "MTA:SA ${0.0}"
+    !define PRODUCT_NAME_NO_VER "MTA:SA"
+    !define PRODUCT_PUBLISHER "Multi Theft Auto"
+    !define PRODUCT_WEB_SITE "https://www.multitheftauto.com"
+    !define PRODUCT_DIR_REGKEY "Software\Microsoft\Windows\CurrentVersion\App Paths\Multi Theft Auto ${0.0}.exe"
+    !define PRODUCT_INSTALL_REGKEY "SOFTWARE\Multi Theft Auto: San Andreas All\${0.0}"
+    !define PRODUCT_INSTALL_DIR_NAME "MTA San Andreas ${0.0}"
+!endif
 !define PRODUCT_UNINST_KEY "Software\Microsoft\Windows\CurrentVersion\Uninstall\${PRODUCT_NAME}"
 !define PRODUCT_UNINST_ROOT_KEY "HKLM"
 
@@ -127,7 +159,11 @@ Var UninstallExePath
 !define MUI_PAGE_CUSTOMFUNCTION_LEAVE "LicenseLeaveProc"
 !insertmacro MUI_PAGE_LICENSE                   "eula.txt"
 
-Page custom CustomNetMessagePage CustomNetMessagePageLeave
+!ifndef MTA_NEON
+    ; The upstream page reports installer diagnostics to the MTA update service.
+    ; Fork installers must not send installation telemetry to that service.
+    Page custom CustomNetMessagePage CustomNetMessagePageLeave
+!endif
 
 ; Components page
 !define MUI_PAGE_CUSTOMFUNCTION_SHOW "ComponentsShowProc"
@@ -183,14 +219,24 @@ Page custom CustomDirectoryPage CustomDirectoryPageLeave
     !else
         !define VI_PRODUCT_VERSION "${0.0.0}.0"
     !endif
-    !define VI_PRODUCT_NAME "MTA San Andreas"
-    !define VI_COMPANY_NAME "Multi Theft Auto"
-    !define /date DATE_YEAR "%Y"
-    !define VI_LEGAL_COPYRIGHT "(C) 2003 - ${DATE_YEAR} Multi Theft Auto"
-    !ifndef LIGHTBUILD
-        !define VI_FILE_DESCRIPTION "Multi Theft Auto Full Installer"
+    !ifdef MTA_NEON
+        !define VI_PRODUCT_NAME "MTA Neon"
+        !define VI_COMPANY_NAME "Dryxio"
     !else
-        !define VI_FILE_DESCRIPTION "Multi Theft Auto Nightly Installer"
+        !define VI_PRODUCT_NAME "MTA San Andreas"
+        !define VI_COMPANY_NAME "Multi Theft Auto"
+    !endif
+    !define /date DATE_YEAR "%Y"
+    !ifdef MTA_NEON
+        !define VI_LEGAL_COPYRIGHT "(C) 2003 - ${DATE_YEAR} Multi Theft Auto contributors"
+        !define VI_FILE_DESCRIPTION "MTA Neon Client Installer"
+    !else
+        !define VI_LEGAL_COPYRIGHT "(C) 2003 - ${DATE_YEAR} Multi Theft Auto"
+        !ifndef LIGHTBUILD
+            !define VI_FILE_DESCRIPTION "Multi Theft Auto Full Installer"
+        !else
+            !define VI_FILE_DESCRIPTION "Multi Theft Auto Nightly Installer"
+        !endif
     !endif
 !endif
 VIProductVersion "${VI_PRODUCT_VERSION}"
@@ -285,23 +331,30 @@ Function .onInit
     ${LogText} "${PRODUCT_VERSION} ${REVISION_TAG}"
     ${LogText} "+Function begin - .onInit"
 
-    ; Try to find previously saved MTA:SA install path
-    ReadRegStr $Install_Dir HKLM "SOFTWARE\Multi Theft Auto: San Andreas All\${0.0}" "Last Install Location"
-    ${If} $Install_Dir == ""
-        ReadRegStr $Install_Dir HKLM "SOFTWARE\Multi Theft Auto: San Andreas ${0.0}" "Last Install Location"
-    ${EndIf}
+    ; A fork uses its own install directory even though the current runtime still
+    ; requires the shared MTA registry and ProgramData namespaces.
+    !ifndef MTA_NEON
+        ; Try to find previously saved MTA:SA install path
+        ReadRegStr $Install_Dir HKLM "SOFTWARE\Multi Theft Auto: San Andreas All\${0.0}" "Last Install Location"
+        ${If} $Install_Dir == ""
+            ReadRegStr $Install_Dir HKLM "SOFTWARE\Multi Theft Auto: San Andreas ${0.0}" "Last Install Location"
+        ${EndIf}
+    !else
+        ; Remember a custom Neon directory without colliding with official MTA.
+        ReadRegStr $Install_Dir HKLM "${PRODUCT_INSTALL_REGKEY}" "Last Install Location"
+    !endif
     ${If} $Install_Dir != ""
         Call NoteMTAWasPresent
     ${EndIf}
 
     ${If} $Install_Dir == ""
-        strcpy $Install_Dir "$PROGRAMFILES\MTA San Andreas ${0.0}"
+        strcpy $Install_Dir "$PROGRAMFILES\${PRODUCT_INSTALL_DIR_NAME}"
     ${EndIf}
     strcpy $INSTDIR $Install_Dir
     ${LogText} "Using install directory:'$INSTDIR'"
 
     ; Setup for install dir dialog
-    strcpy $DEFAULT_INSTDIR "$PROGRAMFILES\MTA San Andreas ${0.0}"
+    strcpy $DEFAULT_INSTDIR "$PROGRAMFILES\${PRODUCT_INSTALL_DIR_NAME}"
     strcpy $LAST_INSTDIR $Install_Dir
     strcpy $CUSTOM_INSTDIR $DEFAULT_INSTDIR
     ${If} $DEFAULT_INSTDIR == $LAST_INSTDIR
@@ -372,35 +425,76 @@ Function .onInit
 
     # Set Windows SID to use for permissions fixing
     Call SetPermissionsGroup
+    !ifdef MTA_NEON
+        Call CapturePreviousMtaLocations
+    !endif
     ${LogText} "-Function end - .onInit"
 FunctionEnd
+
+!ifdef MTA_NEON
+Function CapturePreviousMtaLocations
+    ; Capture once, before Neon seeds the shared runtime keys. This lets the
+    ; uninstaller restore an official MTA installation that was active before it.
+    SetRegView 32
+    ReadRegStr $0 HKLM "${PRODUCT_INSTALL_REGKEY}" "Previous Locations Captured"
+    ${If} $0 == "1"
+        Return
+    ${EndIf}
+
+    SetRegView 64
+    ReadRegStr $0 HKLM "SOFTWARE\Multi Theft Auto: San Andreas All\${0.0}" "Last Install Location"
+    ReadRegStr $1 HKLM "SOFTWARE\Multi Theft Auto: San Andreas All\${0.0}" "Last Run Location"
+    SetRegView 32
+    ReadRegStr $2 HKLM "SOFTWARE\Multi Theft Auto: San Andreas All\${0.0}" "Last Install Location"
+    ReadRegStr $3 HKLM "SOFTWARE\Multi Theft Auto: San Andreas All\${0.0}" "Last Run Location"
+
+    WriteRegStr HKLM "${PRODUCT_INSTALL_REGKEY}" "Previous Last Install Location 64" $0
+    WriteRegStr HKLM "${PRODUCT_INSTALL_REGKEY}" "Previous Last Run Location 64" $1
+    WriteRegStr HKLM "${PRODUCT_INSTALL_REGKEY}" "Previous Last Install Location 32" $2
+    WriteRegStr HKLM "${PRODUCT_INSTALL_REGKEY}" "Previous Last Run Location 32" $3
+    WriteRegStr HKLM "${PRODUCT_INSTALL_REGKEY}" "Previous Locations Captured" "1"
+FunctionEnd
+!endif
 
 Function .onInstSuccess
     ${LogText} "+Function begin - .onInstSuccess"
     SetShellVarContext all
 
+    ; The game-side loader can read either registry view before the launcher has
+    ; had a chance to update it. Seed both views so first launch never resolves
+    ; another MTA installation or fails with U01.
+    SetRegView 64
     WriteRegStr HKLM "SOFTWARE\Multi Theft Auto: San Andreas All\Common" "GTA:SA Path" $GTA_DIR
     WriteRegStr HKLM "SOFTWARE\Multi Theft Auto: San Andreas All\${0.0}" "Last Install Location" $INSTDIR
+    WriteRegStr HKLM "SOFTWARE\Multi Theft Auto: San Andreas All\${0.0}" "Last Run Location" $INSTDIR
+    SetRegView 32
+    WriteRegStr HKLM "SOFTWARE\Multi Theft Auto: San Andreas All\Common" "GTA:SA Path" $GTA_DIR
+    WriteRegStr HKLM "SOFTWARE\Multi Theft Auto: San Andreas All\${0.0}" "Last Install Location" $INSTDIR
+    WriteRegStr HKLM "SOFTWARE\Multi Theft Auto: San Andreas All\${0.0}" "Last Run Location" $INSTDIR
+    WriteRegStr HKLM "${PRODUCT_INSTALL_REGKEY}" "Last Install Location" $INSTDIR
+    AccessControl::GrantOnRegKey HKLM "SOFTWARE\Multi Theft Auto: San Andreas All" "($PermissionsGroup)" "FullAccess"
 
     # Add 'MaxLoaderThreads' DWORD value for gta_sa.exe to disable multi-threaded loading of DLLs.
     WriteRegDWORD HKLM "SOFTWARE\Microsoft\Windows NT\CurrentVersion\Image File Execution Options\gta_sa.exe" "MaxLoaderThreads" 1
 
-    # Configure Windows Error Reporting to save crash dumps to MTA's folder
-    # This enables capture of fail-fast crashes (0xC0000409, 0xC0000374) that bypass normal exception handling
-    # WER is a 64-bit system service that reads from the native 64-bit registry,
-    # so we must use SetRegView 64 to write to the correct location (not WOW6432Node)
-    SetRegView 64
-    # Configure for gta_sa.exe (game process)
-    ; DumpType: 0=Custom, 1=MiniDump, 2=FullDump - use 1 for smaller dumps
-    WriteRegDWORD HKLM "SOFTWARE\Microsoft\Windows\Windows Error Reporting\LocalDumps\gta_sa.exe" "DumpType" 1
-    WriteRegDWORD HKLM "SOFTWARE\Microsoft\Windows\Windows Error Reporting\LocalDumps\gta_sa.exe" "DumpCount" 10
-    WriteRegExpandStr HKLM "SOFTWARE\Microsoft\Windows\Windows Error Reporting\LocalDumps\gta_sa.exe" "DumpFolder" "$INSTDIR\MTA\dumps\private"
-    # Configure for Multi Theft Auto.exe (loader process)
-    ; DumpType: 0=Custom, 1=MiniDump, 2=FullDump - use 1 for smaller dumps
-    WriteRegDWORD HKLM "SOFTWARE\Microsoft\Windows\Windows Error Reporting\LocalDumps\Multi Theft Auto.exe" "DumpType" 1
-    WriteRegDWORD HKLM "SOFTWARE\Microsoft\Windows\Windows Error Reporting\LocalDumps\Multi Theft Auto.exe" "DumpCount" 10
-    WriteRegExpandStr HKLM "SOFTWARE\Microsoft\Windows\Windows Error Reporting\LocalDumps\Multi Theft Auto.exe" "DumpFolder" "$INSTDIR\MTA\dumps\private"
-    SetRegView 32
+    !ifndef MTA_NEON
+        # Configure Windows Error Reporting to save crash dumps to MTA's folder
+        # This enables capture of fail-fast crashes (0xC0000409, 0xC0000374) that bypass normal exception handling
+        # WER is a 64-bit system service that reads from the native 64-bit registry,
+        # so we must use SetRegView 64 to write to the correct location (not WOW6432Node)
+        SetRegView 64
+        # Configure for gta_sa.exe (game process)
+        ; DumpType: 0=Custom, 1=MiniDump, 2=FullDump - use 1 for smaller dumps
+        WriteRegDWORD HKLM "SOFTWARE\Microsoft\Windows\Windows Error Reporting\LocalDumps\gta_sa.exe" "DumpType" 1
+        WriteRegDWORD HKLM "SOFTWARE\Microsoft\Windows\Windows Error Reporting\LocalDumps\gta_sa.exe" "DumpCount" 10
+        WriteRegExpandStr HKLM "SOFTWARE\Microsoft\Windows\Windows Error Reporting\LocalDumps\gta_sa.exe" "DumpFolder" "$INSTDIR\MTA\dumps\private"
+        # Configure for Multi Theft Auto.exe (loader process)
+        ; DumpType: 0=Custom, 1=MiniDump, 2=FullDump - use 1 for smaller dumps
+        WriteRegDWORD HKLM "SOFTWARE\Microsoft\Windows\Windows Error Reporting\LocalDumps\Multi Theft Auto.exe" "DumpType" 1
+        WriteRegDWORD HKLM "SOFTWARE\Microsoft\Windows\Windows Error Reporting\LocalDumps\Multi Theft Auto.exe" "DumpCount" 10
+        WriteRegExpandStr HKLM "SOFTWARE\Microsoft\Windows\Windows Error Reporting\LocalDumps\Multi Theft Auto.exe" "DumpFolder" "$INSTDIR\MTA\dumps\private"
+        SetRegView 32
+    !endif
 
 	# Initilize variables holding paths and names
 	Call MTAInitFileNamesAndPaths
@@ -426,17 +520,19 @@ Function .onInstSuccess
 				${LogText} "Error setting Application ID for client shortcut"
 			${EndIf}
 		${EndIf}
-		# Either update or create Server shortcut
-		${If} ${FileExists} $StartMenuServerShortcutPath
-			Push $ServerExePath
-			Push $StartMenuServerShortcutPath
-			Call MTAUpdateShortсutTarget
-		${Else}
-			Push $ServerExePath
-			Push $ServerExePath
-			Push $StartMenuServerShortcutPath
-			Call MTACreateShortсut
-		${EndIf}
+		!ifndef CLIENT_ONLY
+			# Either update or create Server shortcut
+			${If} ${FileExists} $StartMenuServerShortcutPath
+				Push $ServerExePath
+				Push $StartMenuServerShortcutPath
+				Call MTAUpdateShortсutTarget
+			${Else}
+				Push $ServerExePath
+				Push $ServerExePath
+				Push $StartMenuServerShortcutPath
+				Call MTACreateShortсut
+			${EndIf}
+		!endif
 		# Either update or create Uninstall shortcut
 		${If} ${FileExists} $StartMenuUninstallShortcutPath
 			Push $UninstallExePath
@@ -476,18 +572,24 @@ Function .onInstSuccess
     ${LogText} "-Function end - .onInstSuccess"
 FunctionEnd
 
-LangString INST_CLIENTSERVER ${LANG_ENGLISH}    "Client and Server"
-LangString INST_SERVER ${LANG_ENGLISH}  "Server only"
-
-
-InstType "$(INST_CLIENTSERVER)"
-InstType "$(INST_SERVER)"
+!ifdef CLIENT_ONLY
+    LangString INST_CLIENT ${LANG_ENGLISH} "Client"
+    InstType "$(INST_CLIENT)"
+!else
+    LangString INST_CLIENTSERVER ${LANG_ENGLISH} "Client and Server"
+    LangString INST_SERVER ${LANG_ENGLISH} "Server only"
+    InstType "$(INST_CLIENTSERVER)"
+    InstType "$(INST_SERVER)"
+!endif
 
 Name "${PRODUCT_NAME_NO_VER} ${PRODUCT_VERSION}"
 OutFile "${INSTALL_OUTPUT}"
 
-;InstallDir "$PROGRAMfiles San Andreas"
-InstallDirRegKey HKLM "SOFTWARE\Multi Theft Auto: San Andreas All\${0.0}" "Last Install Location"
+!ifdef MTA_NEON
+    InstallDirRegKey HKLM "${PRODUCT_INSTALL_REGKEY}" "Last Install Location"
+!else
+    InstallDirRegKey HKLM "SOFTWARE\Multi Theft Auto: San Andreas All\${0.0}" "Last Install Location"
+!endif
 ShowInstDetails show
 ShowUnInstDetails show
 
@@ -498,27 +600,53 @@ LangString INST_GAMES_EXPLORER      ${LANG_ENGLISH} "Add to Games Explorer"
 LangString INST_DIRECTX             ${LANG_ENGLISH} "Install DirectX"
 
 Section "$(INST_STARTMENU_GROUP)" SEC10
-    SectionIn 1 2
+    !ifdef CLIENT_ONLY
+        SectionIn 1
+    !else
+        SectionIn 1 2
+    !endif
     StrCpy $CreateSMShortcuts 1
 SectionEnd
 
 Section "$(INST_DESKTOP_ICON)" SEC11
-    SectionIn 1 2
+    !ifdef CLIENT_ONLY
+        SectionIn 1
+    !else
+        SectionIn 1 2
+    !endif
     StrCpy $CreateDesktopIcon 1
 SectionEnd
 
+!ifdef MTA_NEON
+Section /o "$(INST_PROTOCOL)" SEC12
+    ; The protocol is global. Keep it opt-in so Neon does not silently replace
+    ; an official MTA installation's mtasa:// handler.
+!else
 Section "$(INST_PROTOCOL)" SEC12
-    SectionIn 1 2
+    !ifdef CLIENT_ONLY
+        SectionIn 1
+    !else
+        SectionIn 1 2
+    !endif
+!endif
     StrCpy $RegisterProtocol 1
 SectionEnd
 
 Section "$(INST_GAMES_EXPLORER)" SEC13
-    SectionIn 1 2
+    !ifdef CLIENT_ONLY
+        SectionIn 1
+    !else
+        SectionIn 1 2
+    !endif
     StrCpy $AddToGameExplorer 1
 SectionEnd
 
 Section "$(INST_DIRECTX)" SEC_DIRECTX
-    SectionIn 1 2
+    !ifdef CLIENT_ONLY
+        SectionIn 1
+    !else
+        SectionIn 1 2
+    !endif
     SetOutPath "$TEMP"
     File "${FILES_ROOT}\redist\dxwebsetup.exe"
     DetailPrint "Running DirectX Setup..."
@@ -563,8 +691,17 @@ SectionGroup /e "$(INST_SEC_CLIENT)" SECGCLIENT
         ${EndIf}
         #############################################################
 
+        ; Create the required runtime state in both registry views before the
+        ; launcher drops back to the standard user's token.
+        SetRegView 64
         WriteRegStr HKLM "SOFTWARE\Multi Theft Auto: San Andreas All\Common" "GTA:SA Path" $GTA_DIR
         WriteRegStr HKLM "SOFTWARE\Multi Theft Auto: San Andreas All\${0.0}" "Last Install Location" $INSTDIR
+        WriteRegStr HKLM "SOFTWARE\Multi Theft Auto: San Andreas All\${0.0}" "Last Run Location" $INSTDIR
+        SetRegView 32
+        WriteRegStr HKLM "SOFTWARE\Multi Theft Auto: San Andreas All\Common" "GTA:SA Path" $GTA_DIR
+        WriteRegStr HKLM "SOFTWARE\Multi Theft Auto: San Andreas All\${0.0}" "Last Install Location" $INSTDIR
+        WriteRegStr HKLM "SOFTWARE\Multi Theft Auto: San Andreas All\${0.0}" "Last Run Location" $INSTDIR
+        WriteRegStr HKLM "${PRODUCT_INSTALL_REGKEY}" "Last Install Location" $INSTDIR
 
         # Create fixed path data directories
         CreateDirectory "$APPDATA\MTA San Andreas All\Common"
@@ -661,7 +798,7 @@ SectionGroup /e "$(INST_SEC_CLIENT)" SECGCLIENT
         SetOutPath "$INSTDIR\MTA"
         SetOverwrite on
 
-        # Make some keys in HKLM read write accessible by all users
+        # Keep the upstream 32-bit registry ACL behavior for launcher updates.
         AccessControl::GrantOnRegKey HKLM "SOFTWARE\Multi Theft Auto: San Andreas All" "($PermissionsGroup)" "FullAccess"
 
         SetOutPath "$INSTDIR\MTA"
@@ -675,8 +812,8 @@ SectionGroup /e "$(INST_SEC_CLIENT)" SECGCLIENT
         File "${FILES_ROOT}\mta\mtasa.dll"
         File "${FILES_ROOT}\mta\pthread.dll"
         File "${FILES_ROOT}\mta\cefweb.dll"
-        File "${FILES_ROOT}\mta\libwow64.dll"
-        File "${FILES_ROOT}\mta\wow64_helper.exe"
+        File "${FILES_ROOT}\mta\bootstrap.exe"
+        File "${FILES_ROOT}\mta\bootstrapc.exe"
 
         File "${FILES_ROOT}\mta\bass.dll"
         File "${FILES_ROOT}\mta\bass_aac.dll"
@@ -863,12 +1000,14 @@ SectionGroup /e "$(INST_SEC_CLIENT)" SECGCLIENT
         SectionIn 1 RO
         SetOutPath "$INSTDIR\mods\deathmatch"
         File "${FILES_ROOT}\mods\deathmatch\client.dll"
+        File "${FILES_ROOT}\mods\deathmatch\lua5.1c.dll"
         File "${FILES_ROOT}\mods\deathmatch\pcre2.dll"
         SetOutPath "$INSTDIR\mods\deathmatch\resources"
         ${LogText} "-Section end - CLIENT GAME"
     SectionEnd
 SectionGroupEnd
 
+!ifndef CLIENT_ONLY
 SectionGroup /e "$(INST_SEC_SERVER)" SECGSERVER
     Section "$(INST_SEC_CORE)" SEC04
         ${LogText} "+Section begin - SERVER CORE"
@@ -1033,6 +1172,7 @@ SectionGroup /e "$(INST_SEC_SERVER)" SECGSERVER
     !endif
 
 SectionGroupEnd
+!endif
 
 LangString INST_SEC_DEVELOPER ${LANG_ENGLISH}   "Development"
 !ifdef INCLUDE_DEVELOPMENT
@@ -1055,15 +1195,23 @@ LangString INST_SEC_DEVELOPER ${LANG_ENGLISH}   "Development"
     !insertmacro MUI_DESCRIPTION_TEXT ${SEC02} $(DESC_Section2)
     ;!insertmacro MUI_DESCRIPTION_TEXT ${SEC03} $(DESC_Section3)
     ;!insertmacro MUI_DESCRIPTION_TEXT ${SECGMODS} $(DESC_SectionGroupMods)
-    !insertmacro MUI_DESCRIPTION_TEXT ${SEC04} $(DESC_Section4)
-    !insertmacro MUI_DESCRIPTION_TEXT ${SEC05} $(DESC_Section5)
-    !insertmacro MUI_DESCRIPTION_TEXT ${SEC06} $(DESC_Section6)
-    !insertmacro MUI_DESCRIPTION_TEXT ${SEC07} $(DESC_Section7)
-    !insertmacro MUI_DESCRIPTION_TEXT ${SEC08} $(DESC_Section8)
-    !insertmacro MUI_DESCRIPTION_TEXT ${SEC09} $(DESC_Section9)
+    !ifndef CLIENT_ONLY
+        !insertmacro MUI_DESCRIPTION_TEXT ${SEC04} $(DESC_Section4)
+        !insertmacro MUI_DESCRIPTION_TEXT ${SEC05} $(DESC_Section5)
+        !ifndef LIGHTBUILD
+            !insertmacro MUI_DESCRIPTION_TEXT ${SEC06} $(DESC_Section6)
+            !insertmacro MUI_DESCRIPTION_TEXT ${SEC07} $(DESC_Section7)
+        !endif
+        !ifdef INCLUDE_EDITOR
+            !insertmacro MUI_DESCRIPTION_TEXT ${SEC08} $(DESC_Section8)
+        !endif
+        !insertmacro MUI_DESCRIPTION_TEXT ${SECGSERVER} $(DESC_SectionGroupServer)
+    !endif
+    !ifdef INCLUDE_DEVELOPMENT
+        !insertmacro MUI_DESCRIPTION_TEXT ${SEC09} $(DESC_Section9)
+        !insertmacro MUI_DESCRIPTION_TEXT ${SECGDEV} $(DESC_SectionGroupDev)
+    !endif
     ;!insertmacro MUI_DESCRIPTION_TEXT ${SECBLANK} $(DESC_Blank)
-    !insertmacro MUI_DESCRIPTION_TEXT ${SECGSERVER} $(DESC_SectionGroupServer)
-    !insertmacro MUI_DESCRIPTION_TEXT ${SECGDEV} $(DESC_SectionGroupDev)
     !insertmacro MUI_DESCRIPTION_TEXT ${SECGCLIENT} $(DESC_SectionGroupClient)
 !insertmacro MUI_FUNCTION_DESCRIPTION_END
 
@@ -1158,52 +1306,69 @@ Section Uninstall
         Delete "$INSTDIR\MTA\*.dat"
         Delete "$INSTDIR\MTA\*.bin"
 
-        RmDir /r "$APPDATA\MTA San Andreas All\${0.0}"
-        ; Delete "$APPDATA\MTA San Andreas All" if "Common" is the only directory in it.
-        ${RmDirWithSingleChildDir} "$APPDATA\MTA San Andreas All" "Common"
+        !ifndef MTA_NEON
+            RmDir /r "$APPDATA\MTA San Andreas All\${0.0}"
+            ; Delete "$APPDATA\MTA San Andreas All" if "Common" is the only directory in it.
+            ${RmDirWithSingleChildDir} "$APPDATA\MTA San Andreas All" "Common"
+        !endif
 
         DeleteRegKey ${PRODUCT_UNINST_ROOT_KEY} "${PRODUCT_UNINST_KEY}"
         DeleteRegKey HKLM "${PRODUCT_DIR_REGKEY}"
-        DeleteRegKey HKLM "SOFTWARE\Multi Theft Auto: San Andreas ${0.0}"
-        DeleteRegKey HKCU "SOFTWARE\Multi Theft Auto: San Andreas ${0.0}"
-        DeleteRegKey HKLM "SOFTWARE\Multi Theft Auto: San Andreas All\${0.0}"
-        ; Delete "SOFTWARE\Multi Theft Auto: San Andreas All" if "Common" is the only one left.
-        ${RemoveRegistryGroupWithSingleKey} HKLM "SOFTWARE\Multi Theft Auto: San Andreas All" "Common"
+        !ifndef MTA_NEON
+            DeleteRegKey HKLM "SOFTWARE\Multi Theft Auto: San Andreas ${0.0}"
+            DeleteRegKey HKCU "SOFTWARE\Multi Theft Auto: San Andreas ${0.0}"
+            DeleteRegKey HKLM "SOFTWARE\Multi Theft Auto: San Andreas All\${0.0}"
+            ; Delete "SOFTWARE\Multi Theft Auto: San Andreas All" if "Common" is the only one left.
+            ${RemoveRegistryGroupWithSingleKey} HKLM "SOFTWARE\Multi Theft Auto: San Andreas All" "Common"
+        !else
+            Call un.RestorePreviousMtaLocations
+            DeleteRegKey HKLM "${PRODUCT_INSTALL_REGKEY}"
+        !endif
 
         ReadRegStr $0 HKLM "Software\Classes\mtasa\DefaultIcon" ""
         ${If} $0 == "$INSTDIR\Multi Theft Auto.exe"
             DeleteRegKey HKCR "mtasa"
         ${EndIf}
 
-        # Remove 'MaxLoaderThreads' DWORD value for gta_sa.exe.
-        DeleteRegValue HKLM "SOFTWARE\Microsoft\Windows NT\CurrentVersion\Image File Execution Options\gta_sa.exe" "MaxLoaderThreads"
-        DeleteRegKey /ifempty HKLM "SOFTWARE\Microsoft\Windows NT\CurrentVersion\Image File Execution Options\gta_sa.exe"
+        !ifndef MTA_NEON
+            # Remove 'MaxLoaderThreads' DWORD value for gta_sa.exe.
+            DeleteRegValue HKLM "SOFTWARE\Microsoft\Windows NT\CurrentVersion\Image File Execution Options\gta_sa.exe" "MaxLoaderThreads"
+            DeleteRegKey /ifempty HKLM "SOFTWARE\Microsoft\Windows NT\CurrentVersion\Image File Execution Options\gta_sa.exe"
 
-        # Remove WER LocalDumps configuration for gta_sa.exe and Multi Theft Auto.exe
-        # WER config is in 64-bit registry (not WOW6432Node), so use SetRegView 64
-        SetRegView 64
-        DeleteRegKey HKLM "SOFTWARE\Microsoft\Windows\Windows Error Reporting\LocalDumps\gta_sa.exe"
-        DeleteRegKey HKLM "SOFTWARE\Microsoft\Windows\Windows Error Reporting\LocalDumps\Multi Theft Auto.exe"
-        SetRegView 32
+            # Remove WER LocalDumps configuration for gta_sa.exe and Multi Theft Auto.exe
+            # WER config is in 64-bit registry (not WOW6432Node), so use SetRegView 64
+            SetRegView 64
+            DeleteRegKey HKLM "SOFTWARE\Microsoft\Windows\Windows Error Reporting\LocalDumps\gta_sa.exe"
+            DeleteRegKey HKLM "SOFTWARE\Microsoft\Windows\Windows Error Reporting\LocalDumps\Multi Theft Auto.exe"
+            SetRegView 32
+        !endif
 
         ${GameExplorer_RemoveGame} ${GUID}
 
-        ; Delete client shortcuts
-        Delete "$SMPROGRAMS\\MTA San Andreas ${0.0}\MTA San Andreas.lnk"
-        Delete "$SMPROGRAMS\\MTA San Andreas ${0.0}\Uninstall MTA San Andreas.lnk"
-        Delete "$DESKTOP\MTA San Andreas ${0.0}.lnk"
+        !ifdef MTA_NEON
+            ; Delete only fork shortcuts, never shortcuts belonging to official MTA.
+            Delete "$SMPROGRAMS\MTA Neon\MTA Neon.lnk"
+            Delete "$SMPROGRAMS\MTA Neon\Uninstall MTA Neon.lnk"
+            Delete "$DESKTOP\MTA Neon.lnk"
+            RmDir /r "$SMPROGRAMS\MTA Neon"
+        !else
+            ; Delete client shortcuts
+            Delete "$SMPROGRAMS\\MTA San Andreas ${0.0}\MTA San Andreas.lnk"
+            Delete "$SMPROGRAMS\\MTA San Andreas ${0.0}\Uninstall MTA San Andreas.lnk"
+            Delete "$DESKTOP\MTA San Andreas ${0.0}.lnk"
 
-        ; Delete server shortcuts
-        Delete "$SMPROGRAMS\\MTA San Andreas ${0.0}\MTA Server.lnk"
-        Delete "$SMPROGRAMS\\MTA San Andreas ${0.0}\Uninstall MTA San Andreas Server.lnk"
-        RmDir /r "$SMPROGRAMS\\MTA San Andreas ${0.0}"
+            ; Delete server shortcuts
+            Delete "$SMPROGRAMS\\MTA San Andreas ${0.0}\MTA Server.lnk"
+            Delete "$SMPROGRAMS\\MTA San Andreas ${0.0}\Uninstall MTA San Andreas Server.lnk"
+            RmDir /r "$SMPROGRAMS\\MTA San Andreas ${0.0}"
+        !endif
 
         RmDir "$INSTDIR" ; fix for #3898
 
         DeleteRegValue HKCR "Local Settings\Software\Microsoft\Windows\Shell\MuiCache" "$INSTDIR\Multi Theft Auto.exe.FriendlyAppName"
         DeleteRegValue HKCR "Local Settings\Software\Microsoft\Windows\Shell\MuiCache" "$INSTDIR\Multi Theft Auto.exe.ApplicationCompany"
-        DeleteRegValue HKCR "Local Settings\Software\Microsoft\Windows\Shell\MuiCache" "$INSTDIR\MTA\wow64_helper.exe.FriendlyAppName"
-        DeleteRegValue HKCR "Local Settings\Software\Microsoft\Windows\Shell\MuiCache" "$INSTDIR\MTA\wow64_helper.exe.ApplicationCompany"
+        DeleteRegValue HKCR "Local Settings\Software\Microsoft\Windows\Shell\MuiCache" "$INSTDIR\MTA\bootstrap.exe.FriendlyAppName"
+        DeleteRegValue HKCR "Local Settings\Software\Microsoft\Windows\Shell\MuiCache" "$INSTDIR\MTA\bootstrap.exe.ApplicationCompany"
         DeleteRegValue HKCR "Local Settings\Software\Microsoft\Windows\Shell\MuiCache" "$INSTDIR\server\MTA Server64.exe.FriendlyAppName"
         DeleteRegValue HKCR "Local Settings\Software\Microsoft\Windows\Shell\MuiCache" "$INSTDIR\server\MTA Server64.exe.ApplicationCompany"
         DeleteRegValue HKCR "Local Settings\Software\Microsoft\Windows\Shell\MuiCache" "$APPDATA\MTA San Andreas All\${0.0}\GTA San Andreas\gta_sa.exe.FriendlyAppName"
@@ -2167,7 +2332,7 @@ Function CustomDirectoryPageDirRequestChange
 FunctionEnd
 
 Function CustomDirectoryPageSetDefaultButtonClick
-    StrCpy $INSTDIR "$PROGRAMFILES\MTA San Andreas ${0.0}"
+    StrCpy $INSTDIR "$PROGRAMFILES\${PRODUCT_INSTALL_DIR_NAME}"
     ${NSD_SetText} $DirRequest $INSTDIR
     Call CustomDirectoryPageSetUpgradeMessage
 FunctionEnd
@@ -2391,6 +2556,53 @@ Function DoServiceInstall
         ${EndIf}
     ${EndIf}
 FunctionEnd
+
+!ifdef MTA_NEON
+Function un.RestorePreviousMtaLocations
+    ; Read saved values from Neon's private 32-bit key before switching views.
+    SetRegView 32
+    ReadRegStr $1 HKLM "${PRODUCT_INSTALL_REGKEY}" "Previous Last Install Location 64"
+    ReadRegStr $2 HKLM "${PRODUCT_INSTALL_REGKEY}" "Previous Last Run Location 64"
+    ReadRegStr $3 HKLM "${PRODUCT_INSTALL_REGKEY}" "Previous Last Install Location 32"
+    ReadRegStr $4 HKLM "${PRODUCT_INSTALL_REGKEY}" "Previous Last Run Location 32"
+
+    SetRegView 64
+    ReadRegStr $0 HKLM "SOFTWARE\Multi Theft Auto: San Andreas All\${0.0}" "Last Install Location"
+    ${If} $0 == $INSTDIR
+        ${If} $1 == ""
+            DeleteRegValue HKLM "SOFTWARE\Multi Theft Auto: San Andreas All\${0.0}" "Last Install Location"
+        ${Else}
+            WriteRegStr HKLM "SOFTWARE\Multi Theft Auto: San Andreas All\${0.0}" "Last Install Location" $1
+        ${EndIf}
+    ${EndIf}
+    ReadRegStr $0 HKLM "SOFTWARE\Multi Theft Auto: San Andreas All\${0.0}" "Last Run Location"
+    ${If} $0 == $INSTDIR
+        ${If} $2 == ""
+            DeleteRegValue HKLM "SOFTWARE\Multi Theft Auto: San Andreas All\${0.0}" "Last Run Location"
+        ${Else}
+            WriteRegStr HKLM "SOFTWARE\Multi Theft Auto: San Andreas All\${0.0}" "Last Run Location" $2
+        ${EndIf}
+    ${EndIf}
+
+    SetRegView 32
+    ReadRegStr $0 HKLM "SOFTWARE\Multi Theft Auto: San Andreas All\${0.0}" "Last Install Location"
+    ${If} $0 == $INSTDIR
+        ${If} $3 == ""
+            DeleteRegValue HKLM "SOFTWARE\Multi Theft Auto: San Andreas All\${0.0}" "Last Install Location"
+        ${Else}
+            WriteRegStr HKLM "SOFTWARE\Multi Theft Auto: San Andreas All\${0.0}" "Last Install Location" $3
+        ${EndIf}
+    ${EndIf}
+    ReadRegStr $0 HKLM "SOFTWARE\Multi Theft Auto: San Andreas All\${0.0}" "Last Run Location"
+    ${If} $0 == $INSTDIR
+        ${If} $4 == ""
+            DeleteRegValue HKLM "SOFTWARE\Multi Theft Auto: San Andreas All\${0.0}" "Last Run Location"
+        ${Else}
+            WriteRegStr HKLM "SOFTWARE\Multi Theft Auto: San Andreas All\${0.0}" "Last Run Location" $4
+        ${EndIf}
+    ${EndIf}
+FunctionEnd
+!endif
 
 Function un.DoServiceUninstall
     ${If} $ServiceModified != 2
@@ -2688,17 +2900,31 @@ FunctionEnd
 
 Function MTAInitFileNamesAndPaths
 	# Shortcuts names
-	StrCpy $ClientShortcutName "MTA San Andreas"
-	StrCpy $ServerShortcutName "MTA Server"
-	StrCpy $UninstallShortcutName "Uninstall MTA San Andreas"
+	!ifdef MTA_NEON
+		StrCpy $ClientShortcutName "MTA Neon"
+		StrCpy $ServerShortcutName "MTA Neon Server"
+		StrCpy $UninstallShortcutName "Uninstall MTA Neon"
+	!else
+		StrCpy $ClientShortcutName "MTA San Andreas"
+		StrCpy $ServerShortcutName "MTA Server"
+		StrCpy $UninstallShortcutName "Uninstall MTA San Andreas"
+	!endif
 	# Shostcuts paths
-	StrCpy $StartMenuMTAFolderPath "$SMPROGRAMS\MTA San Andreas ${0.0}"
+	!ifdef MTA_NEON
+		StrCpy $StartMenuMTAFolderPath "$SMPROGRAMS\MTA Neon"
+	!else
+		StrCpy $StartMenuMTAFolderPath "$SMPROGRAMS\MTA San Andreas ${0.0}"
+	!endif
 	StrCpy $StartMenuClientShortcutPath "$StartMenuMTAFolderPath\$ClientShortcutName.lnk"
 	StrCpy $StartMenuServerShortcutPath "$StartMenuMTAFolderPath\$ServerShortcutName.lnk"
 	StrCpy $StartMenuUninstallShortcutPath "$StartMenuMTAFolderPath\$UninstallShortcutName.lnk"
 	# Shortcut names for desktop and start menu are different and can't be safely unified.
 	# Obvious fix is to roll 1 update where all shortcuts will be deleted and replaced with a unified names.
-	StrCpy $DesktopClientShortcutPath "$DESKTOP\$ClientShortcutName ${0.0}.lnk"
+	!ifdef MTA_NEON
+		StrCpy $DesktopClientShortcutPath "$DESKTOP\$ClientShortcutName.lnk"
+	!else
+		StrCpy $DesktopClientShortcutPath "$DESKTOP\$ClientShortcutName ${0.0}.lnk"
+	!endif
 	# Exe names
 	StrCpy $ClientExeName "Multi Theft Auto.exe"
 	StrCpy $ServerExeName "MTA Server64.exe"

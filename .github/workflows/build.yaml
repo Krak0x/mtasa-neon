@@ -36,7 +36,7 @@ jobs:
         run: utils\premake5 install_data
 
       - name: Run Build
-        run: win-build.bat release ${{ matrix.platform }}
+        run: win-build.bat nightly ${{ matrix.platform }}
         shell: cmd
         env:
           DXSDK_DIR: './utils/DXFiles/'
@@ -45,10 +45,116 @@ jobs:
       - name: Create build artifacts
         run: utils\premake5 compose_files
 
+      - name: Install NSIS
+        if: matrix.platform == 'win32'
+        run: choco install nsis --version=3.12.0 --yes --no-progress
+        shell: powershell
+
+      - name: Build and inspect Neon client installer
+        if: matrix.platform == 'win32'
+        shell: powershell
+        run: |
+          $ErrorActionPreference = 'Stop'
+
+          $filesRoot = (Resolve-Path 'InstallFiles').Path
+          $installerRoot = (Resolve-Path 'Shared\installer').Path
+          $outputDirectory = Join-Path $PWD 'InstallerOutput'
+          $outputPath = Join-Path $outputDirectory 'MTA-Neon-Setup.exe'
+
+          $requiredInputs = @(
+            'Multi Theft Auto.exe',
+            'MTA\core.dll',
+            'MTA\netc.dll',
+            'MTA\bootstrap.exe',
+            'MTA\bootstrapc.exe',
+            'MTA\sa.dat',
+            'MTA\cgui\unifont.ttf',
+            'mods\deathmatch\client.dll',
+            'mods\deathmatch\lua5.1c.dll',
+            'mods\deathmatch\pcre2.dll',
+            'skins\Default\CGUI.xml'
+          )
+          foreach ($relativePath in $requiredInputs) {
+            $inputPath = Join-Path $filesRoot $relativePath
+            if (-not (Test-Path -LiteralPath $inputPath -PathType Leaf)) {
+              throw "Installer input is missing: $relativePath"
+            }
+          }
+
+          New-Item -ItemType Directory -Force -Path $outputDirectory | Out-Null
+          $makensis = Join-Path ${env:ProgramFiles(x86)} 'NSIS\makensis.exe'
+          if (-not (Test-Path -LiteralPath $makensis -PathType Leaf)) {
+            throw "makensis.exe was not found at $makensis"
+          }
+
+          Push-Location $installerRoot
+          try {
+            & $makensis `
+              '/DMTA_NEON' `
+              '/DCLIENT_ONLY' `
+              "/DFILES_ROOT=$filesRoot" `
+              "/DINSTALL_OUTPUT=$outputPath" `
+              "/DPRODUCT_VERSION=v1.7.0-neon-$env:GITHUB_RUN_NUMBER" `
+              "/DREVISION=$env:GITHUB_RUN_NUMBER" `
+              'nightly.nsi'
+            if ($LASTEXITCODE -ne 0) {
+              throw "makensis.exe failed with exit code $LASTEXITCODE"
+            }
+          }
+          finally {
+            Pop-Location
+          }
+
+          if (-not (Test-Path -LiteralPath $outputPath -PathType Leaf)) {
+            throw 'NSIS did not produce MTA-Neon-Setup.exe'
+          }
+
+          & 7z t $outputPath
+          if ($LASTEXITCODE -ne 0) {
+            throw "7-Zip could not validate the installer (exit code $LASTEXITCODE)"
+          }
+
+          $archiveListing = @(& 7z l -slt $outputPath | ForEach-Object { $_ -replace '\\', '/' })
+          if ($LASTEXITCODE -ne 0) {
+            throw "7-Zip could not inspect the installer (exit code $LASTEXITCODE)"
+          }
+          $requiredInstallerContents = @(
+            'Path = Multi Theft Auto.exe',
+            'Path = MTA/core.dll',
+            'Path = MTA/netc.dll',
+            'Path = MTA/bootstrap.exe',
+            'Path = MTA/bootstrapc.exe',
+            'Path = MTA/sa.dat',
+            'Path = MTA/cgui/unifont.ttf',
+            'Path = mods/deathmatch/client.dll',
+            'Path = mods/deathmatch/lua5.1c.dll',
+            'Path = mods/deathmatch/pcre2.dll',
+            'Path = skins/Default/CGUI.xml'
+          )
+          foreach ($expectedEntry in $requiredInstallerContents) {
+            if ($archiveListing -notcontains $expectedEntry) {
+              throw "Built installer is missing: $expectedEntry"
+            }
+          }
+
+          $installer = Get-Item -LiteralPath $outputPath
+          $hash = Get-FileHash -Algorithm SHA256 -LiteralPath $outputPath
+          Write-Host "Installer: $($installer.FullName)"
+          Write-Host "Size: $($installer.Length) bytes"
+          Write-Host "SHA-256: $($hash.Hash)"
+
       - uses: actions/upload-artifact@v6
         with:
           name: InstallFiles-${{ matrix.platform }}
           path: InstallFiles/
+          if-no-files-found: error
+
+      - uses: actions/upload-artifact@v6
+        if: matrix.platform == 'win32'
+        with:
+          name: MTA-Neon-Windows-Installer
+          path: InstallerOutput/MTA-Neon-Setup.exe
+          if-no-files-found: error
 
   macOS:
     name: macOS

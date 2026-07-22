@@ -28,6 +28,8 @@ IF /i [%1] == [Debug] (
     set BUILD_CONFIGURATION=Debug
 ) ELSE IF /i [%1] == [Release] (
     set BUILD_CONFIGURATION=Release
+) ELSE IF /i [%1] == [Nightly] (
+    set BUILD_CONFIGURATION=Nightly
 ) ELSE (
     IF not [%1] == [] (
         echo Invalid first argument %1. Using default configuration %BUILD_CONFIGURATION%.
