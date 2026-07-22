@@ -532,10 +532,17 @@ CGameSA::CGameSA()
         m_Cheats[CHEAT_HEALTARMORMONEY] = new SCheatSA((BYTE*)VAR_HealthArmorMoney, false);
 
         // Change pool sizes here
-        m_Pools->SetPoolCapacity(TASK_POOL, 5000);                                     // Default is 500
-        m_Pools->SetPoolCapacity(OBJECT_POOL, MAX_OBJECTS);                            // Default is 350
-        m_Pools->SetPoolCapacity(EVENT_POOL, 5000);                                    // Default is 200
-        m_Pools->SetPoolCapacity(COL_MODEL_POOL, 12000);                               // Default is 10150
+        // Native IPLs allocate buildings while GTA is still loading the static
+        // world. Install the final capacity before CPools::Initialise instead
+        // of relying on MTA's later destructive runtime-resize path.
+        m_Pools->SetPoolCapacity(BUILDING_POOL, MAX_BUILDINGS);  // Default is 13000
+        m_Pools->SetPoolCapacity(TASK_POOL, 5000);               // Default is 500
+        m_Pools->SetPoolCapacity(OBJECT_POOL, MAX_OBJECTS);      // Default is 350
+        m_Pools->SetPoolCapacity(EVENT_POOL, 5000);              // Default is 200
+        // The native store transaction installed this before GTA allocated the
+        // pools. A late write would silently desynchronise the pool from the
+        // validated startup layout.
+        dassert(m_Pools->GetPoolCapacity(COL_MODEL_POOL) == MAX_COL_MODELS);
         m_Pools->SetPoolCapacity(ENV_MAP_MATERIAL_POOL, 16000);                        // Default is 4096
         m_Pools->SetPoolCapacity(ENV_MAP_ATOMIC_POOL, 4000);                           // Default is 1024
         m_Pools->SetPoolCapacity(SPEC_MAP_MATERIAL_POOL, 16000);                       // Default is 4096
@@ -1486,6 +1493,11 @@ void CGameSA::RestoreGameWorld()
 
 bool CGameSA::SetBuildingPoolSize(size_t size)
 {
+    // IplDef stores building range endpoints as signed 16-bit values. The
+    // checkpoint's closed capacity deliberately stays below that hard limit.
+    if (size > MAX_BUILDINGS)
+        return false;
+
     const bool shouldRemoveWorld = !m_isGameWorldRemoved;
 
     const int iCurrentBuildingPoolSize = m_Pools->GetBuildingsPool().GetSize();

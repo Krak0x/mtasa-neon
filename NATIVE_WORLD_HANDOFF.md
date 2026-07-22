@@ -899,12 +899,35 @@ The updated checkpoint sequence is:
 3. **Compact stock-only FileID relocation — complete.** The 38,316-entry,
    1,398-site layout passed stock SA, Bullworth, reconnect, server-restart and
    dynamic TXD/COL/DFF replacement-lifecycle gates.
-4. **Stores and pools — next.** Atomically install 8,000 TXD, 512 COL and 1,024
-   IPL stores with their FileID spans, then cover ColModel, buildings and
-   QuadTreeNodes and add numerical high-water telemetry. The three static model
-   stores are already at 32,000/512/1,024. With DAT/path nodes kept at the stock
-   64 entries, the provisional downstream layout ends at 42,341 FileIDs rather
-   than the obsolete 44,325 target that assumed a 2,048-entry DAT expansion.
+4. **Stores and pools — complete; live validated 2026-07-23.** The code
+   installs 8,000 TXD, 512 COL and 1,024 IPL stores and matching FileID spans in
+   one validated transaction, plus 30,000 ColModels, 32,000 buildings and 2,048
+   QuadTreeNodes. Full-width COL/IPL side storage, MTA accessors, CINFO/MINFO
+   bypass, a 32,000-entry live MINFO buffer and numerical pool high-water
+   telemetry are included. The three
+   static model stores remain 32,000/512/1,024. With DAT/path nodes kept at the
+   stock 64 entries, the layout ends at 42,341 FileIDs rather than the obsolete
+   44,325 target that assumed a 2,048-entry DAT expansion. The ordinary
+   Bullworth lifecycle, reconnect and restart matrix passed, but
+   Bullworth itself does not allocate above slot 255. The opt-in fresh-process
+   harness `MTA_NATIVE_WORLD_STORE_BOUNDARY_TEST=1` now uses GTA's real native
+   load/remove paths to prove COL 255/256/511 and IPL 255/256/1023, restores
+   owned pool, streaming and full-width side-table state transactionally, and
+   emitted all three pair lines plus `boundaryHarness=passed` in ticket
+   `d831fafb`. The three real
+   building constructions intentionally advance GTA's CRT random sequence and
+   the final diagnostic records those draws; no probe entity survives. A
+   free COL 255 canary and required target-rectangle update catch any remaining
+   high-slot consumer that would narrow 256 or 511 back to byte value 255. A
+   dedicated `CIplStore::RemoveIpl` tail hook
+   also prevents its stock byte-sized car-generator cleanup from aliasing high
+   static IPLs onto low stock IPLs; high-slot car generators remain out of
+   scope with paths/nodes and other simulation content. The live preflight
+   proved `512/1024/30000/32000/90000` COL/IPL/ColModel/building/pointer-node
+   capacities. Repeated cross-map travel, minimize/restore and death/respawn
+   passed with peak buildings `12128/32000`, ColModels `10932/30000` and
+   QuadTreeNodes `225/2048`; no overflow, fatal diagnostic or crash appeared.
+   The opt-in harness environment variable was removed after validation.
 5. **Canonical pack v3 and second-city proof.** Add deterministic multi-IMG
    naming/remap, collision-free hashes, spatial COL/IPL and LOD policy, 64-bit
    budgets, multi-GiB transactional cache accounting, and reviewed conversion

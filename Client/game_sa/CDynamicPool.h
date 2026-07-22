@@ -11,14 +11,21 @@
 
 #pragma once
 
-#include <vector>
+#include <algorithm>
 #include <array>
 #include <memory>
+#include <vector>
 
 template <typename PoolObjT>
 class CDynamicPoolPart
 {
 public:
+    struct TestSnapshot
+    {
+        std::vector<PoolObjT>    items;
+        std::vector<std::size_t> unusedIndices;
+    };
+
     explicit CDynamicPoolPart(std::size_t size) : m_size{size}
     {
         m_items = std::make_unique<PoolObjT[]>(size);
@@ -45,6 +52,20 @@ public:
     std::size_t GetCapacity() const noexcept { return m_size; }
     std::size_t GetUsedSize() const noexcept { return m_size - m_unusedIndices.size(); }
 
+    void CaptureTestSnapshot(TestSnapshot& snapshot) const
+    {
+        snapshot.items.assign(m_items.get(), m_items.get() + m_size);
+        snapshot.unusedIndices = m_unusedIndices;
+    }
+
+    bool IsTestSnapshotCompatible(const TestSnapshot& snapshot) const { return snapshot.items.size() == m_size && snapshot.unusedIndices.size() <= m_size; }
+
+    void RestoreTestSnapshot(const TestSnapshot& snapshot)
+    {
+        std::copy(snapshot.items.begin(), snapshot.items.end(), m_items.get());
+        m_unusedIndices = snapshot.unusedIndices;
+    }
+
 private:
     std::unique_ptr<PoolObjT[]> m_items;
     std::vector<std::size_t>    m_unusedIndices;
@@ -62,6 +83,11 @@ template <typename PoolObjT, typename GrowStrategy>
 class CDynamicPool
 {
 public:
+    struct TestSnapshot
+    {
+        std::vector<typename CDynamicPoolPart<PoolObjT>::TestSnapshot> parts;
+    };
+
     CDynamicPool()
     {
         constexpr size_t initialSize = GrowStrategy::GetInitialSize();
@@ -118,6 +144,40 @@ public:
             size += pool.GetUsedSize();
 
         return size;
+    }
+
+    void CaptureTestSnapshot(TestSnapshot& snapshot) const
+    {
+        snapshot.parts.clear();
+        snapshot.parts.resize(m_poolParts.size());
+        auto savedPart = snapshot.parts.begin();
+        for (const auto& pool : m_poolParts)
+        {
+            pool.CaptureTestSnapshot(*savedPart);
+            ++savedPart;
+        }
+    }
+
+    bool RestoreTestSnapshot(const TestSnapshot& snapshot)
+    {
+        if (snapshot.parts.size() != m_poolParts.size())
+            return false;
+
+        auto savedPart = snapshot.parts.begin();
+        for (const auto& pool : m_poolParts)
+        {
+            if (!pool.IsTestSnapshotCompatible(*savedPart))
+                return false;
+            ++savedPart;
+        }
+
+        savedPart = snapshot.parts.begin();
+        for (auto& pool : m_poolParts)
+        {
+            pool.RestoreTestSnapshot(*savedPart);
+            ++savedPart;
+        }
+        return true;
     }
 
     bool SetCapacity(std::size_t newSize)

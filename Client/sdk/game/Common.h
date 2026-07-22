@@ -24,8 +24,10 @@
 #define MAX_VEHICLES             (MAX_VEHICLES_MTA + 46)  // 110
 #define MAX_PEDS                 (MAX_PEDS_MTA + 30)      // 140
 #define MAX_OBJECTS              (MAX_OBJECTS_MTA + 200)  // 1200
-#define MAX_BUILDINGS            13000
+#define MAX_BUILDINGS            32000
 #define MAX_DUMMIES              2500
+#define MAX_COL_MODELS           30000
+#define MAX_QUAD_TREE_NODES      2048
 #define MAX_ENTRY_INFO_NODES     (MAX_ENTRY_INFO_NODES_MTA + 600)       // 72600
 #define MAX_POINTER_SINGLE_LINKS (MAX_POINTER_SINGLE_LINKS_MTA + 5000)  // 90000 May be changed in runtime
 #define MAX_POINTER_DOUBLE_LINKS (MAX_POINTER_DOUBLE_LINKS_MTA + 800)   // 74800

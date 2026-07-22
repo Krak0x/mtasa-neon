@@ -25,6 +25,22 @@ public:
     void*                GetModelInfoArray() const { return m_modelInfoArray; }
     CStreamingInfo*      GetStreamingInfoArray() const { return m_streamingInfoArray; }
 
+    // GTA stores these two IDs in byte-sized legacy fields. The extended
+    // accessors keep the ABI-sized structures intact while preserving the full
+    // store index in process-lifetime side storage.
+    static std::int32_t GetColModelSlot(const void* colModel);
+    static void         SetColModelSlot(void* colModel, std::int32_t slot);
+    static std::int32_t GetEntityIplIndex(const void* entity);
+    static void         SetEntityIplIndex(void* entity, std::int32_t index);
+    static void         ForgetEntityIplIndex(const void* entity);
+    static bool         HasStoreExtensionOverflow();
+
+    // The opt-in startup boundary harness creates and destroys real native
+    // entities. Preserve the probe's temporary side-table entries without
+    // exposing the table representation or affecting normal runtime access.
+    static bool BeginStoreExtensionTestSnapshot(std::string& error);
+    static bool RestoreStoreExtensionTestSnapshot(std::string& error);
+
 private:
     SFileIDLayout   m_layout{};
     void*           m_modelInfoArray{};

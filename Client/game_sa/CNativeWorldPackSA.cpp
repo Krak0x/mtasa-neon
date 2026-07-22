@@ -12,11 +12,15 @@
 #include "CNativeBullworthPackSA.h"
 
 #include "CGameSA.h"
+#include "CFileIDRuntimeSA.h"
+#include "CBuildingSA.h"
+#include "CColModelSA.h"
 #include "CIplSA.h"
 #include "CModelInfoSA.h"
 #include "CNativeModelStoreSA.h"
 #include "CNativeWorldCacheSA.h"
 #include "CNativeWorldPayloadValidatorSA.h"
+#include "CPtrNodeSingleLinkPoolSA.h"
 #include "CPoolSAInterface.h"
 #include "CStreamingSA.h"
 #include "CTextureDictonarySA.h"
@@ -49,6 +53,12 @@ namespace
     constexpr DWORD ENABLE_IPL_DYNAMIC_STREAMING = 0x404D30;
     constexpr DWORD TXD_FIND_CACHE = 0xC88014;
     constexpr DWORD GET_UPPERCASE_KEY = 0x53CF30;
+    constexpr DWORD ADD_IPL_SLOT = 0x405AC0;
+    constexpr DWORD LOAD_COL_BUFFER = 0x4106D0;
+    constexpr DWORD REMOVE_COL = 0x410730;
+    constexpr DWORD LOAD_IPL_BUFFER = 0x406080;
+    constexpr DWORD REMOVE_IPL = 0x404B20;
+    constexpr DWORD DELETE_COLLISION_MODEL = 0x4C4C40;
     constexpr DWORD FATAL_EXIT_CODE = 0x4E425746;  // "NBWF"
     constexpr DWORD ATOMIC_MODEL_VTABLE = 0x85BBF0;
     constexpr DWORD DAMAGE_MODEL_VTABLE = 0x85BC30;
@@ -91,6 +101,13 @@ namespace
 #pragma pack(pop)
     static_assert(sizeof(SBinaryIplHeader) == 0x4C, "Unexpected binary IPL header size");
     static_assert(sizeof(SBinaryIplInstance) == 0x28, "Unexpected binary IPL instance size");
+
+    struct SBoundaryIplPayload
+    {
+        SBinaryIplHeader   header{};
+        SBinaryIplInstance instance{};
+    };
+    static_assert(sizeof(SBoundaryIplPayload) == 0x74, "Unexpected boundary IPL payload size");
 
     struct SColDef
     {
@@ -1252,6 +1269,349 @@ namespace
                info->offsetInBlocks == 0 && info->sizeInBlocks == 0 && info->loadState == eModelLoadState::LOADSTATE_NOT_LOADED;
     }
 
+    template <class T>
+    struct SBoundaryPoolSlotSnapshot
+    {
+        CPoolSAInterface<T>*        pool{};
+        int                         slot{-1};
+        int                         firstFree{-1};
+        BYTE                        flag{};
+        std::array<BYTE, sizeof(T)> object{};
+    };
+
+    template <class T>
+    bool SnapshotFreePoolSlot(CPoolSAInterface<T>* pool, int slot, SBoundaryPoolSlotSnapshot<T>& snapshot, const char* name, std::string& error)
+    {
+        if (!pool || !pool->m_pObjects || !pool->m_byteMap || slot < 0 || slot >= pool->m_nSize || pool->IsContains(slot))
+        {
+            error = SString("boundary harness %s slot %d is not a valid free pool slot", name, slot);
+            return false;
+        }
+        snapshot.pool = pool;
+        snapshot.slot = slot;
+        snapshot.firstFree = pool->m_nFirstFree;
+        snapshot.flag = reinterpret_cast<const BYTE*>(pool->m_byteMap)[slot];
+        std::memcpy(snapshot.object.data(), pool->GetObject(slot), sizeof(T));
+        return true;
+    }
+
+    template <class T>
+    int PredictNextPoolSlot(CPoolSAInterface<T>* pool)
+    {
+        if (!pool || !pool->m_pObjects || !pool->m_byteMap || pool->m_nSize <= 0)
+            return -1;
+        int cursor = pool->m_nFirstFree + 1;
+        if (cursor < 0 || cursor >= pool->m_nSize)
+            cursor = 0;
+        for (int offset = 0; offset < pool->m_nSize; ++offset)
+        {
+            int slot = cursor + offset;
+            if (slot >= pool->m_nSize)
+                slot -= pool->m_nSize;
+            if (!pool->IsContains(slot))
+                return slot;
+        }
+        return -1;
+    }
+
+    template <class T>
+    void RestorePoolSlot(const SBoundaryPoolSlotSnapshot<T>& snapshot)
+    {
+        std::memcpy(snapshot.pool->GetObject(snapshot.slot), snapshot.object.data(), sizeof(T));
+        reinterpret_cast<BYTE*>(snapshot.pool->m_byteMap)[snapshot.slot] = snapshot.flag;
+        snapshot.pool->m_nFirstFree = snapshot.firstFree;
+    }
+
+    template <class T>
+    bool PoolSlotMatchesSnapshot(const SBoundaryPoolSlotSnapshot<T>& snapshot)
+    {
+        return snapshot.pool && std::memcmp(snapshot.pool->GetObject(snapshot.slot), snapshot.object.data(), sizeof(T)) == 0 &&
+               reinterpret_cast<const BYTE*>(snapshot.pool->m_byteMap)[snapshot.slot] == snapshot.flag && snapshot.pool->m_nFirstFree == snapshot.firstFree;
+    }
+
+    template <class T>
+    bool AllocateNativeStoreSlotAt(CPoolSAInterface<T>* pool, int target, int(__cdecl* allocate)(const char*), const char* name,
+                                   SBoundaryPoolSlotSnapshot<T>& snapshot, std::string& error)
+    {
+        if (!SnapshotFreePoolSlot(pool, target, snapshot, name, error))
+            return false;
+        pool->m_nFirstFree = target - 1;
+        const int allocated = allocate(name);
+        pool->m_nFirstFree = snapshot.firstFree;
+        if (allocated != target || !pool->IsContains(target))
+        {
+            RestorePoolSlot(snapshot);
+            error = SString("boundary harness %s allocator returned %d instead of %d", name, allocated, target);
+            return false;
+        }
+        return true;
+    }
+
+    bool ReadImgMember(const SString& path, const SImgEntry& entry, std::vector<BYTE>& data, std::string& error)
+    {
+        const WString widePath = SharedUtil::FromUTF8(path);
+        HANDLE        file = CreateFileW(widePath.c_str(), GENERIC_READ, FILE_SHARE_READ, nullptr, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
+        if (file == INVALID_HANDLE_VALUE)
+        {
+            error = "boundary harness cannot reopen the native IMG";
+            return false;
+        }
+        data.resize(static_cast<size_t>(entry.size) * 2048);
+        LARGE_INTEGER offset{};
+        offset.QuadPart = static_cast<LONGLONG>(entry.offset) * 2048;
+        DWORD      read = 0;
+        const bool ok = SetFilePointerEx(file, offset, nullptr, FILE_BEGIN) && ReadFile(file, data.data(), static_cast<DWORD>(data.size()), &read, nullptr) &&
+                        read == data.size();
+        CloseHandle(file);
+        if (!ok)
+            error = "boundary harness native IMG member is truncated";
+        return ok;
+    }
+
+    bool SelectBoundaryColRecord(const SString& imgPath, const SIdePlan& ide, std::vector<BYTE>& record, unsigned int& modelId,
+                                 CBaseModelInfoSAInterface*& model, std::string& error)
+    {
+        std::vector<BYTE> member;
+        if (!ReadImgMember(imgPath, ide.imgEntries.at(Pack().colFileName), member, error))
+            return false;
+
+        CBaseModelInfoSAInterface** models = reinterpret_cast<CBaseModelInfoSAInterface**>(CModelInfoSAInterface::ms_modelInfoPtrs);
+        for (size_t offset = 0; offset + 32 <= member.size();)
+        {
+            DWORD payloadBytes = 0;
+            std::memcpy(&payloadBytes, member.data() + offset + 4, sizeof(payloadBytes));
+            const uint64_t recordBytes = static_cast<uint64_t>(payloadBytes) + 8;
+            if ((std::memcmp(member.data() + offset, "COLL", 4) != 0 && std::memcmp(member.data() + offset, "COL3", 4) != 0) || recordBytes < 32 ||
+                recordBytes > member.size() - offset)
+                break;
+
+            std::uint16_t candidateId = 0;
+            std::memcpy(&candidateId, member.data() + offset + 30, sizeof(candidateId));
+            const auto                 vtable = ide.modelVtables.find(candidateId);
+            CBaseModelInfoSAInterface* candidate = candidateId <= g_policy->maximumModelId ? models[candidateId] : nullptr;
+            if (vtable != ide.modelVtables.end() && vtable->second == ATOMIC_MODEL_VTABLE && candidate &&
+                reinterpret_cast<DWORD>(candidate->VFTBL) == ATOMIC_MODEL_VTABLE && candidate->usDynamicIndex == 0xFFFF &&
+                candidate->eSpecialModelType == eModelSpecialType::NONE)
+            {
+                record.assign(member.begin() + offset, member.begin() + offset + static_cast<size_t>(recordBytes));
+                modelId = candidateId;
+                model = candidate;
+                return true;
+            }
+            offset += static_cast<size_t>(recordBytes);
+        }
+        error = "boundary harness found no disposable atomic static COL record";
+        return false;
+    }
+
+    bool BoundaryHarnessEnabled()
+    {
+        char        value[8]{};
+        const DWORD length = GetEnvironmentVariableA("MTA_NATIVE_WORLD_STORE_BOUNDARY_TEST", value, sizeof(value));
+        return length == 1 && value[0] == '1';
+    }
+
+    bool RunNativeStoreBoundaryHarness(const SString& imgPath, const SIdePlan& ide, std::string& error)
+    {
+        if (!BoundaryHarnessEnabled())
+            return true;
+
+        auto*     colPool = *reinterpret_cast<CPoolSAInterface<SColDef>**>(0x965560);
+        auto*     iplPool = *reinterpret_cast<CPoolSAInterface<CIplSAInterface>**>(0x8E3FB0);
+        auto*     colModelPool = *reinterpret_cast<CPoolSAInterface<CColModelSAInterface>**>(0xB744A4);
+        auto*     buildingPool = *reinterpret_cast<CPoolSAInterface<CBuildingSAInterface>**>(0xB74498);
+        auto*     ptrNodePool = CPtrNodeSingleLinkPoolSA::GetPoolInstance();
+        const int colCapacity = colPool ? colPool->m_nSize : -1;
+        const int iplCapacity = iplPool ? iplPool->m_nSize : -1;
+        const int colModelCapacity = colModelPool ? colModelPool->m_nSize : -1;
+        const int buildingCapacity = buildingPool ? buildingPool->m_nSize : -1;
+        const int ptrNodeCapacity = ptrNodePool ? static_cast<int>(ptrNodePool->GetCapacity()) : -1;
+        Log("boundaryHarness=preflight col=%d/%u ipl=%d/%u colModel=%d/30000 building=%d/32000 ptrNode=%d/%d", colCapacity, Pack().colPoolCapacity, iplCapacity,
+            Pack().iplPoolCapacity, colModelCapacity, buildingCapacity, ptrNodeCapacity, MAX_POINTER_SINGLE_LINKS);
+        if (colCapacity != static_cast<int>(Pack().colPoolCapacity) || iplCapacity != static_cast<int>(Pack().iplPoolCapacity) || colModelCapacity != 30000 ||
+            buildingCapacity != 32000 || ptrNodeCapacity != MAX_POINTER_SINGLE_LINKS)
+        {
+            error = SString("boundary harness pool capacities differ col=%d/%u ipl=%d/%u colModel=%d/30000 building=%d/32000 ptrNode=%d/%d", colCapacity,
+                            Pack().colPoolCapacity, iplCapacity, Pack().iplPoolCapacity, colModelCapacity, buildingCapacity, ptrNodeCapacity,
+                            MAX_POINTER_SINGLE_LINKS);
+            return false;
+        }
+        if (*reinterpret_cast<const DWORD*>(0xBC40A0) != 0)
+        {
+            error = "boundary harness requires the collision accelerator to be ended";
+            return false;
+        }
+        const std::array<BYTE, 44> colAccelBefore = *reinterpret_cast<const std::array<BYTE, 44>*>(0xBC4090);
+
+        std::vector<BYTE>          colRecord;
+        unsigned int               modelId = 0;
+        CBaseModelInfoSAInterface* model = nullptr;
+        if (!SelectBoundaryColRecord(imgPath, ide, colRecord, modelId, model, error))
+            return false;
+        if (!CFileIDRuntimeSA::BeginStoreExtensionTestSnapshot(error))
+            return false;
+
+        CColModelSAInterface* originalColModel = model->pColModel;
+        const unsigned short  originalModelFlags = model->usFlags;
+        const auto            addColSlot = reinterpret_cast<int(__cdecl*)(const char*)>(0x411140);
+        const auto            addIplSlot = reinterpret_cast<int(__cdecl*)(const char*)>(ADD_IPL_SLOT);
+        const auto            loadCol = reinterpret_cast<bool(__cdecl*)(int, BYTE*, int)>(LOAD_COL_BUFFER);
+        const auto            removeCol = reinterpret_cast<void(__cdecl*)(int)>(REMOVE_COL);
+        const auto            loadIpl = reinterpret_cast<bool(__cdecl*)(int, char*, int)>(LOAD_IPL_BUFFER);
+        const auto            removeIpl = reinterpret_cast<void(__cdecl*)(int)>(REMOVE_IPL);
+        const auto            deleteCollisionModel = reinterpret_cast<void(__thiscall*)(CBaseModelInfoSAInterface*)>(DELETE_COLLISION_MODEL);
+        constexpr int         colTargets[] = {255, 256, 511};
+        constexpr int         iplTargets[] = {255, 256, 1023};
+
+        for (size_t boundary = 0; boundary < std::size(colTargets); ++boundary)
+        {
+            const int          colTarget = colTargets[boundary];
+            const int          iplTarget = iplTargets[boundary];
+            const unsigned int colFileId = pGame->GetBaseIDforCOL() + colTarget;
+            const unsigned int iplFileId = pGame->GetBaseIDforIPL() + iplTarget;
+            if (!StreamingInfoIsFree(colFileId) || !StreamingInfoIsFree(iplFileId))
+            {
+                error = SString("boundary harness streaming slot is occupied COL=%d IPL=%d", colTarget, iplTarget);
+                return false;
+            }
+            const CStreamingInfo colStreamingBefore = *g_streaming->GetStreamingInfo(colFileId);
+            const CStreamingInfo iplStreamingBefore = *g_streaming->GetStreamingInfo(iplFileId);
+
+            SBoundaryPoolSlotSnapshot<SColDef>         colSlot;
+            SBoundaryPoolSlotSnapshot<CIplSAInterface> iplSlot;
+            SBoundaryPoolSlotSnapshot<SColDef>         col255Canary;
+            const SString                              colName = SString("nwcol%d", colTarget);
+            const SString                              iplName = SString("nwipl%d", iplTarget);
+            if (colTarget != 255 && !SnapshotFreePoolSlot(colPool, 255, col255Canary, "COL-255-canary", error))
+                return false;
+            if (!AllocateNativeStoreSlotAt(colPool, colTarget, addColSlot, colName.c_str(), colSlot, error) ||
+                !AllocateNativeStoreSlotAt(iplPool, iplTarget, addIplSlot, iplName.c_str(), iplSlot, error))
+                return false;
+
+            const int                                       colModelAllocation = PredictNextPoolSlot(colModelPool);
+            SBoundaryPoolSlotSnapshot<CColModelSAInterface> colModelSlot;
+            if (!SnapshotFreePoolSlot(colModelPool, colModelAllocation, colModelSlot, "ColModel", error))
+                return false;
+
+            if (!loadCol(colTarget, colRecord.data(), static_cast<int>(colRecord.size())) || model->pColModel == originalColModel ||
+                model->pColModel != colModelPool->GetObject(colModelAllocation) || !model->pColModel->m_data ||
+                CFileIDRuntimeSA::GetColModelSlot(model->pColModel) != colTarget || reinterpret_cast<const BYTE*>(model->pColModel)[0x28] != 0xFF)
+            {
+                error = SString("boundary harness first COL load failed at slot %d", colTarget);
+                return false;
+            }
+            CColModelSAInterface* testColModel = model->pColModel;
+            removeCol(colTarget);
+            if (testColModel->m_data)
+            {
+                error = SString("boundary harness COL remove failed at slot %d", colTarget);
+                return false;
+            }
+            if (!loadCol(colTarget, colRecord.data(), static_cast<int>(colRecord.size())) || model->pColModel != testColModel || !testColModel->m_data ||
+                CFileIDRuntimeSA::GetColModelSlot(testColModel) != colTarget)
+            {
+                error = SString("boundary harness regular COL reload failed at slot %d", colTarget);
+                return false;
+            }
+
+            SBoundaryIplPayload payload{};
+            std::memcpy(payload.header.magic, "bnry", 4);
+            payload.header.counts[0] = 1;
+            payload.header.sections[0] = sizeof(SBinaryIplHeader);
+            payload.header.sections[1] = sizeof(SBinaryIplInstance);
+            payload.instance.position[0] = 0.0f;
+            payload.instance.position[1] = 0.0f;
+            payload.instance.position[2] = 0.0f;
+            payload.instance.quaternion[3] = 1.0f;
+            payload.instance.modelId = static_cast<int>(modelId);
+            payload.instance.instanceType = 0;
+            payload.instance.lodIndex = -1;
+            std::memset(&iplPool->GetObject(iplTarget)->rect, 0, sizeof(CRect));
+
+            const int                                       buildingAllocation = PredictNextPoolSlot(buildingPool);
+            SBoundaryPoolSlotSnapshot<CBuildingSAInterface> buildingSlot;
+            CPtrNodeSingleLinkPoolSA::pool_t::TestSnapshot  ptrNodeSnapshot;
+            const size_t                                    ptrNodeUsedBefore = ptrNodePool->GetUsedSize();
+            ptrNodePool->CaptureTestSnapshot(ptrNodeSnapshot);
+            const CRect targetColRectBeforeIpl = colPool->GetObject(colTarget)->rect;
+            if (!SnapshotFreePoolSlot(buildingPool, buildingAllocation, buildingSlot, "building", error) ||
+                !loadIpl(iplTarget, reinterpret_cast<char*>(&payload), sizeof(payload)))
+            {
+                error = SString("boundary harness IPL load failed at slot %d", iplTarget);
+                return false;
+            }
+            if (std::memcmp(&colPool->GetObject(colTarget)->rect, &targetColRectBeforeIpl, sizeof(CRect)) == 0)
+            {
+                error = SString("boundary harness IPL did not restrict target COL slot %d", colTarget);
+                return false;
+            }
+            CBuildingSAInterface* testBuilding = buildingPool->GetObject(buildingAllocation);
+            if (!buildingPool->IsContains(buildingAllocation) || CFileIDRuntimeSA::GetEntityIplIndex(testBuilding) != iplTarget ||
+                reinterpret_cast<const BYTE*>(testBuilding)[0x2E] != 0xFF)
+            {
+                error = SString("boundary harness IPL entity did not retain slot %d", iplTarget);
+                return false;
+            }
+
+            removeIpl(iplTarget);
+            if (buildingPool->IsContains(buildingAllocation) || CFileIDRuntimeSA::GetEntityIplIndex(testBuilding) == iplTarget)
+            {
+                error = SString("boundary harness IPL remove aliased or retained slot %d", iplTarget);
+                return false;
+            }
+            if (ptrNodePool->GetUsedSize() != ptrNodeUsedBefore)
+            {
+                error = SString("boundary harness IPL pointer-node usage did not roll back at slot %d before=%u after=%u", iplTarget,
+                                static_cast<unsigned int>(ptrNodeUsedBefore), static_cast<unsigned int>(ptrNodePool->GetUsedSize()));
+                return false;
+            }
+            RestorePoolSlot(buildingSlot);
+            if (!ptrNodePool->RestoreTestSnapshot(ptrNodeSnapshot) || ptrNodePool->GetUsedSize() != ptrNodeUsedBefore)
+            {
+                error = SString("boundary harness IPL pointer-node snapshot did not restore at slot %d", iplTarget);
+                return false;
+            }
+
+            removeCol(colTarget);
+            if (testColModel->m_data)
+            {
+                error = SString("boundary harness final COL remove failed at slot %d", colTarget);
+                return false;
+            }
+            deleteCollisionModel(model);
+            if (model->pColModel || CFileIDRuntimeSA::GetColModelSlot(testColModel) == colTarget)
+            {
+                error = SString("boundary harness COL side storage survived deletion at slot %d", colTarget);
+                return false;
+            }
+            RestorePoolSlot(colModelSlot);
+            model->pColModel = originalColModel;
+            model->usFlags = originalModelFlags;
+            RestorePoolSlot(iplSlot);
+            RestorePoolSlot(colSlot);
+
+            if (col255Canary.pool && !PoolSlotMatchesSnapshot(col255Canary))
+            {
+                error = SString("boundary harness high COL slot %d aliased COL slot 255", colTarget);
+                return false;
+            }
+
+            if (std::memcmp(g_streaming->GetStreamingInfo(colFileId), &colStreamingBefore, sizeof(colStreamingBefore)) != 0 ||
+                std::memcmp(g_streaming->GetStreamingInfo(iplFileId), &iplStreamingBefore, sizeof(iplStreamingBefore)) != 0 ||
+                std::memcmp(reinterpret_cast<const void*>(0xBC4090), colAccelBefore.data(), colAccelBefore.size()) != 0)
+            {
+                error = SString("boundary harness rollback changed native state at COL=%d IPL=%d", colTarget, iplTarget);
+                return false;
+            }
+            Log("boundaryHarness=pair-ok col=%d ipl=%d set=get=remove ownedPoolRollback=exact streamingRollback=exact", colTarget, iplTarget);
+        }
+        if (!CFileIDRuntimeSA::RestoreStoreExtensionTestSnapshot(error))
+            return false;
+        Log("boundaryHarness=passed col=255,256,511 ipl=255,256,1023 fullWidth=yes sideTableRollback=exact "
+            "carGenerators=static-owned-skip rngDraws=3 intentional=yes");
+        return true;
+    }
+
     bool BuildTxdAllocationPlan(CPoolSAInterface<CTextureDictonarySAInterface>* pool, SIdePlan& ide, std::string& error)
     {
         const char*                    executableIdentity = CNativeModelStoreSA::GetExecutableIdentityName();
@@ -1730,6 +2090,8 @@ namespace
         SIdePlan      ide;
         std::string   error;
         Log("registrar=preflight ide=%s img=%s", idePath.c_str(), imgPath.c_str());
+        if (CFileIDRuntimeSA::HasStoreExtensionOverflow())
+            error = "COL/IPL full-width side storage overflowed before registration";
         if (!IsNativePathSafe(idePath) || !IsNativePathSafe(imgPath) || !IsSafeRegularFile(idePath) || !IsSafeRegularFile(imgPath))
             error = "native loader paths must be regular non-reparse ASCII files shorter than MAX_PATH";
         if (error.empty())
@@ -1842,6 +2204,8 @@ namespace
         reinterpret_cast<void(__cdecl*)(const char*, int32_t)>(LOAD_NAMED_CD_DIRECTORY)(imgPath.c_str(), archiveId);
 
         ValidatePostconditions(ide, archiveId);
+        if (!RunNativeStoreBoundaryHarness(imgPath, ide, error))
+            Fatal(error.c_str());
         EnableOwnedIplDynamicStreaming(ide);
         CommitRegistrationLease();
         g_state = EState::Active;
@@ -2081,6 +2445,12 @@ bool CNativeWorldPackManagerSA::VerifyAuthorizedStartupBeforeStartGame()
         return true;
 
     std::string error;
+    if (CFileIDRuntimeSA::HasStoreExtensionOverflow())
+    {
+        g_authorizedLease.Release();
+        g_pCore->TerminateNativeWorldStartup("COL/IPL full-width side storage overflowed before StartGame");
+        return false;
+    }
     if (!g_pCore->ValidateNativeWorldStartupSession(error))
     {
         g_authorizedLease.Release();

@@ -295,9 +295,17 @@ class NativeWorldAuthorizationSourceContractTests(unittest.TestCase):
             "MOVEFILE_WRITE_THROUGH",
             "CreateFileW",
             "GetFinalPathNameByHandleW",
+            "SetOwnerToCurrentUser",
+            "SetSecurityInfo",
+            "WRITE_OWNER",
             "activation=no lease=no",
         ):
             self.assertIn(token, store)
+        write_start = store.index("bool WriteAndFlush")
+        write_end = store.index("SNativeWorldAuthorizationRecordResult MakeResult", write_start)
+        write = store[write_start:write_end]
+        self.assertLess(write.index("SetOwnerToCurrentUser"), write.index("HandleMatchesPath"))
+        self.assertLess(write.index("HandleMatchesPath"), write.index("WriteFile"))
         for forbidden in (
             "InstallFromEnvironment",
             "PrepareAndLockNativeWorldCache",

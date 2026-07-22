@@ -497,8 +497,9 @@ namespace
         return true;
     }
 
-    bool IsOwnedByCurrentUser(HANDLE handle, std::string& error)
+    bool GetCurrentUserSid(std::vector<unsigned char>& tokenBytes, PSID& userSid, std::string& error)
     {
+        userSid = nullptr;
         HANDLE token = nullptr;
         if (!OpenProcessToken(GetCurrentProcess(), TOKEN_QUERY, &token))
         {
@@ -507,8 +508,8 @@ namespace
         }
         DWORD bytes = 0;
         GetTokenInformation(token, TokenUser, nullptr, 0, &bytes);
-        std::vector<unsigned char> tokenBytes(bytes);
-        const bool                 tokenRead = bytes && GetTokenInformation(token, TokenUser, tokenBytes.data(), bytes, &bytes);
+        tokenBytes.resize(bytes);
+        const bool tokenRead = bytes && GetTokenInformation(token, TokenUser, tokenBytes.data(), bytes, &bytes);
         CloseHandle(token);
         if (!tokenRead)
         {
@@ -516,10 +517,42 @@ namespace
             return false;
         }
 
+        userSid = reinterpret_cast<TOKEN_USER*>(tokenBytes.data())->User.Sid;
+        if (!userSid || !IsValidSid(userSid))
+        {
+            error = "authorization user SID is invalid";
+            return false;
+        }
+        return true;
+    }
+
+    bool SetOwnerToCurrentUser(HANDLE handle, std::string& error)
+    {
+        std::vector<unsigned char> tokenBytes;
+        PSID                       userSid = nullptr;
+        if (!GetCurrentUserSid(tokenBytes, userSid, error))
+            return false;
+
+        const DWORD securityError = SetSecurityInfo(handle, SE_FILE_OBJECT, OWNER_SECURITY_INFORMATION, userSid, nullptr, nullptr, nullptr);
+        if (securityError != ERROR_SUCCESS)
+        {
+            error = SString("authorization owner assignment failed win32=%u", securityError);
+            return false;
+        }
+        return true;
+    }
+
+    bool IsOwnedByCurrentUser(HANDLE handle, std::string& error)
+    {
+        std::vector<unsigned char> tokenBytes;
+        PSID                       userSid = nullptr;
+        if (!GetCurrentUserSid(tokenBytes, userSid, error))
+            return false;
+
         PSID                 owner = nullptr;
         PSECURITY_DESCRIPTOR descriptor = nullptr;
         const DWORD securityError = GetSecurityInfo(handle, SE_FILE_OBJECT, OWNER_SECURITY_INFORMATION, &owner, nullptr, nullptr, nullptr, &descriptor);
-        const bool  matches = securityError == ERROR_SUCCESS && owner && EqualSid(owner, reinterpret_cast<TOKEN_USER*>(tokenBytes.data())->User.Sid);
+        const bool  matches = securityError == ERROR_SUCCESS && owner && EqualSid(owner, userSid);
         if (descriptor)
             LocalFree(descriptor);
         if (!matches)
@@ -655,16 +688,22 @@ namespace
             return false;
 
         const std::wstring lockPath = JoinPath(transaction.directory, TRANSACTION_LOCK);
-        const HANDLE       lock = CreateFileW(lockPath.c_str(), GENERIC_READ | GENERIC_WRITE | READ_CONTROL, 0, nullptr, OPEN_ALWAYS,
-                                              FILE_ATTRIBUTE_NORMAL | FILE_FLAG_OPEN_REPARSE_POINT, nullptr);
+        SetLastError(ERROR_SUCCESS);
+        const HANDLE lock = CreateFileW(lockPath.c_str(), GENERIC_READ | GENERIC_WRITE | READ_CONTROL | WRITE_OWNER, 0, nullptr, OPEN_ALWAYS,
+                                        FILE_ATTRIBUTE_NORMAL | FILE_FLAG_OPEN_REPARSE_POINT, nullptr);
+        const DWORD  lockOpenStatus = GetLastError();
         if (lock == INVALID_HANDLE_VALUE)
         {
             error = SString("authorization transaction lock failed win32=%u", GetLastError());
             return false;
         }
         BY_HANDLE_FILE_INFORMATION information{};
-        if (!HandleMatchesPath(lock, lockPath, false, error) || !GetFileInformationByHandle(lock, &information) || information.nFileSizeHigh != 0 ||
-            information.nFileSizeLow != 0)
+        // Elevated administrator tokens default new objects to the
+        // Administrators group even though TokenUser remains the interactive
+        // account. Normalize only the file this CREATE just produced; an
+        // existing foreign-owned lock must still fail closed below.
+        if ((lockOpenStatus != ERROR_ALREADY_EXISTS && !SetOwnerToCurrentUser(lock, error)) || !HandleMatchesPath(lock, lockPath, false, error) ||
+            !GetFileInformationByHandle(lock, &information) || information.nFileSizeHigh != 0 || information.nFileSizeLow != 0)
         {
             CloseHandle(lock);
             if (error.empty())
@@ -790,15 +829,19 @@ namespace
 
     bool WriteAndFlush(const std::wstring& path, const std::vector<unsigned char>& bytes, std::string& error)
     {
-        const HANDLE file =
-            CreateFileW(path.c_str(), GENERIC_WRITE | READ_CONTROL, 0, nullptr, CREATE_NEW, FILE_ATTRIBUTE_NORMAL | FILE_FLAG_OPEN_REPARSE_POINT, nullptr);
+        const HANDLE file = CreateFileW(path.c_str(), GENERIC_WRITE | READ_CONTROL | WRITE_OWNER, 0, nullptr, CREATE_NEW,
+                                        FILE_ATTRIBUTE_NORMAL | FILE_FLAG_OPEN_REPARSE_POINT, nullptr);
         if (file == INVALID_HANDLE_VALUE)
         {
             error = SString("authorization temporary creation failed win32=%u", GetLastError());
             return false;
         }
-        DWORD      written = 0;
-        const bool success = HandleMatchesPath(file, path, false, error) &&
+        DWORD written = 0;
+        // CREATE_NEW plus share mode zero proves this handle names the object
+        // created by this transaction. Assign TokenUser before validation and
+        // before publishing any bytes so elevated launches do not strand an
+        // Administrators-owned zero-byte fail-closed marker.
+        const bool success = SetOwnerToCurrentUser(file, error) && HandleMatchesPath(file, path, false, error) &&
                              WriteFile(file, bytes.data(), static_cast<DWORD>(bytes.size()), &written, nullptr) && written == bytes.size() &&
                              FlushFileBuffers(file);
         const DWORD writeError = success ? ERROR_SUCCESS : GetLastError();

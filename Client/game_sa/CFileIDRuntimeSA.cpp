@@ -22,20 +22,20 @@ namespace
     constexpr DWORD STOCK_STREAMING_INFO_COUNT = 26316;
     constexpr DWORD STOCK_MODEL_INFO_COUNT = 20000;
     constexpr DWORD TARGET_MODEL_INFO_COUNT = 32000;
-    constexpr DWORD TARGET_STREAMING_INFO_COUNT = 38316;
+    constexpr DWORD TARGET_STREAMING_INFO_COUNT = 42341;
 
     constexpr SFileIDLayout STOCK_LAYOUT = {0, 20000, 25000, 25255, 25511, 25575, 25755, 26230, 26312, 26314, 26316};
     // FileID partition spans are also native loop bounds for the TXD, COL and
     // IPL pools. Keep those spans equal to the currently installed pool sizes;
     // widening the namespace before relocating the pools makes GTA walk past
     // their allocations (CStreaming::Update crashed this way at 0x410B57).
-    constexpr SFileIDLayout TARGET_LAYOUT = {0, 32000, 37000, 37255, 37511, 37575, 37755, 38230, 38312, 38314, 38316};
+    constexpr SFileIDLayout TARGET_LAYOUT = {0, 32000, 40000, 40512, 41536, 41600, 41780, 42255, 42337, 42339, 42341};
 
     static_assert(sizeof(SFileIDLayout) == 11 * sizeof(std::uint32_t));
     static_assert(TARGET_LAYOUT.txd - TARGET_LAYOUT.dff == 32000);
-    static_assert(TARGET_LAYOUT.col - TARGET_LAYOUT.txd == 5000);
-    static_assert(TARGET_LAYOUT.ipl - TARGET_LAYOUT.col == 255);
-    static_assert(TARGET_LAYOUT.dat - TARGET_LAYOUT.ipl == 256);
+    static_assert(TARGET_LAYOUT.col - TARGET_LAYOUT.txd == 8000);
+    static_assert(TARGET_LAYOUT.ipl - TARGET_LAYOUT.col == 512);
+    static_assert(TARGET_LAYOUT.dat - TARGET_LAYOUT.ipl == 1024);
     static_assert(TARGET_LAYOUT.ifp - TARGET_LAYOUT.dat == 64);
     static_assert(TARGET_LAYOUT.rrr - TARGET_LAYOUT.ifp == 180);
     static_assert(TARGET_LAYOUT.scm - TARGET_LAYOUT.rrr == 475);
@@ -109,7 +109,7 @@ namespace
 #undef NATIVE_FILE_ID_UINT16
 #undef NATIVE_FILE_ID_REDIRECT
     };
-    static_assert(std::size(RELOCATION_PATCHES) == 1398);
+    static_assert(std::size(RELOCATION_PATCHES) == 1427);
 
     struct SStockPartition
     {
@@ -135,6 +135,673 @@ namespace
 
     CStreamingInfo* g_relocatedStreamingInfo{};
     void**          g_relocatedModelInfo{};
+
+    constexpr size_t EXTENDED_BYTE_CAPACITY = 1u << 17;
+    constexpr size_t COL_MODEL_SLOT_OFFSET = 0x28;
+    constexpr size_t ENTITY_IPL_INDEX_OFFSET = 0x2E;
+
+    struct SExtendedByteEntry
+    {
+        const void*  key{};
+        std::int32_t value{};
+    };
+
+    SExtendedByteEntry* g_extendedBytes{};
+    SRWLOCK             g_extendedBytesLock = SRWLOCK_INIT;
+    volatile LONG       g_extendedBytesOverflow{};
+    SExtendedByteEntry* g_extendedBytesTestSnapshot{};
+    LONG                g_extendedBytesTestOverflow{};
+
+    size_t HashExtendedByte(const void* key)
+    {
+        const auto value = reinterpret_cast<uintptr_t>(key);
+        return ((value >> 3) * 2654435761u) & (EXTENDED_BYTE_CAPACITY - 1);
+    }
+
+    SExtendedByteEntry* FindExtendedByte(const void* key, bool insert)
+    {
+        SExtendedByteEntry* firstDeleted{};
+        size_t              index = HashExtendedByte(key);
+        for (size_t probe = 0; probe < EXTENDED_BYTE_CAPACITY; ++probe)
+        {
+            SExtendedByteEntry& entry = g_extendedBytes[index];
+            if (entry.key == key)
+                return &entry;
+            if (!entry.key)
+                return insert ? (firstDeleted ? firstDeleted : &entry) : nullptr;
+            if (entry.key == reinterpret_cast<const void*>(1) && !firstDeleted)
+                firstDeleted = &entry;
+            index = (index + 1) & (EXTENDED_BYTE_CAPACITY - 1);
+        }
+        return insert ? firstDeleted : nullptr;
+    }
+
+    BYTE EncodeLegacyByte(std::int32_t value)
+    {
+        // Unpatched boolean readers must never see a high valid IPL as zero.
+        // 0xFF is also GTA's legacy invalid sentinel, while the side table
+        // remains authoritative for every patched equality/indexing reader.
+        return value >= 0 && value < 0xFF ? static_cast<BYTE>(value) : 0xFF;
+    }
+
+    std::int32_t GetExtendedByte(const void* field)
+    {
+        if (g_extendedBytes)
+        {
+            AcquireSRWLockShared(&g_extendedBytesLock);
+            const SExtendedByteEntry* entry = FindExtendedByte(field, false);
+            const std::int32_t        value = entry ? entry->value : (*static_cast<const BYTE*>(field) == 0xFF ? -1 : *static_cast<const BYTE*>(field));
+            ReleaseSRWLockShared(&g_extendedBytesLock);
+            return value;
+        }
+        return *static_cast<const BYTE*>(field) == 0xFF ? -1 : *static_cast<const BYTE*>(field);
+    }
+
+    void SetExtendedByte(void* field, std::int32_t value)
+    {
+        if (!g_extendedBytes)
+        {
+            *static_cast<BYTE*>(field) = EncodeLegacyByte(value);
+            return;
+        }
+
+        AcquireSRWLockExclusive(&g_extendedBytesLock);
+        SExtendedByteEntry* entry = FindExtendedByte(field, true);
+        if (entry)
+        {
+            entry->key = field;
+            entry->value = value;
+            // Publish the compatibility byte only after the authoritative
+            // full-width entry exists. An exhausted side table must never
+            // leave a plausible 0xFF value without matching side storage.
+            *static_cast<BYTE*>(field) = EncodeLegacyByte(value);
+        }
+        else
+            InterlockedExchange(&g_extendedBytesOverflow, 1);
+        ReleaseSRWLockExclusive(&g_extendedBytesLock);
+    }
+
+    void ForgetExtendedByte(const void* field)
+    {
+        if (!g_extendedBytes)
+            return;
+
+        AcquireSRWLockExclusive(&g_extendedBytesLock);
+        if (SExtendedByteEntry* entry = FindExtendedByte(field, false))
+            entry->key = reinterpret_cast<const void*>(1);
+        ReleaseSRWLockExclusive(&g_extendedBytesLock);
+    }
+
+    std::int32_t GetColModelSlotInternal(const void* colModel)
+    {
+        return GetExtendedByte(static_cast<const BYTE*>(colModel) + COL_MODEL_SLOT_OFFSET);
+    }
+
+    void SetColModelSlotInternal(void* colModel, std::int32_t slot)
+    {
+        SetExtendedByte(static_cast<BYTE*>(colModel) + COL_MODEL_SLOT_OFFSET, slot);
+    }
+
+    std::int32_t GetEntityIplIndexInternal(const void* entity)
+    {
+        return GetExtendedByte(static_cast<const BYTE*>(entity) + ENTITY_IPL_INDEX_OFFSET);
+    }
+
+    void SetEntityIplIndexInternal(void* entity, std::int32_t index)
+    {
+        SetExtendedByte(static_cast<BYTE*>(entity) + ENTITY_IPL_INDEX_OFFSET, index);
+    }
+
+    void ForgetEntityIplIndexInternal(const void* entity)
+    {
+        ForgetExtendedByte(static_cast<const BYTE*>(entity) + ENTITY_IPL_INDEX_OFFSET);
+    }
+
+    void __cdecl RegisterEntityExtension(void* entity)
+    {
+        SetEntityIplIndexInternal(entity, 0);
+    }
+
+    void __cdecl UnregisterEntityExtension(const void* entity)
+    {
+        ForgetEntityIplIndexInternal(entity);
+    }
+
+    void __cdecl RegisterColModelExtension(void* colModel)
+    {
+        SetColModelSlotInternal(colModel, 0);
+    }
+
+    void __cdecl UnregisterColModelExtension(const void* colModel)
+    {
+        ForgetExtendedByte(static_cast<const BYTE*>(colModel) + COL_MODEL_SLOT_OFFSET);
+    }
+
+    constexpr DWORD CONTINUE_ENTITY_CONSTRUCTOR = 0x00532AAC;
+    constexpr DWORD CONTINUE_LOAD_COLLISION_FILE = 0x005B4FC4;
+    constexpr DWORD CONTINUE_LOAD_OBJECT_INSTANCE_SLOT = 0x005383DA;
+    constexpr DWORD CONTINUE_LOAD_OBJECT_INSTANCE_PUSH = 0x005383ED;
+    constexpr DWORD CONTINUE_LOAD_COLLISION_MODEL = 0x00538627;
+    constexpr DWORD CONTINUE_LOAD_COLLISION_FIRST_TIME = 0x005B5195;
+    constexpr DWORD CONTINUE_CREATE_HIT_COL_MODEL = 0x004C6F4D;
+    constexpr DWORD CONTINUE_REMOVE_COL = 0x01564EE4;
+    constexpr DWORD CONTINUE_REMOVE_IPL_BUILDINGS = 0x00404B8D;
+    constexpr DWORD CONTINUE_REMOVE_IPL_OBJECTS = 0x00404BD7;
+    constexpr DWORD CONTINUE_REMOVE_IPL_DUMMIES = 0x00404C3B;
+    constexpr DWORD CONTINUE_LOAD_IPL_TEXT = 0x004061FF;
+    constexpr DWORD CONTINUE_LOAD_IPL_BINARY = 0x00406305;
+    constexpr DWORD CONTINUE_LOAD_IPL_BOUNDS_TEXT = 0x00405E21;
+    constexpr DWORD CONTINUE_LOAD_IPL_BOUNDS_BINARY = 0x00405CB0;
+    constexpr DWORD CONTINUE_REGISTER_REFERENCE = 0x00571B8A;
+    constexpr DWORD CONTINUE_DUMMY_UPDATE = 0x0059EBCF;
+    constexpr DWORD CONTINUE_OBJECT_FROM_DUMMY = 0x005A1E7D;
+    constexpr DWORD CONTINUE_DUMMY_FROM_OBJECT = 0x0059EA82;
+
+    void __cdecl RemoveStaticWorldCarGenerators(std::int32_t iplSlot)
+    {
+        // The admitted native-world grammar contains no car generators. GTA's
+        // stock cleanup narrows the IPL slot to a byte, so forwarding an
+        // extended slot would instead delete generators owned by an aliased
+        // stock IPL (256 would target IPL 0). Preserve cleanup for the exact
+        // contiguous stock IPL range and make the static-world-owned range
+        // inert; the closed payload validator rejects every cargen section.
+        constexpr std::int32_t STOCK_IPL_COUNT = 191;
+        if (iplSlot >= 0 && iplSlot < STOCK_IPL_COUNT)
+            reinterpret_cast<void(__cdecl*)(BYTE)>(0x006F3240)(static_cast<BYTE>(iplSlot));
+    }
+
+    void __declspec(naked) ExtendEntityConstructor()
+    {
+        MTA_VERIFY_HOOK_LOCAL_SIZE;
+        // clang-format off
+        __asm
+        {
+            push esi
+            call RegisterEntityExtension
+            add esp, 4
+            mov dword ptr [esi + 1Ch], 08000080h
+            jmp CONTINUE_ENTITY_CONSTRUCTOR
+        }
+        // clang-format on
+    }
+
+    void __declspec(naked) ExtendEntityDestructor()
+    {
+        MTA_VERIFY_HOOK_LOCAL_SIZE;
+        // clang-format off
+        __asm
+        {
+            mov fs:[0], ecx
+            push esi
+            call UnregisterEntityExtension
+            add esp, 4
+            pop esi
+            add esp, 10h
+            ret
+        }
+        // clang-format on
+    }
+
+    void __declspec(naked) ExtendColModelConstructor()
+    {
+        MTA_VERIFY_HOOK_LOCAL_SIZE;
+        // clang-format off
+        __asm
+        {
+            push esi
+            call RegisterColModelExtension
+            add esp, 4
+            mov eax, esi
+            pop esi
+            ret
+        }
+        // clang-format on
+    }
+
+    void __declspec(naked) ExtendColModelDestructor()
+    {
+        MTA_VERIFY_HOOK_LOCAL_SIZE;
+        // clang-format off
+        __asm
+        {
+            push esi
+            call UnregisterColModelExtension
+            add esp, 4
+            pop esi
+            ret
+        }
+        // clang-format on
+    }
+
+    void __declspec(naked) ExtendLoadCollisionFile()
+    {
+        MTA_VERIFY_HOOK_LOCAL_SIZE;
+        // clang-format off
+        __asm
+        {
+            mov edx, [esp + 48h]
+            push edx
+            push edi
+            call SetColModelSlotInternal
+            add esp, 8
+            jmp CONTINUE_LOAD_COLLISION_FILE
+        }
+        // clang-format on
+    }
+
+    void __declspec(naked) ExtendLoadObjectInstanceColSlot()
+    {
+        MTA_VERIFY_HOOK_LOCAL_SIZE;
+        // clang-format off
+        __asm
+        {
+            push eax
+            call GetColModelSlotInternal
+            add esp, 4
+            mov ebx, eax
+            test ebx, ebx
+            jmp CONTINUE_LOAD_OBJECT_INSTANCE_SLOT
+        }
+        // clang-format on
+    }
+
+    void __declspec(naked) ExtendLoadObjectInstanceColPush()
+    {
+        MTA_VERIFY_HOOK_LOCAL_SIZE;
+        // clang-format off
+        __asm
+        {
+            push eax
+            push ebx
+            jmp CONTINUE_LOAD_OBJECT_INSTANCE_PUSH
+        }
+        // clang-format on
+    }
+
+    void __declspec(naked) ExtendLoadCollisionModel()
+    {
+        MTA_VERIFY_HOOK_LOCAL_SIZE;
+        // clang-format off
+        __asm
+        {
+            mov eax, [esp + 50h]
+            push eax
+            push esi
+            call SetColModelSlotInternal
+            add esp, 8
+            jmp CONTINUE_LOAD_COLLISION_MODEL
+        }
+        // clang-format on
+    }
+
+    void __declspec(naked) ExtendLoadCollisionFirstTime()
+    {
+        MTA_VERIFY_HOOK_LOCAL_SIZE;
+        // clang-format off
+        __asm
+        {
+            mov edx, [esp + 54h]
+            push edx
+            push esi
+            call SetColModelSlotInternal
+            add esp, 8
+            push 1
+            push esi
+            mov ecx, edi
+            jmp CONTINUE_LOAD_COLLISION_FIRST_TIME
+        }
+        // clang-format on
+    }
+
+    void __declspec(naked) ExtendCreateHitColModel()
+    {
+        MTA_VERIFY_HOOK_LOCAL_SIZE;
+        // clang-format off
+        __asm
+        {
+            push ecx
+            push 0
+            push esi
+            call SetColModelSlotInternal
+            add esp, 8
+            pop ecx
+            pop edi
+            jmp CONTINUE_CREATE_HIT_COL_MODEL
+        }
+        // clang-format on
+    }
+
+    void __declspec(naked) ExtendRemoveCol()
+    {
+        MTA_VERIFY_HOOK_LOCAL_SIZE;
+        // clang-format off
+        __asm
+        {
+            push ecx
+            push ecx
+            call GetColModelSlotInternal
+            add esp, 4
+            cmp eax, ebx
+            pop ecx
+            jmp CONTINUE_REMOVE_COL
+        }
+        // clang-format on
+    }
+
+    void __declspec(naked) ExtendRemoveIplBuildings()
+    {
+        MTA_VERIFY_HOOK_LOCAL_SIZE;
+        // clang-format off
+        __asm
+        {
+            lea eax, [esi + 2Eh]
+            push eax
+            call GetExtendedByte
+            add esp, 4
+            mov edx, eax
+            cmp edx, [esp + 20h]
+            mov eax, [esp + 10h]
+            mov ecx, [esp + 14h]
+            jmp CONTINUE_REMOVE_IPL_BUILDINGS
+        }
+        // clang-format on
+    }
+
+    void __declspec(naked) ExtendRemoveIplObjects()
+    {
+        MTA_VERIFY_HOOK_LOCAL_SIZE;
+        // clang-format off
+        __asm
+        {
+            lea eax, [esi + 2Eh]
+            push eax
+            call GetExtendedByte
+            add esp, 4
+            mov edx, eax
+            cmp edx, [esp + 20h]
+            mov eax, [esp + 10h]
+            jmp CONTINUE_REMOVE_IPL_OBJECTS
+        }
+        // clang-format on
+    }
+
+    void __declspec(naked) ExtendRemoveIplDummies()
+    {
+        MTA_VERIFY_HOOK_LOCAL_SIZE;
+        // clang-format off
+        __asm
+        {
+            lea eax, [esi + 2Eh]
+            push eax
+            call GetExtendedByte
+            add esp, 4
+            cmp eax, [esp + 20h]
+            jmp CONTINUE_REMOVE_IPL_DUMMIES
+        }
+        // clang-format on
+    }
+
+    void __declspec(naked) ExtendLoadIplText()
+    {
+        MTA_VERIFY_HOOK_LOCAL_SIZE;
+        // clang-format off
+        __asm
+        {
+            mov esi, eax
+            add esp, 8
+            mov edx, [esp + 1Ch]
+            push edx
+            push esi
+            call SetEntityIplIndexInternal
+            add esp, 8
+            mov eax, [esi + 30h]
+            cmp eax, -1
+            jmp CONTINUE_LOAD_IPL_TEXT
+        }
+        // clang-format on
+    }
+
+    void __declspec(naked) ExtendLoadIplBinary()
+    {
+        MTA_VERIFY_HOOK_LOCAL_SIZE;
+        // clang-format off
+        __asm
+        {
+            mov esi, eax
+            add esp, 4
+            push ebx
+            push esi
+            call SetEntityIplIndexInternal
+            add esp, 8
+            mov eax, [esi + 30h]
+            cmp eax, -1
+            jmp CONTINUE_LOAD_IPL_BINARY
+        }
+        // clang-format on
+    }
+
+    void __declspec(naked) ExtendLoadIplBoundsText()
+    {
+        MTA_VERIFY_HOOK_LOCAL_SIZE;
+        // clang-format off
+        __asm
+        {
+            mov esi, eax
+            add esp, 4
+            mov ecx, [esp + 28h]
+            push ecx
+            push esi
+            call SetEntityIplIndexInternal
+            add esp, 8
+            mov eax, [esi + 30h]
+            cmp eax, -1
+            jmp CONTINUE_LOAD_IPL_BOUNDS_TEXT
+        }
+        // clang-format on
+    }
+
+    void __declspec(naked) ExtendLoadIplBoundsBinary()
+    {
+        MTA_VERIFY_HOOK_LOCAL_SIZE;
+        // clang-format off
+        __asm
+        {
+            mov esi, eax
+            add esp, 8
+            mov ecx, [esp + 2Ch]
+            push ecx
+            push esi
+            call SetEntityIplIndexInternal
+            add esp, 8
+            mov eax, [esi + 30h]
+            cmp eax, -1
+            jmp CONTINUE_LOAD_IPL_BOUNDS_BINARY
+        }
+        // clang-format on
+    }
+
+    void __declspec(naked) ExtendRegisterReference()
+    {
+        MTA_VERIFY_HOOK_LOCAL_SIZE;
+        // clang-format off
+        __asm
+        {
+            push ebp
+            call GetEntityIplIndexInternal
+            add esp, 4
+            test eax, eax
+            jmp CONTINUE_REGISTER_REFERENCE
+        }
+        // clang-format on
+    }
+
+    void __declspec(naked) ExtendDummyUpdate()
+    {
+        MTA_VERIFY_HOOK_LOCAL_SIZE;
+        // clang-format off
+        __asm
+        {
+            push edi
+            call GetEntityIplIndexInternal
+            add esp, 4
+            test eax, eax
+            jmp CONTINUE_DUMMY_UPDATE
+        }
+        // clang-format on
+    }
+
+    void __declspec(naked) ExtendObjectFromDummy()
+    {
+        MTA_VERIFY_HOOK_LOCAL_SIZE;
+        // clang-format off
+        __asm
+        {
+            push edi
+            call GetEntityIplIndexInternal
+            add esp, 4
+            push eax
+            push esi
+            call SetEntityIplIndexInternal
+            add esp, 8
+            jmp CONTINUE_OBJECT_FROM_DUMMY
+        }
+        // clang-format on
+    }
+
+    void __declspec(naked) ExtendDummyFromObject()
+    {
+        MTA_VERIFY_HOOK_LOCAL_SIZE;
+        // clang-format off
+        __asm
+        {
+            push edi
+            call GetEntityIplIndexInternal
+            add esp, 4
+            push eax
+            push eax
+            push esi
+            call SetEntityIplIndexInternal
+            add esp, 8
+            pop ecx
+            jmp CONTINUE_DUMMY_FROM_OBJECT
+        }
+        // clang-format on
+    }
+
+    constexpr DWORD CONTINUE_COL_ACCEL_START_CACHE = 0x005B31A5;
+
+    void __declspec(naked) ForceColAccelCacheMiss()
+    {
+        MTA_VERIFY_HOOK_LOCAL_SIZE;
+        // clang-format off
+        __asm
+        {
+            // CINFO.BIN serializes fixed-size IPL/COL arrays. Force the
+            // neutral state so an old cache is neither consumed nor rebuilt
+            // after those stores have been expanded.
+            mov dword ptr ds:[0BC40A0h], 0
+            mov eax, dword ptr ds:[0B744A4h]
+            jmp CONTINUE_COL_ACCEL_START_CACHE
+        }
+        // clang-format on
+    }
+
+    enum class ENativeStorePatchKind : BYTE
+    {
+        Redirect,
+        Bytes,
+    };
+
+    struct SNativeStorePatch
+    {
+        ENativeStorePatchKind kind;
+        DWORD                 address;
+        BYTE                  size;
+        DWORD                 handler;
+        std::array<BYTE, 32>  expected;
+        std::array<BYTE, 32>  replacement;
+    };
+
+    const SNativeStorePatch NATIVE_STORE_PATCHES[] = {
+        {ENativeStorePatchKind::Bytes, 0x0055105F, 4, 0, {0xC8, 0x32, 0x00, 0x00}, {0x00, 0x7D, 0x00, 0x00}},
+        {ENativeStorePatchKind::Bytes, 0x00551107, 4, 0, {0xA6, 0x27, 0x00, 0x00}, {0x30, 0x75, 0x00, 0x00}},
+        {ENativeStorePatchKind::Bytes, 0x00552C3F, 4, 0, {0x90, 0x01, 0x00, 0x00}, {0x00, 0x08, 0x00, 0x00}},
+
+        {ENativeStorePatchKind::Redirect, 0x00532AA5, 7, reinterpret_cast<DWORD>(&ExtendEntityConstructor), {0xC7, 0x46, 0x1C, 0x80, 0x00, 0x00, 0x08}},
+        {ENativeStorePatchKind::Redirect,
+         0x00535EE6,
+         12,
+         reinterpret_cast<DWORD>(&ExtendEntityDestructor),
+         {0x5E, 0x64, 0x89, 0x0D, 0x00, 0x00, 0x00, 0x00, 0x83, 0xC4, 0x10, 0xC3}},
+        // FLA hooks the HOODLUM constructor epilogue, after the legacy byte
+        // and flags are initialized, so the wrapper only adds side storage.
+        {ENativeStorePatchKind::Redirect, 0x0156C6AA, 5, reinterpret_cast<DWORD>(&ExtendColModelConstructor), {0x8B, 0xC6, 0x5E, 0xC3, 0xEB}},
+        {ENativeStorePatchKind::Redirect, 0x0040F73A, 5, reinterpret_cast<DWORD>(&ExtendColModelDestructor), {0x5E, 0xC3, 0x90, 0x90, 0x90}},
+
+        {ENativeStorePatchKind::Redirect, 0x005B4FBD, 7, reinterpret_cast<DWORD>(&ExtendLoadCollisionFile), {0x8A, 0x54, 0x24, 0x48, 0x88, 0x57, 0x28}},
+        {ENativeStorePatchKind::Redirect, 0x005383D5, 5, reinterpret_cast<DWORD>(&ExtendLoadObjectInstanceColSlot), {0x8A, 0x58, 0x28, 0x84, 0xDB}},
+        {ENativeStorePatchKind::Redirect, 0x005383E8, 5, reinterpret_cast<DWORD>(&ExtendLoadObjectInstanceColPush), {0x0F, 0xB6, 0xCB, 0x50, 0x51}},
+        {ENativeStorePatchKind::Bytes, 0x0053851E, 5, 0, {0x0F, 0xB6, 0x44, 0x24, 0x50}, {0x8B, 0x44, 0x24, 0x50, 0x90}},
+        {ENativeStorePatchKind::Redirect, 0x00538620, 7, reinterpret_cast<DWORD>(&ExtendLoadCollisionModel), {0x8A, 0x44, 0x24, 0x50, 0x88, 0x46, 0x28}},
+        {ENativeStorePatchKind::Bytes, 0x005B50F4, 5, 0, {0x0F, 0xB6, 0x4C, 0x24, 0x54}, {0x8B, 0x4C, 0x24, 0x54, 0x90}},
+        {ENativeStorePatchKind::Redirect,
+         0x005B5189,
+         12,
+         reinterpret_cast<DWORD>(&ExtendLoadCollisionFirstTime),
+         {0x8A, 0x54, 0x24, 0x54, 0x6A, 0x01, 0x56, 0x8B, 0xCF, 0x88, 0x56, 0x28}},
+        {ENativeStorePatchKind::Redirect, 0x004C6F48, 5, reinterpret_cast<DWORD>(&ExtendCreateHitColModel), {0xC6, 0x46, 0x28, 0x00, 0x5F}},
+        {ENativeStorePatchKind::Redirect, 0x01564EDE, 6, reinterpret_cast<DWORD>(&ExtendRemoveCol), {0x0F, 0xB6, 0x51, 0x28, 0x3B, 0xD3}},
+
+        {ENativeStorePatchKind::Redirect, 0x00404B85, 8, reinterpret_cast<DWORD>(&ExtendRemoveIplBuildings), {0x0F, 0xB6, 0x56, 0x2E, 0x3B, 0x54, 0x24, 0x20}},
+        {ENativeStorePatchKind::Redirect, 0x00404BCF, 8, reinterpret_cast<DWORD>(&ExtendRemoveIplObjects), {0x0F, 0xB6, 0x56, 0x2E, 0x3B, 0x54, 0x24, 0x20}},
+        {ENativeStorePatchKind::Redirect, 0x00404C33, 8, reinterpret_cast<DWORD>(&ExtendRemoveIplDummies), {0x0F, 0xB6, 0x46, 0x2E, 0x3B, 0x44, 0x24, 0x20}},
+        {ENativeStorePatchKind::Redirect,
+         0x004061ED,
+         18,
+         reinterpret_cast<DWORD>(&ExtendLoadIplText),
+         {0x8A, 0x54, 0x24, 0x24, 0x8B, 0xF0, 0x8B, 0x46, 0x30, 0x83, 0xC4, 0x08, 0x83, 0xF8, 0xFF, 0x88, 0x56, 0x2E}},
+        {ENativeStorePatchKind::Redirect,
+         0x004062F9,
+         12,
+         reinterpret_cast<DWORD>(&ExtendLoadIplBinary),
+         {0x8B, 0x46, 0x30, 0x83, 0xC4, 0x04, 0x83, 0xF8, 0xFF, 0x88, 0x5E, 0x2E}},
+        {ENativeStorePatchKind::Redirect,
+         0x00405E0F,
+         18,
+         reinterpret_cast<DWORD>(&ExtendLoadIplBoundsText),
+         {0x8A, 0x4C, 0x24, 0x2C, 0x8B, 0xF0, 0x8B, 0x46, 0x30, 0x83, 0xC4, 0x04, 0x83, 0xF8, 0xFF, 0x88, 0x4E, 0x2E}},
+        {ENativeStorePatchKind::Redirect,
+         0x00405C9E,
+         18,
+         reinterpret_cast<DWORD>(&ExtendLoadIplBoundsBinary),
+         {0x8B, 0xF0, 0x8A, 0x44, 0x24, 0x34, 0x88, 0x46, 0x2E, 0x8B, 0x46, 0x30, 0x83, 0xC4, 0x08, 0x83, 0xF8, 0xFF}},
+        {ENativeStorePatchKind::Redirect, 0x00571B85, 5, reinterpret_cast<DWORD>(&ExtendRegisterReference), {0x8A, 0x45, 0x2E, 0x84, 0xC0}},
+        {ENativeStorePatchKind::Redirect, 0x0059EBCA, 5, reinterpret_cast<DWORD>(&ExtendDummyUpdate), {0x8A, 0x47, 0x2E, 0x84, 0xC0}},
+        {ENativeStorePatchKind::Redirect, 0x005A1E77, 6, reinterpret_cast<DWORD>(&ExtendObjectFromDummy), {0x8A, 0x47, 0x2E, 0x88, 0x46, 0x2E}},
+        {ENativeStorePatchKind::Redirect,
+         0x0059EA79,
+         9,
+         reinterpret_cast<DWORD>(&ExtendDummyFromObject),
+         {0x8A, 0x4F, 0x2E, 0x0F, 0xB6, 0xC1, 0x88, 0x4E, 0x2E}},
+        {ENativeStorePatchKind::Redirect, 0x00404C61, 5, reinterpret_cast<DWORD>(&RemoveStaticWorldCarGenerators), {0xE9, 0xDA, 0xE5, 0x2E, 0x00}},
+
+        // FLA invalidates both accelerator files when their serialized
+        // layouts can no longer match. Neon does it without mutating the GTA
+        // installation: CINFO is forced to a neutral state, while MINFO's
+        // open and write paths are bypassed. MINFO still accumulates one
+        // uint16 ID per DFF at runtime, so both the standalone allocator and
+        // its inlined copy must cover the complete 32,000-model store even
+        // though their disk paths are disabled.
+        {ENativeStorePatchKind::Redirect, 0x005B31A0, 5, reinterpret_cast<DWORD>(&ForceColAccelCacheMiss), {0xA1, 0xA4, 0x44, 0xB7, 0x00}},
+        {ENativeStorePatchKind::Bytes, 0x004C6AE3, 4, 0, {0x8C, 0xA0, 0x00, 0x00}, {0x00, 0xFA, 0x00, 0x00}},
+        {ENativeStorePatchKind::Bytes, 0x004C6AF6, 4, 0, {0x23, 0x28, 0x00, 0x00}, {0x80, 0x3E, 0x00, 0x00}},
+        {ENativeStorePatchKind::Bytes, 0x004C6B7E, 5, 0, {0xE8, 0x7D, 0x1D, 0x07, 0x00}, {0x33, 0xC0, 0x90, 0x90, 0x90}},
+        {ENativeStorePatchKind::Bytes, 0x004C6B8B, 4, 0, {0x8C, 0xA0, 0x00, 0x00}, {0x00, 0xFA, 0x00, 0x00}},
+        {ENativeStorePatchKind::Bytes, 0x004C6B9C, 4, 0, {0x23, 0x28, 0x00, 0x00}, {0x80, 0x3E, 0x00, 0x00}},
+        {ENativeStorePatchKind::Bytes, 0x004C6BB1, 4, 0, {0x8C, 0xA0, 0x00, 0x00}, {0x00, 0xFA, 0x00, 0x00}},
+        {ENativeStorePatchKind::Bytes, 0x004C6BD3, 7, 0, {0x8A, 0x46, 0x1B, 0x84, 0xC0, 0x75, 0x2B}, {0xE9, 0x2D, 0x00, 0x00, 0x00, 0x90, 0x90}},
+        {ENativeStorePatchKind::Bytes, 0x004C6BF0, 4, 0, {0x8C, 0xA0, 0x00, 0x00}, {0x00, 0xFA, 0x00, 0x00}},
+    };
 
     bool IsReadable(const void* pointer, size_t size)
     {
@@ -214,6 +881,77 @@ namespace
                 return 5;
         }
         return 0;
+    }
+
+    bool ValidateNativeStorePatches(DWORD imageSize, std::string& error)
+    {
+        struct SRange
+        {
+            DWORD  begin;
+            DWORD  end;
+            size_t index;
+        };
+
+        std::vector<SRange> ranges;
+        ranges.reserve(std::size(NATIVE_STORE_PATCHES));
+        for (size_t index = 0; index < std::size(NATIVE_STORE_PATCHES); ++index)
+        {
+            const SNativeStorePatch& patch = NATIVE_STORE_PATCHES[index];
+            if (!patch.size || patch.size > patch.expected.size() || !IsInImage(patch.address, patch.size, imageSize))
+            {
+                error = SString("native store patch %u has an invalid range", static_cast<unsigned int>(index));
+                return false;
+            }
+            if (patch.kind == ENativeStorePatchKind::Redirect)
+            {
+                if (patch.size < 5 || !patch.handler)
+                {
+                    error = SString("native store hook %u has an invalid target or span", static_cast<unsigned int>(index));
+                    return false;
+                }
+                const int64_t displacement = static_cast<int64_t>(patch.handler) - static_cast<int64_t>(patch.address + 5);
+                if (displacement < std::numeric_limits<std::int32_t>::min() || displacement > std::numeric_limits<std::int32_t>::max())
+                {
+                    error = SString("native store hook is out of relative-jump range at 0x%08X", patch.address);
+                    return false;
+                }
+            }
+
+            std::array<BYTE, 32> current{};
+            if (!ReadMemory(patch.address, current.data(), patch.size) || !std::equal(current.begin(), current.begin() + patch.size, patch.expected.begin()))
+            {
+                error = SString("native store patch failed byte validation at 0x%08X", patch.address);
+                return false;
+            }
+            ranges.push_back({patch.address, patch.address + patch.size, index});
+        }
+
+        std::sort(ranges.begin(), ranges.end(), [](const SRange& left, const SRange& right) { return left.begin < right.begin; });
+        for (size_t index = 1; index < ranges.size(); ++index)
+        {
+            if (ranges[index].begin < ranges[index - 1].end)
+            {
+                error = SString("native store patches %u and %u overlap", static_cast<unsigned int>(ranges[index - 1].index),
+                                static_cast<unsigned int>(ranges[index].index));
+                return false;
+            }
+        }
+
+        for (const SRange& nativeRange : ranges)
+        {
+            for (size_t index = 0; index < std::size(RELOCATION_PATCHES); ++index)
+            {
+                const SRelocationPatch& relocation = RELOCATION_PATCHES[index];
+                const DWORD             relocationEnd = relocation.address + static_cast<DWORD>(GetPatchSize(relocation.kind));
+                if (nativeRange.begin < relocationEnd && relocation.address < nativeRange.end)
+                {
+                    error = SString("native store patch %u overlaps FileID relocation patch %u", static_cast<unsigned int>(nativeRange.index),
+                                    static_cast<unsigned int>(index));
+                    return false;
+                }
+            }
+        }
+        return true;
     }
 
     bool ValidateRelocationManifest(DWORD imageSize, std::string& error)
@@ -483,17 +1221,19 @@ bool CFileIDRuntimeSA::CaptureStockLayout(eGameVersion gameVersion, std::string&
     }
     if (!ValidateRelocationManifest(imageSize, error))
         return false;
+    if (!ValidateNativeStorePatches(imageSize, error))
+        return false;
 
     m_layout = layout;
     m_streamingInfoArray = streamingInfoArray;
     m_modelInfoArray = modelInfoArray;
     m_imageSize = imageSize;
     m_relocationPrepared = true;
-    SharedUtil::WriteDebugEvent(
-        SString("[NativeFileID] state=prepared layout=stock dff=%u txd=%u col=%u ipl=%u dat=%u ifp=%u rrr=%u scm=%u loaded=%u requested=%u "
-                "total=%u streaming=%p models=%p patchSites=%u nativeWrites=no",
-                layout.dff, layout.txd, layout.col, layout.ipl, layout.dat, layout.ifp, layout.rrr, layout.scm, layout.loadedList, layout.requestedList,
-                layout.total, m_streamingInfoArray, m_modelInfoArray, static_cast<unsigned int>(std::size(RELOCATION_PATCHES))));
+    SharedUtil::WriteDebugEvent(SString(
+        "[NativeFileID] state=prepared layout=stock dff=%u txd=%u col=%u ipl=%u dat=%u ifp=%u rrr=%u scm=%u loaded=%u requested=%u "
+        "total=%u streaming=%p models=%p patchSites=%u nativeWrites=no",
+        layout.dff, layout.txd, layout.col, layout.ipl, layout.dat, layout.ifp, layout.rrr, layout.scm, layout.loadedList, layout.requestedList, layout.total,
+        m_streamingInfoArray, m_modelInfoArray, static_cast<unsigned int>(std::size(RELOCATION_PATCHES) + std::size(NATIVE_STORE_PATCHES))));
     return true;
 }
 
@@ -508,28 +1248,38 @@ bool CFileIDRuntimeSA::InstallStockRelocation(std::string& error)
     }
     if (!ValidateRelocationManifest(m_imageSize, error))
         return false;
+    if (!ValidateNativeStorePatches(m_imageSize, error))
+        return false;
 
     g_relocatedModelInfo =
         static_cast<void**>(VirtualAlloc(nullptr, static_cast<size_t>(TARGET_MODEL_INFO_COUNT + 1) * sizeof(void*), MEM_COMMIT | MEM_RESERVE, PAGE_READWRITE));
     g_relocatedStreamingInfo = static_cast<CStreamingInfo*>(
         VirtualAlloc(nullptr, static_cast<size_t>(TARGET_STREAMING_INFO_COUNT + 1) * sizeof(CStreamingInfo), MEM_COMMIT | MEM_RESERVE, PAGE_READWRITE));
-    if (!g_relocatedModelInfo || !g_relocatedStreamingInfo)
+    g_extendedBytes =
+        static_cast<SExtendedByteEntry*>(VirtualAlloc(nullptr, EXTENDED_BYTE_CAPACITY * sizeof(SExtendedByteEntry), MEM_COMMIT | MEM_RESERVE, PAGE_READWRITE));
+    InterlockedExchange(&g_extendedBytesOverflow, 0);
+    if (!g_relocatedModelInfo || !g_relocatedStreamingInfo || !g_extendedBytes)
     {
         if (g_relocatedModelInfo)
             VirtualFree(g_relocatedModelInfo, 0, MEM_RELEASE);
         if (g_relocatedStreamingInfo)
             VirtualFree(g_relocatedStreamingInfo, 0, MEM_RELEASE);
+        if (g_extendedBytes)
+            VirtualFree(g_extendedBytes, 0, MEM_RELEASE);
         g_relocatedModelInfo = nullptr;
         g_relocatedStreamingInfo = nullptr;
-        error = "unable to allocate process-lifetime FileID tables";
+        g_extendedBytes = nullptr;
+        error = "unable to allocate process-lifetime FileID/store-extension tables";
         return false;
     }
     const auto releasePreparedTables = []()
     {
         VirtualFree(g_relocatedModelInfo, 0, MEM_RELEASE);
         VirtualFree(g_relocatedStreamingInfo, 0, MEM_RELEASE);
+        VirtualFree(g_extendedBytes, 0, MEM_RELEASE);
         g_relocatedModelInfo = nullptr;
         g_relocatedStreamingInfo = nullptr;
+        g_extendedBytes = nullptr;
     };
 
     std::memcpy(g_relocatedModelInfo, m_modelInfoArray, static_cast<size_t>(STOCK_MODEL_INFO_COUNT) * sizeof(void*));
@@ -543,12 +1293,12 @@ bool CFileIDRuntimeSA::InstallStockRelocation(std::string& error)
 
     struct SPreparedWrite
     {
-        DWORD               address;
-        std::array<BYTE, 5> bytes;
-        size_t              size;
+        DWORD                address;
+        std::array<BYTE, 32> bytes;
+        size_t               size;
     };
     std::vector<SPreparedWrite> writes;
-    writes.reserve(std::size(RELOCATION_PATCHES));
+    writes.reserve(std::size(RELOCATION_PATCHES) + std::size(NATIVE_STORE_PATCHES));
     for (const SRelocationPatch& patch : RELOCATION_PATCHES)
     {
         DWORD replacement{};
@@ -572,10 +1322,39 @@ bool CFileIDRuntimeSA::InstallStockRelocation(std::string& error)
         writes.push_back(write);
     }
 
+    for (const SNativeStorePatch& patch : NATIVE_STORE_PATCHES)
+    {
+        SPreparedWrite write{};
+        write.address = patch.address;
+        write.size = patch.size;
+        if (patch.kind == ENativeStorePatchKind::Redirect)
+        {
+            const int64_t displacement64 = static_cast<int64_t>(patch.handler) - static_cast<int64_t>(patch.address + 5);
+            if (displacement64 < std::numeric_limits<std::int32_t>::min() || displacement64 > std::numeric_limits<std::int32_t>::max())
+            {
+                releasePreparedTables();
+                error = SString("native store hook is out of relative-jump range at 0x%08X", patch.address);
+                return false;
+            }
+            const std::int32_t displacement = static_cast<std::int32_t>(displacement64);
+            std::fill(write.bytes.begin(), write.bytes.begin() + write.size, 0x90);
+            write.bytes[0] = 0xE9;
+            std::memcpy(write.bytes.data() + 1, &displacement, sizeof(displacement));
+        }
+        else
+            std::copy(patch.replacement.begin(), patch.replacement.begin() + patch.size, write.bytes.begin());
+        writes.push_back(write);
+    }
+
     // Recheck every operand after allocation and preparation, directly before
     // the first native write. Startup is single-threaded, but this also catches
     // any earlier installer that changed a shared instruction unexpectedly.
     if (!ValidateRelocationManifest(m_imageSize, error))
+    {
+        releasePreparedTables();
+        return false;
+    }
+    if (!ValidateNativeStorePatches(m_imageSize, error))
     {
         releasePreparedTables();
         return false;
@@ -599,8 +1378,91 @@ bool CFileIDRuntimeSA::InstallStockRelocation(std::string& error)
     m_relocationInstalled = true;
     SharedUtil::WriteDebugEvent(
         SString("[NativeFileID] state=installed layout=stock-only dff=%u txd=%u col=%u ipl=%u dat=%u ifp=%u rrr=%u scm=%u loaded=%u "
-                "requested=%u total=%u streaming=%p models=%p patchSites=%u nativeWrites=yes datExpansion=no pathsExpansion=no",
+                "requested=%u total=%u streaming=%p models=%p patchSites=%u fileIDPatchSites=%u storePatchSites=%u nativeWrites=yes "
+                "txdCapacity=8000 colCapacity=512 iplCapacity=1024 buildingCapacity=32000 colModelCapacity=30000 quadTreeNodeCapacity=2048 "
+                "extendedCOLIPL=yes cacheAccelerators=disabled datExpansion=no pathsExpansion=no",
                 m_layout.dff, m_layout.txd, m_layout.col, m_layout.ipl, m_layout.dat, m_layout.ifp, m_layout.rrr, m_layout.scm, m_layout.loadedList,
-                m_layout.requestedList, m_layout.total, m_streamingInfoArray, m_modelInfoArray, static_cast<unsigned int>(std::size(RELOCATION_PATCHES))));
+                m_layout.requestedList, m_layout.total, m_streamingInfoArray, m_modelInfoArray,
+                static_cast<unsigned int>(std::size(RELOCATION_PATCHES) + std::size(NATIVE_STORE_PATCHES)),
+                static_cast<unsigned int>(std::size(RELOCATION_PATCHES)), static_cast<unsigned int>(std::size(NATIVE_STORE_PATCHES))));
+    return true;
+}
+
+std::int32_t CFileIDRuntimeSA::GetColModelSlot(const void* colModel)
+{
+    return GetColModelSlotInternal(colModel);
+}
+
+void CFileIDRuntimeSA::SetColModelSlot(void* colModel, std::int32_t slot)
+{
+    SetColModelSlotInternal(colModel, slot);
+}
+
+std::int32_t CFileIDRuntimeSA::GetEntityIplIndex(const void* entity)
+{
+    return GetEntityIplIndexInternal(entity);
+}
+
+void CFileIDRuntimeSA::SetEntityIplIndex(void* entity, std::int32_t index)
+{
+    SetEntityIplIndexInternal(entity, index);
+}
+
+void CFileIDRuntimeSA::ForgetEntityIplIndex(const void* entity)
+{
+    ForgetEntityIplIndexInternal(entity);
+}
+
+bool CFileIDRuntimeSA::HasStoreExtensionOverflow()
+{
+    return InterlockedCompareExchange(&g_extendedBytesOverflow, 0, 0) != 0;
+}
+
+bool CFileIDRuntimeSA::BeginStoreExtensionTestSnapshot(std::string& error)
+{
+    if (!g_extendedBytes)
+    {
+        error = "store-extension table is unavailable for the boundary harness";
+        return false;
+    }
+
+    auto* snapshot =
+        static_cast<SExtendedByteEntry*>(VirtualAlloc(nullptr, EXTENDED_BYTE_CAPACITY * sizeof(SExtendedByteEntry), MEM_COMMIT | MEM_RESERVE, PAGE_READWRITE));
+    if (!snapshot)
+    {
+        error = "unable to allocate the boundary-harness store-extension snapshot";
+        return false;
+    }
+
+    AcquireSRWLockExclusive(&g_extendedBytesLock);
+    if (g_extendedBytesTestSnapshot)
+    {
+        ReleaseSRWLockExclusive(&g_extendedBytesLock);
+        VirtualFree(snapshot, 0, MEM_RELEASE);
+        error = "a store-extension boundary-harness snapshot is already active";
+        return false;
+    }
+    std::memcpy(snapshot, g_extendedBytes, EXTENDED_BYTE_CAPACITY * sizeof(SExtendedByteEntry));
+    g_extendedBytesTestOverflow = InterlockedCompareExchange(&g_extendedBytesOverflow, 0, 0);
+    g_extendedBytesTestSnapshot = snapshot;
+    ReleaseSRWLockExclusive(&g_extendedBytesLock);
+    return true;
+}
+
+bool CFileIDRuntimeSA::RestoreStoreExtensionTestSnapshot(std::string& error)
+{
+    AcquireSRWLockExclusive(&g_extendedBytesLock);
+    SExtendedByteEntry* snapshot = g_extendedBytesTestSnapshot;
+    if (!g_extendedBytes || !snapshot)
+    {
+        ReleaseSRWLockExclusive(&g_extendedBytesLock);
+        error = "no store-extension boundary-harness snapshot is active";
+        return false;
+    }
+    std::memcpy(g_extendedBytes, snapshot, EXTENDED_BYTE_CAPACITY * sizeof(SExtendedByteEntry));
+    InterlockedExchange(&g_extendedBytesOverflow, g_extendedBytesTestOverflow);
+    g_extendedBytesTestSnapshot = nullptr;
+    ReleaseSRWLockExclusive(&g_extendedBytesLock);
+    VirtualFree(snapshot, 0, MEM_RELEASE);
     return true;
 }

@@ -843,7 +843,7 @@ int CPoolsSA::GetPoolDefaultCapacity(ePools pool)
         case VEHICLE_POOL:
             return 110;
         case COL_MODEL_POOL:
-            return 10150;  // Modded to 12000  @ CGameSA.cpp
+            return 10150;  // Native startup transaction expands this to MAX_COL_MODELS
         case TASK_POOL:
             return 500;  // Modded to 5000   @ CGameSA.cpp
         case EVENT_POOL:
@@ -891,7 +891,7 @@ int CPoolsSA::GetPoolDefaultModdedCapacity(ePools pool)
         case VEHICLE_POOL:
             return 110;
         case COL_MODEL_POOL:
-            return 12000;
+            return MAX_COL_MODELS;
         case TASK_POOL:
             return 5000;
         case EVENT_POOL:

@@ -14,6 +14,7 @@
 #include "StdInc.h"
 #include "CDummyPoolSA.h"
 #include "CGameSA.h"
+#include "CFileIDRuntimeSA.h"
 #include <game/CWorld.h>
 
 extern CGameSA* pGame;
@@ -40,14 +41,17 @@ void CDummyPoolSA::RemoveAllWithBackup()
             pGame->GetWorld()->Remove(building, CDummyPool_Destructor);
             building->RemoveRWObjectWithReferencesCleanup();
 
-            pDummyPool->Release(i);
+            auto& backup = (*m_pOriginalElementsBackup)[i];
+            backup.occupied = true;
+            backup.iplIndex = CFileIDRuntimeSA::GetEntityIplIndex(building);
+            std::memcpy(backup.bytes, building, sizeof(CEntitySAInterface));
 
-            (*m_pOriginalElementsBackup)[i].first = true;
-            std::memcpy((*m_pOriginalElementsBackup)[i].second, building, sizeof(CEntitySAInterface));
+            CFileIDRuntimeSA::ForgetEntityIplIndex(building);
+            pDummyPool->Release(i);
         }
         else
         {
-            (*m_pOriginalElementsBackup)[i].first = false;
+            (*m_pOriginalElementsBackup)[i].occupied = false;
         }
     }
 }
@@ -61,11 +65,12 @@ void CDummyPoolSA::RestoreBackup()
     auto  pDummyPool = (*m_ppDummyPoolInterface);
     for (auto i = 0; i < MAX_DUMMIES_DEFAULT; i++)
     {
-        if (originalData[i].first)
+        if (originalData[i].occupied)
         {
             pDummyPool->AllocateAtNoInit(i);
             auto pDummy = pDummyPool->GetObject(i);
-            std::memcpy(pDummy, &originalData[i].second, sizeof(CEntitySAInterface));
+            std::memcpy(pDummy, &originalData[i].bytes, sizeof(CEntitySAInterface));
+            CFileIDRuntimeSA::SetEntityIplIndex(pDummy, originalData[i].iplIndex);
 
             pGame->GetWorld()->Add(pDummy, CDummyPool_Constructor);
         }
@@ -86,9 +91,9 @@ void CDummyPoolSA::UpdateBackupLodOffset(const std::uint32_t offset)
 {
     for (auto& it : *m_pOriginalElementsBackup)
     {
-        if (it.first)
+        if (it.occupied)
         {
-            CEntitySAInterface* object = reinterpret_cast<CEntitySAInterface*>(&it.second);
+            CEntitySAInterface* object = reinterpret_cast<CEntitySAInterface*>(&it.bytes);
             CEntitySAInterface* lod = object->GetLod();
             if (lod)
                 object->SetLod((CEntitySAInterface*)((std::uint32_t)lod + offset));

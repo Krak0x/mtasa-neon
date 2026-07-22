@@ -50,20 +50,20 @@ STOCK_LAYOUT = {
 TARGET_LAYOUT = {
     "dff": 0,
     "txd": 32_000,
-    "col": 37_000,
-    "ipl": 37_255,
-    "dat": 37_511,
-    "ifp": 37_575,
-    "rrr": 37_755,
-    "scm": 38_230,
-    "loaded": 38_312,
-    "requested": 38_314,
-    "total": 38_316,
+    "col": 40_000,
+    "ipl": 40_512,
+    "dat": 41_536,
+    "ifp": 41_600,
+    "rrr": 41_780,
+    "scm": 42_255,
+    "loaded": 42_337,
+    "requested": 42_339,
+    "total": 42_341,
 }
 EXPECTED_RELOCATION_COUNTS = {
     "ModelPointer": 740,
     "StreamingPointer": 359,
-    "Value32": 258,
+    "Value32": 287,
     "Movzx": 34,
     "Value16": 4,
     "RedirectNextOnCd": 1,
@@ -203,6 +203,23 @@ def _allowed_value_pairs() -> set[tuple[int, int]]:
             pairs.add(((STOCK_LAYOUT[name] * multiplier) & 0xFFFFFFFF, (TARGET_LAYOUT[name] * multiplier) & 0xFFFFFFFF))
     pairs.add(((STOCK_LAYOUT["txd"] * 4) & 0xFFFFFFFF, (TARGET_LAYOUT["txd"] * 4) & 0xFFFFFFFF))
     pairs.add(((STOCK_LAYOUT["txd"] * -3) & 0xFFFFFFFF, (TARGET_LAYOUT["txd"] * -3) & 0xFFFFFFFF))
+    for left, right, size in (("txd", "col", 12), ("col", "ipl", 44), ("ipl", "dat", 52)):
+        stock_count = STOCK_LAYOUT[right] - STOCK_LAYOUT[left]
+        target_count = TARGET_LAYOUT[right] - TARGET_LAYOUT[left]
+        pairs.add((stock_count, target_count))
+        pairs.add((stock_count * size, target_count * size))
+    pairs.add(
+        (
+            ((STOCK_LAYOUT["col"] - STOCK_LAYOUT["txd"]) + 3) * 12,
+            ((TARGET_LAYOUT["col"] - TARGET_LAYOUT["txd"]) + 3) * 12,
+        )
+    )
+    pairs.add(
+        (
+            (STOCK_LAYOUT["dat"] - STOCK_LAYOUT["ipl"]) * 24,
+            (TARGET_LAYOUT["dat"] - TARGET_LAYOUT["ipl"]) * 24,
+        )
+    )
     return pairs
 
 
@@ -268,12 +285,12 @@ def validate_relocation_manifest(patches: list[RelocationPatch]) -> None:
 
     if TARGET_LAYOUT["txd"] - TARGET_LAYOUT["dff"] != 32_000:
         raise ValueError("target DFF partition is not 32,000 entries")
-    if TARGET_LAYOUT["col"] - TARGET_LAYOUT["txd"] != 5_000:
-        raise ValueError("target TXD partition does not match the current 5,000-entry pool")
-    if TARGET_LAYOUT["ipl"] - TARGET_LAYOUT["col"] != 255:
-        raise ValueError("target COL partition does not match the stock 255-entry pool")
-    if TARGET_LAYOUT["dat"] - TARGET_LAYOUT["ipl"] != 256:
-        raise ValueError("target IPL partition does not match the stock 256-entry pool")
+    if TARGET_LAYOUT["col"] - TARGET_LAYOUT["txd"] != 8_000:
+        raise ValueError("target TXD partition does not match the 8,000-entry pool")
+    if TARGET_LAYOUT["ipl"] - TARGET_LAYOUT["col"] != 512:
+        raise ValueError("target COL partition does not match the 512-entry pool")
+    if TARGET_LAYOUT["dat"] - TARGET_LAYOUT["ipl"] != 1_024:
+        raise ValueError("target IPL partition does not match the 1,024-entry pool")
     for left, right in (("dat", "ifp"), ("ifp", "rrr"), ("rrr", "scm"), ("scm", "loaded")):
         if TARGET_LAYOUT[right] - TARGET_LAYOUT[left] != STOCK_LAYOUT[right] - STOCK_LAYOUT[left]:
             raise ValueError(f"excluded {left.upper()} partition changed size")
@@ -333,8 +350,8 @@ def main() -> None:
     validate_executable(image, anchors)
     validate_relocation_executable(image, relocation)
     print(
-        "native FileID manifests OK: 10 capture anchors, 1,398 relocation writes, "
-        "target total=38316, store spans=current, DAT/path expansion=no"
+        "native FileID manifests OK: 10 capture anchors, 1,427 relocation writes, "
+        "target total=42341, stores=8000/512/1024, DAT/path expansion=no"
     )
 
 

@@ -14,7 +14,9 @@
 
 class CVector;
 
-using CollisionSlot = std::uint8_t;
+// GTA's ABI field remains one byte, but the native store runtime preserves the
+// authoritative slot in side storage. Do not truncate it at the MTA boundary.
+using CollisionSlot = std::uint32_t;
 
 class CColStore
 {

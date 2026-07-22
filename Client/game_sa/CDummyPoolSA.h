@@ -36,6 +36,12 @@ private:
     CPoolSAInterface<CEntitySAInterface>** m_ppDummyPoolInterface;
 
     using building_buffer_t = std::uint8_t[sizeof(CEntitySAInterface)];
-    using pool_backup_t = std::array<std::pair<bool, building_buffer_t>, MAX_DUMMIES_DEFAULT>;
+    struct backup_entry_t
+    {
+        bool              occupied{};
+        building_buffer_t bytes{};
+        std::int32_t      iplIndex{};
+    };
+    using pool_backup_t = std::array<backup_entry_t, MAX_DUMMIES_DEFAULT>;
     std::unique_ptr<pool_backup_t> m_pOriginalElementsBackup;
 };

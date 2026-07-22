@@ -47,7 +47,7 @@ class NativeWorldPackDescriptorTest(unittest.TestCase):
             self.assertIn(value, self.policy)
         for payload_value in ("bw.ide", "bw.img", "bw.col", "18631", "19582", "4007", "1126"):
             self.assertNotIn(payload_value, self.policy)
-        for trusted_value in ("32000", "512", "1024", "5000", "252", "255", "191", "256"):
+        for trusted_value in ("32000", "8000", "512", "1024", "252", "191"):
             self.assertIn(trusted_value, self.policy)
 
     def test_checked_in_manifest_preserves_bullworth_payload_contract(self) -> None:

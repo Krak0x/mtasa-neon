@@ -13,6 +13,7 @@
 #include <core/CCoreInterface.h>
 #include "CColModelSA.h"
 #include "CColStoreSA.h"
+#include "CFileIDRuntimeSA.h"
 #include "CGameSA.h"
 #include "CModelInfoSA.h"
 #include "CPedModelInfoSA.h"
@@ -1629,7 +1630,7 @@ void CModelInfoSA::SetColModel(CColModel* pColModel)
         }
 
         // Apply some low-level hacks
-        pColModelInterface->m_sphere.m_collisionSlot = 0xA9;
+        CFileIDRuntimeSA::SetColModelSlot(pColModelInterface, 0xA9);
 
         CBaseModelInfo_SetColModel(m_pInterface, pColModelInterface, false);
         CColAccel_addCacheCol(m_dwModelID, pColModelInterface);
@@ -1707,7 +1708,7 @@ void CModelInfoSA::RestoreColModel()
         // there was any object/building, which would've provoked CColStore to request it.
         if (m_pInterface->pColModel && !m_pInterface->pColModel->m_data && m_dwReferences > 1)
         {
-            pGame->GetStreaming()->RemoveModel(pGame->GetBaseIDforCOL() + m_pInterface->pColModel->m_sphere.m_collisionSlot);
+            pGame->GetStreaming()->RemoveModel(pGame->GetBaseIDforCOL() + CFileIDRuntimeSA::GetColModelSlot(m_pInterface->pColModel));
         }
 
         // Handle paired time models explicitly so MTA tracking stays in sync.
@@ -1730,7 +1731,7 @@ void CModelInfoSA::RestoreColModel()
 
                     if (pairedInterface->pColModel && !pairedInterface->pColModel->m_data && pairedModelSA->m_dwReferences > 1)
                     {
-                        pGame->GetStreaming()->RemoveModel(pGame->GetBaseIDforCOL() + pairedInterface->pColModel->m_sphere.m_collisionSlot);
+                        pGame->GetStreaming()->RemoveModel(pGame->GetBaseIDforCOL() + CFileIDRuntimeSA::GetColModelSlot(pairedInterface->pColModel));
                     }
                 }
 
@@ -1782,7 +1783,7 @@ void CModelInfoSA::AddColRef()
 
     if (originalColModel)
     {
-        pGame->GetCollisionStore()->AddRef(originalColModel->m_sphere.m_collisionSlot);
+        pGame->GetCollisionStore()->AddRef(CFileIDRuntimeSA::GetColModelSlot(originalColModel));
     }
 }
 
@@ -1803,7 +1804,7 @@ void CModelInfoSA::RemoveColRef()
 
     if (originalColModel)
     {
-        pGame->GetCollisionStore()->RemoveRef(originalColModel->m_sphere.m_collisionSlot);
+        pGame->GetCollisionStore()->RemoveRef(CFileIDRuntimeSA::GetColModelSlot(originalColModel));
     }
 }
 

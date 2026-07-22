@@ -14,6 +14,7 @@
 #include "CBuildingsPoolSA.h"
 
 #include "CFileLoaderSA.h"
+#include "CFileIDRuntimeSA.h"
 #include <game/CWorld.h>
 #include "CGameSA.h"
 #include "CPtrNodeSingleListSA.h"
@@ -98,7 +99,7 @@ CBuilding* CBuildingsPoolSA::AddBuilding(CClientBuilding* pClientBuilding, uint1
 
     // Disable lod and ipl
     pBuilding->m_pLod = nullptr;
-    pBuilding->m_iplIndex = 0;
+    CFileIDRuntimeSA::SetEntityIplIndex(pBuilding, 0);
 
     // Restore changed properties group
     if (prevGroup != MODEL_PROPERTIES_GROUP_STATIC)
@@ -217,14 +218,19 @@ void CBuildingsPoolSA::RemoveAllWithBackup()
                 building->RemoveMatrix();
             }
 
-            pBuildsingsPool->Release(i);
+            auto& backup = (*m_pOriginalBuildingsBackup)[i];
+            backup.occupied = true;
+            backup.iplIndex = CFileIDRuntimeSA::GetEntityIplIndex(building);
+            std::memcpy(&backup.bytes, building, sizeof(CBuildingSAInterface));
 
-            (*m_pOriginalBuildingsBackup)[i].first = true;
-            std::memcpy(&(*m_pOriginalBuildingsBackup)[i].second, building, sizeof(CBuildingSAInterface));
+            // Release does not run CEntity's destructor, so explicitly retire
+            // the address-keyed extension before the pool storage moves.
+            CFileIDRuntimeSA::ForgetEntityIplIndex(building);
+            pBuildsingsPool->Release(i);
         }
         else
         {
-            (*m_pOriginalBuildingsBackup)[i].first = false;
+            (*m_pOriginalBuildingsBackup)[i].occupied = false;
         }
     }
 }
@@ -242,10 +248,11 @@ void CBuildingsPoolSA::RestoreBackup()
     const size_t restoreCount = std::min(originalData.size(), static_cast<size_t>(pBuildsingsPool->m_nSize));
     for (size_t i = 0; i < restoreCount; i++)
     {
-        if (originalData[i].first)
+        if (originalData[i].occupied)
         {
             auto* pBuilding = pBuildsingsPool->AllocateAtNoInit(i);
-            std::memcpy(pBuilding, &originalData[i].second, sizeof(CBuildingSAInterface));
+            std::memcpy(pBuilding, &originalData[i].bytes, sizeof(CBuildingSAInterface));
+            CFileIDRuntimeSA::SetEntityIplIndex(pBuilding, originalData[i].iplIndex);
 
             // Restore matrix if it was removed
             auto it = m_buildingMatrix.find(pBuilding);
@@ -426,9 +433,9 @@ void CBuildingsPoolSA::UpdateBackupLodPointers(uint32_t offset)
     for (size_t i = 0; i < arr.size(); ++i)
     {
         auto& data = arr[i];
-        if (data.first)
+        if (data.occupied)
         {
-            CBuildingSAInterface* building = reinterpret_cast<CBuildingSAInterface*>(&data.second);
+            CBuildingSAInterface* building = reinterpret_cast<CBuildingSAInterface*>(&data.bytes);
             if (building->m_pLod != nullptr)
             {
                 building->m_pLod = (CBuildingSAInterface*)((uint32_t)building->m_pLod + offset);

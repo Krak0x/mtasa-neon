@@ -24,35 +24,33 @@
 
 int CLimitsSA::GetIPLFiles() const
 {
-    return INTEGER_AT(0x405F25);
+    return INTEGER_AT(0x405F26);
 }
 bool CLimitsSA::SetIPLFiles(int value)
 {
-    MemPut<unsigned char>(0x405F25, 0x68);
-    MemPut<int>(0x405F26, value);
-    return true;
+    // The IPL count is now part of the process-lifetime FileID/store
+    // transaction. Mutating only this allocation operand would desynchronise
+    // every relocated loop bound and serialized structure size.
+    return value == GetIPLFiles();
 }
 
 int CLimitsSA::GetCollisionFiles() const
 {
-    return INTEGER_AT(0x411457);
+    return INTEGER_AT(0x411458);
 }
 bool CLimitsSA::SetCollisionFiles(int value)
 {
-    MemPut<unsigned char>(0x411457, 0x68);
-    MemPut<int>(0x411458, value);
-    return true;
+    return value == GetCollisionFiles();
 }
 
 int CLimitsSA::GetQuadtreeNodes() const
 {
-    return INTEGER_AT(0x552C3E);
+    return INTEGER_AT(0x552C3F);
 }
 bool CLimitsSA::SetQuadtreeNodes(int value)
 {
-    MemPut<unsigned char>(0x552C3E, 0x68);
-    MemPut<int>(0x552C3F, value);
-    return true;
+    // The pool has already been allocated by the time this API is exposed.
+    return value == GetQuadtreeNodes();
 }
 
 int CLimitsSA::GetVehicleStructs() const

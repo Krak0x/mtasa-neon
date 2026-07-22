@@ -1228,6 +1228,87 @@ not a numerical per-slot deallocation audit. The stock-only compact FileID
 relocation gate is complete; enlarged TXD/COL/IPL spans remain coupled to the
 next stores/pools checkpoint.
 
+## Stores and pools expansion (complete; live validated 2026-07-23)
+
+The next startup transaction now moves the coupled stores and FileID namespace
+together. Its target layout is:
+
+```text
+DFF 0          TXD 32000      COL 40000      IPL 40512
+DAT 41536      IFP 41600      RRR 41780      SCM 42255
+loaded 42337   requested 42339 total 42341
+```
+
+The generated FLA-derived manifest contains 1,427 FileID writes: the previous
+1,398 sites plus 29 derived allocation, byte-size and loop-count operands for
+8,000 TXD, 512 COL and 1,024 IPL entries. Thirty-seven separately reviewed native
+store patches are validated against the same expanded HOODLUM image and
+committed in the same no-return transaction. They install 32,000 buildings,
+30,000 ColModels and 2,048 QuadTreeNodes, extend the byte-sized
+`CColModel::m_nColSlot` and `CEntity::m_nIplIndex` through process-lifetime
+side storage, bypass stale CINFO/MINFO accelerator input and output without
+deleting files from the GTA installation, and resize MINFO's live ID buffer to
+the complete 32,000-DFF store. The additional site redirects the tail of
+`CIplStore::RemoveIpl` at `0x404C61`: GTA otherwise narrows an IPL slot to a
+byte before car-generator cleanup, so slot 256 would delete generators owned
+by stock IPL 0. The closed static-world grammar rejects car-generator sections;
+Neon therefore preserves stock cleanup for slots 0..190 and skips it for the
+static-world-owned range. Supporting car generators in high IPL slots remains
+out of scope and would require their own full-width ownership field, as in
+FLA's separate `CarGeneratorsLimit` work.
+
+MTA collision APIs now preserve a 32-bit slot to the native call boundary;
+custom collision replacement and building/dummy backup/restore use the same
+full-width accessors. Runtime setters that formerly rewrote isolated IPL, COL
+or QuadTree allocation immediates now refuse any value other than the installed
+transactional capacity. Building growth is capped at 32,000 because native IPL
+building range endpoints remain signed 16-bit.
+
+`[NativeStorePools]` samples the TXD, COL, IPL, building, ColModel and
+QuadTreeNode pools once per second and logs current occupancy, capacity, peak
+occupancy, highest occupied slot and peak highest slot whenever a high-water
+mark advances. The off-game validator proves 1,464 disjoint native
+writes (1,427 FileID plus 37 store/field/cache/cargen sites), exact executable bytes,
+the final boundary layout and the absence of raw MTA reads of the extended
+byte fields.
+
+Bullworth is a lifecycle and compatibility gate, not a proof of the new upper
+slot boundaries: its current plan remains below COL/IPL slot 255. The opt-in
+`MTA_NATIVE_WORLD_STORE_BOUNDARY_TEST=1` startup harness supplies that separate
+proof without admitting synthetic files into the pack format. After the pack's
+native postconditions and before IPL streaming is enabled, it steers the real
+COL/IPL allocators to 255/256/511 and 255/256/1023, loads one already audited
+COL record and one in-memory static binary IPL instance through GTA, then
+executes the native remove/destructor paths. It checks the authoritative
+full-width values, legacy `0xFF` compatibility bytes, freed side entries,
+unchanged streaming records and collision-accelerator globals. Store,
+ColModel and building slots are restored exactly. MTA replaces GTA's native
+single-link pointer pool with a 90,000-entry `CDynamicPool`; the harness
+therefore snapshots and restores that allocator's item bytes and free-list
+order instead of reinterpreting `0xB74484` as a stock `CPool`. A test-only
+snapshot also restores the full-width
+side table byte-for-byte, including deleted-entry tombstones and its overflow
+flag. Probe model selection excludes GTA special atomics such as gang tags so
+the native constructor cannot register a persistent pointer in a side manager.
+For the high COL probes, free slot 255 is an immutable canary and the harness
+requires the building bounds to restrict the requested target rectangle. This
+detects either remaining byte-sized `CColModel::m_nColSlot` consumer aliasing
+256 or 511 back onto 255.
+GTA's normal building constructor advances the CRT random sequence once
+per probe instance; the three draws are intentional and logged because hiding
+them would stop exercising the real constructor path. No probe entity survives.
+
+The user-run gate completed on 2026-07-23 in authorized process ticket
+`d831fafb`. Preflight reported COL `512/512`, IPL `1024/1024`, ColModel
+`30000/30000`, buildings `32000/32000` and pointer nodes `90000/90000`.
+All three native pairs (`255/255`, `256/256`, `511/1023`) emitted `pair-ok`,
+followed by `boundaryHarness=passed` and `registrar=active`. Repeated
+`/nativebw` and `/nativeback`, walking/driving collisions, minimize/restore and
+death/respawn remained stable. Observed peaks were TXD `3774/8000`, COL
+`253/512`, IPL `198/1024`, buildings `12128/32000`, ColModels `10932/30000`
+and QuadTreeNodes `225/2048`, with no overflow, fatal diagnostic or crash. The
+persistent harness environment switch was removed after the gate.
+
 ## Candidate areas for future work
 
 Radar, paths, zones/population, native IPL support, object/model pools,

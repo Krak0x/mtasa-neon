@@ -428,6 +428,50 @@ checkpoint is complete. The next native capacity change must install the
 8,000/512/1,024 TXD/COL/IPL stores, matching FileID spans, allocations, loop
 bounds, sentinels and validators atomically.
 
+### Stores/pools checkpoint (live validated 2026-07-23)
+
+The current implementation performs that atomic move with DFF/TXD/COL/IPL
+bases `0/32000/40000/40512`, DAT at `41536` and total FileID count `42341`.
+DAT remains 64 entries; paths/nodes and new DAT/SCM/IFP/RRR content are still
+out of scope. The generated relocation has 1,427 sites, and the same commit
+adds 37 byte-validated sites for building/ColModel/QuadTree capacities,
+full-width COL/IPL side fields, deterministic CINFO/MINFO bypass and the live
+32,000-entry MINFO ID buffer. The final site prevents high static IPL removal
+from narrowing its slot and deleting car generators belonging to an aliased
+stock IPL; high-slot car generators themselves remain outside the admitted
+static grammar.
+
+Bullworth's compiled policy now requires the runtime pools to be exactly
+8,000 TXD, 512 COL and 1,024 IPL entries while retaining the reviewed stock
+occupancy profiles. `[NativeStorePools]` supplies numerical current/peak and
+highest-slot telemetry for those stores plus buildings, ColModels and
+QuadTreeNodes.
+
+The current Bullworth plan stays below slot 255 for both COL and IPL. The
+separate opt-in startup harness, enabled only by
+`MTA_NATIVE_WORLD_STORE_BOUNDARY_TEST=1`, drives GTA's real COL/IPL load and
+remove paths at COL 255/256/511 and IPL 255/256/1023. It reuses one audited COL
+record, creates one synchronous static IPL building, validates both full-width
+side fields and restores the touched native pools, streaming records and full
+side table exactly. Because MTA hooks the native single-link allocator, its
+90,000-entry `CDynamicPool` is snapshotted as item bytes plus exact free-list
+order; `0xB74484` is not treated as a stock `CPool`. The three native building
+constructors intentionally draw from GTA's CRT random sequence; that limited
+non-restored state is explicit in the final diagnostic and no probe entity
+survives. High COL probes also keep
+free slot 255 as an immutable canary and require the target COL rectangle to
+change, proving the entity loader did not narrow slot 256 or 511.
+
+The authorized user-run gate completed on 2026-07-23 with ticket `d831fafb`.
+It reported exact capacities COL `512`, IPL `1024`, ColModel `30000`, buildings
+`32000` and pointer nodes `90000`; all three boundary pairs emitted
+`boundaryHarness=pair-ok`, followed by `boundaryHarness=passed` and
+`registrar=active`. Repeated Bullworth/SA travel, minimize/restore and
+death/respawn stayed stable. Peak occupancy was TXD `3774`, COL `253`, IPL
+`198`, buildings `12128`, ColModels `10932` and QuadTreeNodes `225`, with no
+overflow or crash. The persistent opt-in environment value was deleted after
+the gate.
+
 Format 1 accepts exterior static binary IPLs only: every placement has area
 flags zero, no LOD link (`lodIndex == -1`), X/Y in `[-10000, 9999]`, and Z in
 `[-5000, 5000]`. Every IMG entry has exactly one dot and a safe dot-free stem,
