@@ -50,6 +50,12 @@ UINT64_MAX = (1 << 64) - 1
 MODEL_ID_FIRST = 20_000
 MODEL_ID_LAST = 31_999
 FUTURE_CITY_MODEL_RESERVE = 4_096
+MTA_LOGICAL_MODEL_ID_FIRST = 30_000
+MTA_CLOTHES_MODEL_ID_RANGE = (30_000, 30_151)
+NATIVE_MODEL_ARENA_FIRST = 20_000
+NATIVE_MODEL_ARENA_LAST = 29_999
+NATIVE_MODEL_ARENA_CAPACITY = NATIVE_MODEL_ARENA_LAST - NATIVE_MODEL_ARENA_FIRST + 1
+V3_CACHE_OBJECT_LIMIT = 8
 
 CITY_NAMESPACES = {
     "bullworth": "bw",
@@ -234,6 +240,7 @@ def placement_bounds(placements: Iterable[object]) -> dict[str, list[float]]:
 def lod_dependency_report(placements: list[object]) -> dict[str, object]:
     edges: Counter[tuple[str, str]] = Counter()
     targets: set[int] = set()
+    children_per_target: Counter[int] = Counter()
     cross_group = 0
     same_group = 0
     for placement in placements:
@@ -243,13 +250,25 @@ def lod_dependency_report(placements: list[object]) -> dict[str, object]:
         edge = (placement.source, target.source)
         edges[edge] += 1
         targets.add(placement.lod_global_index)
+        children_per_target[placement.lod_global_index] += 1
         if edge[0] == edge[1]:
             same_group += 1
         else:
             cross_group += 1
+    target_model_variants = {
+        (placements[index].source_id, placements[index].source)
+        for index in targets
+        if not placements[index].native
+    }
+    native_targets = sum(placements[index].native for index in targets)
     return {
         "links": cross_group + same_group,
         "unique_targets": len(targets),
+        "native_targets": native_targets,
+        "unique_target_model_variants": len(target_model_variants),
+        "target_groups": len({placements[index].source for index in targets}),
+        "maximum_children_per_target": max(children_per_target.values(), default=0),
+        "scratch_entries": len(targets) + cross_group + same_group,
         "cross_group_links": cross_group,
         "same_group_links": same_group,
         "group_edges": [
@@ -803,6 +822,76 @@ def plan(repository: Path, gta_root: Path | None = None) -> dict[str, object]:
     fixed_native_bytes["known_total"] = checked_sum(fixed_native_bytes.values(), "fixed native memory")
 
     cache_transaction_headroom = max(512 * 1024 * 1024, aggregate["payload_bytes"] // 8)
+    city_variant_counts = {
+        city["pack_id"]: city["counts"]["model_variants"] for city in city_reports
+    }
+    current_transition_pairs = [
+        {
+            "cities": [left["pack_id"], right["pack_id"]],
+            "required_slots": left["counts"]["model_variants"]
+            + right["counts"]["model_variants"],
+        }
+        for index, left in enumerate(city_reports)
+        for right in city_reports[index + 1 :]
+    ]
+    worst_current_transition = max(
+        current_transition_pairs, key=lambda pair: pair["required_slots"]
+    )
+    largest_current_city = max(
+        city_reports, key=lambda city: city["counts"]["model_variants"]
+    )
+    future_transition_slots = (
+        largest_current_city["counts"]["model_variants"] + FUTURE_CITY_MODEL_RESERVE
+    )
+    model_residency = {
+        "identity": "content-id + pack-id + pack-local-model-id",
+        "physical_arena": [NATIVE_MODEL_ARENA_FIRST, NATIVE_MODEL_ARENA_LAST],
+        "physical_capacity": NATIVE_MODEL_ARENA_CAPACITY,
+        "city_variant_counts": city_variant_counts,
+        "current_transition_pairs": current_transition_pairs,
+        "worst_current_transition": worst_current_transition,
+        "worst_current_transition_remaining": (
+            NATIVE_MODEL_ARENA_CAPACITY - worst_current_transition["required_slots"]
+        ),
+        "future_city_working_set": FUTURE_CITY_MODEL_RESERVE,
+        "largest_current_plus_future_slots": future_transition_slots,
+        "largest_current_plus_future_remaining": (
+            NATIVE_MODEL_ARENA_CAPACITY - future_transition_slots
+        ),
+        "same_city_generation_rollover_max": FUTURE_CITY_MODEL_RESERVE * 2,
+        "same_city_generation_rollover_remaining": (
+            NATIVE_MODEL_ARENA_CAPACITY - FUTURE_CITY_MODEL_RESERVE * 2
+        ),
+        "maximum_concurrent_working_sets": 2,
+        "concurrency_rule": "city-transition XOR generation-rollover; a third working set is refused",
+        "mta_dynamic_allocator_range": [0, NATIVE_MODEL_ARENA_FIRST - 1],
+        "observed_ide_free_slots_below_arena": stock.get(
+            "observed_free_ids_below_20000"
+        ),
+        "generation_fence_required": True,
+        "permanent_global_assignment": False,
+        "lod_anchor_policy": {
+            "entity_index_arrays_process_lifetime": [
+                city["pack_id"]
+                for city in city_reports
+                if city["lod_dependencies"]["links"]
+            ],
+            "entity_index_array_capacity": 40,
+            "observed_stock_arrays": 30,
+            "required_additional_arrays": sum(
+                bool(city["lod_dependencies"]["links"]) for city in city_reports
+            ),
+            "anchors_are_city_scoped": True,
+            "global_pinned_anchor_variants_rejected": sum(
+                city["lod_dependencies"]["unique_target_model_variants"]
+                for city in city_reports
+            ),
+            "scratch_entity_capacity": 4096,
+            "maximum_city_scratch_entries": max(
+                city["lod_dependencies"]["scratch_entries"] for city in city_reports
+            ),
+        },
+    }
     blockers: list[dict[str, object]] = []
 
     def block(code: str, reason: str, **evidence: object) -> None:
@@ -852,6 +941,85 @@ def plan(repository: Path, gta_root: Path | None = None) -> dict[str, object]:
             required=FUTURE_CITY_MODEL_RESERVE,
             shortfall=FUTURE_CITY_MODEL_RESERVE - model_remaining,
         )
+    logical_overlap_first = max(MTA_LOGICAL_MODEL_ID_FIRST, MODEL_ID_FIRST)
+    logical_overlap_last = min(MODEL_ID_LAST, next_model_id - 1)
+    if logical_overlap_first <= logical_overlap_last:
+        clothes_overlap_first = max(MTA_CLOTHES_MODEL_ID_RANGE[0], logical_overlap_first)
+        clothes_overlap_last = min(MTA_CLOTHES_MODEL_ID_RANGE[1], logical_overlap_last)
+        block(
+            "mta-model-namespace-collision",
+            "the contiguous native range overlaps MTA logical server models and GTA clothes pseudo-model IDs",
+            overlap=[logical_overlap_first, logical_overlap_last],
+            overlap_ids=logical_overlap_last - logical_overlap_first + 1,
+            logical_model_first=MTA_LOGICAL_MODEL_ID_FIRST,
+            clothes_overlap=(
+                [clothes_overlap_first, clothes_overlap_last]
+                if clothes_overlap_first <= clothes_overlap_last
+                else []
+            ),
+        )
+    block(
+        "native-model-residency-binder",
+        "multi-city activation requires a generation-fenced logical-to-physical model binder and IPL/COL buffer remap",
+        arena=model_residency["physical_arena"],
+        capacity=model_residency["physical_capacity"],
+        worst_current_transition=model_residency["worst_current_transition"],
+        largest_current_plus_future_slots=model_residency[
+            "largest_current_plus_future_slots"
+        ],
+    )
+    block(
+        "mta-dynamic-model-headroom-unproved",
+        "the native arena must be excluded from MTA allocation and the remaining pre-arena slots need runtime high-water proof",
+        allocator_range=model_residency["mta_dynamic_allocator_range"],
+        observed_ide_free_slots=model_residency[
+            "observed_ide_free_slots_below_arena"
+        ],
+    )
+    if (
+        worst_current_transition["required_slots"] > NATIVE_MODEL_ARENA_CAPACITY
+        or future_transition_slots > NATIVE_MODEL_ARENA_CAPACITY
+        or FUTURE_CITY_MODEL_RESERVE * 2 > NATIVE_MODEL_ARENA_CAPACITY
+    ):
+        block(
+            "native-model-arena-capacity",
+            "the physical arena cannot hold the proved transition working set",
+            capacity=NATIVE_MODEL_ARENA_CAPACITY,
+            worst_current_transition=worst_current_transition,
+            largest_current_plus_future_slots=future_transition_slots,
+            same_city_generation_rollover_slots=FUTURE_CITY_MODEL_RESERVE * 2,
+        )
+    lod_policy = model_residency["lod_anchor_policy"]
+    if (
+        lod_policy["observed_stock_arrays"]
+        + lod_policy["required_additional_arrays"]
+        > lod_policy["entity_index_array_capacity"]
+    ):
+        block(
+            "lod-entity-array-capacity",
+            "the stock IPL entity-index pointer table has insufficient reviewed slots",
+            policy=lod_policy,
+        )
+    if (
+        lod_policy["maximum_city_scratch_entries"]
+        > lod_policy["scratch_entity_capacity"]
+    ):
+        block(
+            "lod-scratch-capacity",
+            "a city exceeds GTA's anchor plus linked-child scratch capacity",
+            policy=lod_policy,
+        )
+    lod_fanout = {
+        city["pack_id"]: city["lod_dependencies"]["maximum_children_per_target"]
+        for city in city_reports
+        if city["lod_dependencies"]["maximum_children_per_target"] > 1
+    }
+    if lod_fanout:
+        block(
+            "lod-child-fanout",
+            "the current unload contract admits at most one streamed child per LOD target",
+            cities=lod_fanout,
+        )
     if aggregate["positive_lod_links"]:
         block(
             "streamed-ipl-lod-bootstrap",
@@ -872,25 +1040,17 @@ def plan(repository: Path, gta_root: Path | None = None) -> dict[str, object]:
         observed_bullworth_peak=OBSERVED_BULLWORTH_HIGH_WATER["quad_tree_node"],
     )
     block(
-        "cache-rollover-capacity",
-        "four active city objects consume the current four-object cache limit and leave no transactional replacement bank",
-        installed_objects=4,
-        active_city_objects=4,
-        production_target_objects=8,
-    )
-    block(
-        "streaming-double-buffer-floor",
-        "the current native-pack clamp returns a per-entry block count where SetStreamingBufferSize expects the total split across two channels",
-        largest_member_blocks=largest_member_blocks,
-        current_runtime_return_blocks=per_channel_blocks,
-        required_total_blocks=required_total_streaming_blocks,
-        required_total_bytes=required_total_streaming_blocks * SECTOR_SIZE,
-    )
-    block(
         "renderware-ram-high-water-unproved",
         "serialized corpus budgets do not prove simultaneous RenderWare CPU/GPU residency or allocator overhead",
         serialized_gpu_bytes=ADMISSION_TEXTURE_PROFILE["serialized_gpu_bytes"],
         decoded_rgba_bytes=ADMISSION_TEXTURE_PROFILE["decoded_rgba_bytes"],
+    )
+    block(
+        "cache-generation-reclamation",
+        "the eight-object cache supports one replacement bank but has no safe reclamation path for later inactive generations",
+        active_objects=4,
+        replacement_objects=4,
+        object_limit=V3_CACHE_OBJECT_LIMIT,
     )
 
     failed_pools = sorted(name for name, report in pool_usage.items() if not report["fits"])
@@ -947,6 +1107,7 @@ def plan(repository: Path, gta_root: Path | None = None) -> dict[str, object]:
             "authority": "source coordinates before registrar translation",
             "activation_requires_translated_overlap_sets": True,
         },
+        "model_residency": model_residency,
         "collisions": {
             "generated_identity": generated_identity_collisions,
             "generated_gta_uppercase_key": generated_hash_collisions,
@@ -997,9 +1158,11 @@ def plan(repository: Path, gta_root: Path | None = None) -> dict[str, object]:
                 "source_derived_payload_bytes": aggregate["payload_bytes"],
                 "transaction_headroom_bytes": cache_transaction_headroom,
                 "minimum_free_bytes_for_fresh_publish": aggregate["payload_bytes"] + cache_transaction_headroom,
-                "cache_object_limit": 4,
+                "cache_object_limit": V3_CACHE_OBJECT_LIMIT,
                 "active_city_objects": 4,
                 "production_double_bank_target": 8,
+                "transactional_replacement_bank_fits": V3_CACHE_OBJECT_LIMIT >= 8,
+                "continuous_generation_rotation_supported": False,
                 "cache_total_limit_bytes": 32 * 1024 * 1024 * 1024,
                 "authority": "planning estimate; emitted manifests remain authoritative",
             },
@@ -1014,6 +1177,32 @@ def plan(repository: Path, gta_root: Path | None = None) -> dict[str, object]:
             "required_partition_boundaries_have_one_owner": all(proof["owner_count"] == 1 for proof in boundaries),
             "no_source_or_runtime_mutation": True,
             "activation_requires_zero_blockers": True,
+            "native_arena_precedes_mta_logical_namespace": (
+                NATIVE_MODEL_ARENA_LAST < MTA_LOGICAL_MODEL_ID_FIRST
+            ),
+            "worst_current_transition_fits_native_arena": (
+                worst_current_transition["required_slots"]
+                <= NATIVE_MODEL_ARENA_CAPACITY
+            ),
+            "largest_current_plus_future_fits_native_arena": (
+                future_transition_slots <= NATIVE_MODEL_ARENA_CAPACITY
+            ),
+            "future_generation_rollover_fits_native_arena": (
+                FUTURE_CITY_MODEL_RESERVE * 2 <= NATIVE_MODEL_ARENA_CAPACITY
+            ),
+            "lod_entity_index_arrays_fit_stock_capacity": (
+                model_residency["lod_anchor_policy"]["observed_stock_arrays"]
+                + model_residency["lod_anchor_policy"]["required_additional_arrays"]
+                <= model_residency["lod_anchor_policy"]["entity_index_array_capacity"]
+            ),
+            "lod_scratch_fits_stock_capacity": (
+                model_residency["lod_anchor_policy"]["maximum_city_scratch_entries"]
+                <= model_residency["lod_anchor_policy"]["scratch_entity_capacity"]
+            ),
+            "lod_children_per_target_supported": all(
+                city["lod_dependencies"]["maximum_children_per_target"] <= 1
+                for city in city_reports
+            ),
         },
     }
 
@@ -1054,6 +1243,7 @@ def baseline_projection(report: dict[str, object]) -> dict[str, object]:
         "source_order": report["source_order"],
         "stock_identity": report["stock_identity"],
         "file_ids": report["file_ids"],
+        "model_residency": report["model_residency"],
         "cities": report["cities"],
         "spatial": report["spatial"],
         "collisions": {
@@ -1092,6 +1282,7 @@ def baseline_projection(report: dict[str, object]) -> dict[str, object]:
             )
         },
         "aggregate": report["aggregate"],
+        "model_residency": report["model_residency"],
         "blocker_codes": [blocker["code"] for blocker in report["blockers"]],
         "reviewed_plan_sha256": reviewed_sha256,
     }

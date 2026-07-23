@@ -57,6 +57,57 @@ class NativeWorldV3RuntimeContractTest(unittest.TestCase):
         self.assertIn("v3PayloadBytes = 0", client)
         self.assertGreaterEqual(client.count("V3_MAXIMUM_TOTAL_BYTES - v3PayloadBytes"), 2)
 
+    def test_v3_cache_has_transactional_object_bank_without_widening_byte_cap(self) -> None:
+        cache = (REPOSITORY / "Client/game_sa/CNativeWorldCacheSA.cpp").read_text(encoding="utf-8")
+        self.assertIn("V3_MAX_OBJECTS = 8", cache)
+        self.assertIn("V3_MAX_CACHE_BYTES = 32ULL * 1024ULL * 1024ULL * 1024ULL", cache)
+        self.assertIn("maximumObjects = isV3 ? V3_MAX_OBJECTS : LEGACY_MAX_OBJECTS", cache)
+        self.assertNotIn("4ULL * (MAX_V3_TOTAL_BYTES", cache)
+
+    def test_v3_cache_objects_can_be_leased_for_a_later_aggregate_transaction(self) -> None:
+        cache = (REPOSITORY / "Client/game_sa/CNativeWorldCacheSA.cpp").read_text(encoding="utf-8")
+        acquire = cache[cache.index("bool AcquireExistingNativeWorldCacheLease") :]
+        self.assertIn("const bool isV3 = request.format == 3", acquire)
+        self.assertNotIn("request.format == 3 ||", acquire)
+        self.assertIn("(!isV3 && request.img.name != CACHED_IMG_FILE)", acquire)
+
+    def test_native_pack_streaming_floor_covers_both_channel_halves(self) -> None:
+        source = (REPOSITORY / "Client/game_sa/CNativeWorldPackSA.cpp").read_text(encoding="utf-8")
+        function = source[source.index("unsigned int CNativeWorldPackManagerSA::GetRequiredStreamingBufferSizeBlocks") :]
+        function = function[: function.index("void CNativeWorldPackManagerSA::LogStreamingBufferClamp")]
+        self.assertIn("static_cast<uint64_t>(Pack().largestImgEntryBlocks) + 1", function)
+        self.assertIn("totalBlocks = perChannelBlocks * 2", function)
+        self.assertIn("totalBlocks > std::numeric_limits<unsigned int>::max()", function)
+        for largest, expected in ((1, 4), (2, 4), (3, 8), (65_535, 131_072)):
+            per_channel = (largest + 1) & ~1
+            self.assertEqual(expected, per_channel * 2)
+
+    def test_native_physical_model_slots_are_hidden_from_mta_model_apis(self) -> None:
+        game_api = (REPOSITORY / "Client/sdk/game/CGame.h").read_text(encoding="utf-8")
+        game_sa = (REPOSITORY / "Client/game_sa/CGameSA.cpp").read_text(encoding="utf-8")
+        pack = (REPOSITORY / "Client/game_sa/CNativeWorldPackSA.cpp").read_text(encoding="utf-8")
+        manager = (REPOSITORY / "Client/mods/deathmatch/logic/CClientModelManager.cpp").read_text(encoding="utf-8")
+        self.assertIn("NATIVE_WORLD_MODEL_ARENA_FIRST = 20000", game_api)
+        self.assertIn("NATIVE_WORLD_MODEL_ARENA_LAST = 29999", game_api)
+        self.assertIn("IsNativeWorldModelIdReserved(uint32_t modelId) const", game_api)
+        self.assertIn("CNativeWorldPackManagerSA::IsModelIdReserved(modelId)", game_sa)
+        self.assertIn("modelId >= NATIVE_WORLD_MODEL_ARENA_FIRST", pack)
+        self.assertIn("modelId <= NATIVE_WORLD_MODEL_ARENA_LAST", pack)
+        self.assertIn("std::atomic_bool                    g_nativeModelSlotsReserved", pack)
+        self.assertIn("g_nativeModelSlotsReserved.load(std::memory_order_acquire)", pack)
+        self.assertNotIn("if (!g_pack || g_state", pack[pack.index("bool CNativeWorldPackManagerSA::IsModelIdReserved") :])
+        self.assertGreaterEqual(manager.count("IsNativeWorldModelIdReserved"), 3)
+        allocator = manager[
+            manager.index("int CClientModelManager::GetFirstFreeModelID")
+            : manager.index("int CClientModelManager::GetFreeTxdModelID")
+        ]
+        resolver = manager[
+            manager.index("bool CClientModelManager::ResolveModelID")
+            : manager.index("const SServerModelDefinition*", manager.index("bool CClientModelManager::ResolveModelID"))
+        ]
+        self.assertIn("continue;", allocator)
+        self.assertIn("return false;", resolver)
+
 
 if __name__ == "__main__":
     unittest.main()

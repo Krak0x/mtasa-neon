@@ -201,13 +201,19 @@ IDs/names/GTA uppercase keys, proves FileID boundaries, calculates
 store/pool/memory/streaming/cache budgets and emits the complete VC/LC LOD
 dependency graph. It never builds or publishes a pack and never mutates GTA.
 
-The current plan is intentionally blocked: the four cities occupy
-20,000..31,836 and leave only 163 IDs rather than the documented 4,096-model
-future-city reserve; 3,038 streamed-IPL LOD links need registrar-owned entity
-indices; all-city building residency exceeds 32,000; and QuadTreeNode
-concurrency is not statically proved. Four city objects would also consume all
-four current cache object slots, leaving no transactional replacement bank.
-The current native-pack streaming clamp also supplies only one channel's IMG
-block floor to an API that divides a total buffer between two channels, and
-RenderWare residency still needs runtime high-water proof. These are activation
-requirements, not reasons to inflate constants inside the planner.
+The permanent contiguous plan is intentionally blocked: its Carcer tail enters
+MTA's logical model namespace at 30,000, and 11,837 variants cannot retain the
+required future reserve. Activation instead uses typed pack-local logical
+identities and a generation-fenced physical arena at 20,000..29,999. The worst
+current two-city transition leaves 2,705 physical slots; the largest current
+city plus a 4,096-variant future working set leaves 2,102.
+
+The remaining activation blockers are concrete runtime mechanisms: exclude
+the arena from every MTA allocator and script mutation, remap IPL/COL buffers
+before GTA consumes them, own two reusable VC/LC LOD entity-index arrays,
+prove building/QuadTree overlap high-water, and measure RenderWare residency.
+The v3 cache now has an eight-object double bank for one complete rollover;
+safe reclamation of later inactive generations remains to implement. The
+native streaming floor covers both channel halves in source, pending build and
+runtime validation. These are activation requirements, not reasons to inflate
+constants inside the planner.

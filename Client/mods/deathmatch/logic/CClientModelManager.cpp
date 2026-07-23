@@ -50,6 +50,11 @@ bool CClientModelManager::Remove(const std::shared_ptr<CClientModel>& pModel)
 {
     int modelId = pModel->GetModelID();
 
+    // A native-world generation owns its physical slots until its retirement
+    // fence completes. Resource cleanup must not tear down those model infos.
+    if (modelId >= 0 && g_pGame->IsNativeWorldModelIdReserved(static_cast<std::uint32_t>(modelId)))
+        return false;
+
     // Server registry slots are process-owned. A client resource must not be able
     // to invalidate the mapping used by network entities through engineFreeModel.
     if (m_ServerModelByRuntime.find(static_cast<std::uint16_t>(modelId)) != m_ServerModelByRuntime.end())
@@ -78,6 +83,9 @@ int CClientModelManager::GetFirstFreeModelID(void)
     const unsigned int uiMaxModelID = g_pGame->GetBaseIDforTXD();
     for (unsigned int i = 0; i < uiMaxModelID; i++)
     {
+        if (g_pGame->IsNativeWorldModelIdReserved(i))
+            continue;
+
         CModelInfo* pModelInfo = g_pGame->GetModelInfo(i, true);
         if (!pModelInfo->IsValid())
         {
@@ -343,6 +351,11 @@ bool CClientModelManager::ResolveModelID(std::uint32_t modelId, std::uint16_t& r
     // GTA model/file IDs stop below the server registry range. Rejecting an
     // unknown registry ID here prevents an out-of-bounds native lookup.
     if (suppliedModelId >= SERVER_MODEL_ID_MIN)
+        return false;
+
+    // Physical native-world slots are implementation details. Letting scripts
+    // address them would permit replacement or streaming mutation mid-epoch.
+    if (g_pGame->IsNativeWorldModelIdReserved(suppliedModelId))
         return false;
 
     runtimeModelId = suppliedModelId;

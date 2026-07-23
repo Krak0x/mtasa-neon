@@ -160,6 +160,12 @@ struct SNativeWorldTransportPublishResult
     std::string error;
 };
 
+// Physical GTA slots owned by the native-world registrar. These are not MTA
+// logical model IDs and are unavailable to dynamic allocation while any
+// native-world activation is prepared or active.
+constexpr uint32_t NATIVE_WORLD_MODEL_ARENA_FIRST = 20000;
+constexpr uint32_t NATIVE_WORLD_MODEL_ARENA_LAST = 29999;
+
 class __declspec(novtable) CGame
 {
     typedef std::unique_ptr<CAnimBlendAssocGroup> AssocGroup_type;
@@ -389,4 +395,9 @@ public:
     virtual bool WasFileCutsceneSkipped() const = 0;
     virtual bool SkipFileCutscene() = 0;
     virtual bool DeleteFileCutscene() = 0;
+
+    // Native-world physical slots belong to the process registrar, not to the
+    // MTA logical-model registry or script replacement APIs. Keep this query
+    // behind Game SA so client.dll never duplicates activation state.
+    virtual bool IsNativeWorldModelIdReserved(uint32_t modelId) const = 0;
 };

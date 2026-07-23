@@ -183,6 +183,11 @@ public:
 
     static SNativeWorldTransportPublishResult PublishTransportOffer(const SNativeWorldTransportOffer& offer);
 
+    // Reports process-owned physical model slots while a prepared, committing,
+    // or active generation owns them. A reversible refusal may release them
+    // only after proving that no native mutation survived its rollback.
+    static bool IsModelIdReserved(unsigned int modelId);
+
     // Keeps lifecycle-sensitive diagnostics in one place and prefixes them
     // with the active descriptor's stable log tag.
     static void LogStreamingBufferClamp(unsigned int requestedBlocks, unsigned int effectiveBlocks, unsigned int requiredBlocks);

@@ -17,6 +17,9 @@ from plan_native_world_v3 import (  # noqa: E402
     FUTURE_CITY_MODEL_RESERVE,
     MODEL_ID_FIRST,
     MODEL_ID_LAST,
+    NATIVE_MODEL_ARENA_CAPACITY,
+    NATIVE_MODEL_ARENA_FIRST,
+    NATIVE_MODEL_ARENA_LAST,
     SizedMember,
     baseline_projection,
     boundary_proofs,
@@ -100,6 +103,34 @@ class FrozenCorpusPlannerTest(unittest.TestCase):
         self.assertEqual(43_015, self.report["capacity"]["building_all_city_resident"]["projected"])
         self.assertEqual(21_641, self.report["capacity"]["building_mutually_exclusive_city"]["projected"])
 
+    def test_generation_fenced_model_arena_fits_city_transitions_and_future_working_set(self) -> None:
+        residency = self.report["model_residency"]
+        self.assertEqual(
+            [NATIVE_MODEL_ARENA_FIRST, NATIVE_MODEL_ARENA_LAST],
+            residency["physical_arena"],
+        )
+        self.assertEqual(NATIVE_MODEL_ARENA_CAPACITY, residency["physical_capacity"])
+        self.assertEqual(
+            {"cities": ["vice-city", "carcer-city"], "required_slots": 7_295},
+            residency["worst_current_transition"],
+        )
+        self.assertEqual(2_705, residency["worst_current_transition_remaining"])
+        self.assertEqual(7_898, residency["largest_current_plus_future_slots"])
+        self.assertEqual(2_102, residency["largest_current_plus_future_remaining"])
+        self.assertEqual(8_192, residency["same_city_generation_rollover_max"])
+        self.assertEqual(1_808, residency["same_city_generation_rollover_remaining"])
+        self.assertEqual(2, residency["maximum_concurrent_working_sets"])
+        self.assertIn("XOR", residency["concurrency_rule"])
+        self.assertEqual([0, 19_999], residency["mta_dynamic_allocator_range"])
+        self.assertFalse(residency["permanent_global_assignment"])
+        self.assertTrue(residency["generation_fence_required"])
+        lod = residency["lod_anchor_policy"]
+        self.assertEqual(["vice-city", "liberty-city"], lod["entity_index_arrays_process_lifetime"])
+        self.assertEqual(2, lod["required_additional_arrays"])
+        self.assertEqual(2_323, lod["global_pinned_anchor_variants_rejected"])
+        self.assertEqual(3_914, lod["maximum_city_scratch_entries"])
+        self.assertTrue(lod["anchors_are_city_scoped"])
+
     def test_planner_fails_closed_on_known_activation_gaps(self) -> None:
         self.assertEqual("blocked", self.report["status"])
         blockers = {record["code"]: record for record in self.report["blockers"]}
@@ -110,13 +141,23 @@ class FrozenCorpusPlannerTest(unittest.TestCase):
         self.assertEqual(3_038, blockers["streamed-ipl-lod-bootstrap"]["evidence"]["links"])
         self.assertIn("building-concurrency", blockers)
         self.assertIn("quad-tree-concurrency", blockers)
-        self.assertIn("cache-rollover-capacity", blockers)
-        self.assertIn("streaming-double-buffer-floor", blockers)
+        self.assertIn("mta-model-namespace-collision", blockers)
+        self.assertEqual([30_000, 31_836], blockers["mta-model-namespace-collision"]["evidence"]["overlap"])
+        self.assertIn("native-model-residency-binder", blockers)
+        self.assertIn("mta-dynamic-model-headroom-unproved", blockers)
+        self.assertIn("cache-generation-reclamation", blockers)
+        self.assertNotIn("cache-rollover-capacity", blockers)
+        self.assertNotIn("streaming-double-buffer-floor", blockers)
         self.assertIn("renderware-ram-high-water-unproved", blockers)
         self.assertIn("stock-identity-unproved", blockers)
         self.assertEqual(1_081, self.report["cities"][1]["lod_dependencies"]["cross_group_links"])
+        self.assertEqual(1_064, self.report["cities"][1]["lod_dependencies"]["unique_target_model_variants"])
+        self.assertEqual(2_162, self.report["cities"][1]["lod_dependencies"]["scratch_entries"])
         self.assertEqual(1_956, self.report["cities"][2]["lod_dependencies"]["cross_group_links"])
         self.assertEqual(1, self.report["cities"][2]["lod_dependencies"]["same_group_links"])
+        self.assertEqual(1_259, self.report["cities"][2]["lod_dependencies"]["unique_target_model_variants"])
+        self.assertEqual(3_914, self.report["cities"][2]["lod_dependencies"]["scratch_entries"])
+        self.assertEqual(1, self.report["cities"][2]["lod_dependencies"]["maximum_children_per_target"])
         self.assertEqual(6, len(self.report["spatial"]["pairwise_city_bounds"]))
         self.assertTrue(all(city["spatial_group_bounds"] for city in self.report["cities"]))
         streaming = self.report["budgets"]["streaming"]
@@ -124,6 +165,17 @@ class FrozenCorpusPlannerTest(unittest.TestCase):
             streaming["minimum_per_channel_blocks"] * 2,
             streaming["minimum_total_double_buffer_blocks"],
         )
+        cache = self.report["budgets"]["disk_and_cache"]
+        self.assertEqual(8, cache["cache_object_limit"])
+        self.assertTrue(cache["transactional_replacement_bank_fits"])
+        self.assertFalse(cache["continuous_generation_rotation_supported"])
+        self.assertTrue(self.report["postconditions"]["native_arena_precedes_mta_logical_namespace"])
+        self.assertTrue(self.report["postconditions"]["worst_current_transition_fits_native_arena"])
+        self.assertTrue(self.report["postconditions"]["largest_current_plus_future_fits_native_arena"])
+        self.assertTrue(self.report["postconditions"]["future_generation_rollover_fits_native_arena"])
+        self.assertTrue(self.report["postconditions"]["lod_entity_index_arrays_fit_stock_capacity"])
+        self.assertTrue(self.report["postconditions"]["lod_scratch_fits_stock_capacity"])
+        self.assertTrue(self.report["postconditions"]["lod_children_per_target_supported"])
 
     def test_pack_scoped_archive_names_do_not_hide_global_member_collisions(self) -> None:
         self.assertEqual([], self.report["collisions"]["generated_identity"])
@@ -136,6 +188,7 @@ class FrozenCorpusPlannerTest(unittest.TestCase):
         self.assertEqual(64, len(projection["reviewed_plan_sha256"]))
         self.assertNotIn("group_edges", projection["cities"][1]["lod_dependencies"])
         self.assertIn("future-model-reserve", projection["blocker_codes"])
+        self.assertEqual([20_000, 29_999], projection["model_residency"]["physical_arena"])
 
 
 if __name__ == "__main__":

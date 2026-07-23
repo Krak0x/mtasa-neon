@@ -642,14 +642,20 @@ namespace
 
     bool CheckTransportCacheQuota(const SCachePaths& paths, const SNativeWorldCacheRequestSA& request, std::string& error)
     {
-        constexpr size_t        MAX_OBJECTS = 4;
+        constexpr size_t        LEGACY_MAX_OBJECTS = 4;
+        constexpr size_t        V3_MAX_OBJECTS = 8;
         constexpr std::uint64_t LEGACY_MAX_TOTAL_BYTES = 1024ULL * 1024ULL * 1024ULL;
-        constexpr std::uint64_t V3_MAX_CACHE_BYTES = 4ULL * (MAX_V3_TOTAL_BYTES + 64ULL * 1024ULL);
+        // Eight objects provide an active and replacement bank for four city
+        // packs. Keep the independent 32 GiB aggregate byte ceiling: the
+        // object count permits transactional rollover but does not authorize
+        // eight worst-case 8 GiB payloads.
+        constexpr std::uint64_t V3_MAX_CACHE_BYTES = 32ULL * 1024ULL * 1024ULL * 1024ULL;
         constexpr std::uint64_t LEGACY_MAX_IDE_BYTES = 1024ULL * 1024ULL;
         constexpr std::uint64_t V3_MAX_IDE_BYTES = 8ULL * 1024ULL * 1024ULL;
         constexpr std::uint64_t MINIMUM_V3_FREE_MARGIN = 512ULL * 1024ULL * 1024ULL;
         constexpr std::uint64_t MINIMUM_LEGACY_FREE_MARGIN = 64ULL * 1024ULL * 1024ULL;
         const bool              isV3 = request.format == 3;
+        const size_t            maximumObjects = isV3 ? V3_MAX_OBJECTS : LEGACY_MAX_OBJECTS;
         const std::uint64_t     maximumIdeBytes = isV3 ? V3_MAX_IDE_BYTES : LEGACY_MAX_IDE_BYTES;
         const std::uint64_t     maximumCacheBytes = isV3 ? V3_MAX_CACHE_BYTES : LEGACY_MAX_TOTAL_BYTES;
 
@@ -846,7 +852,7 @@ namespace
             }
             else if (valid && !addObjectBytes(FileSize(object.img)))
                 valid = false;
-            if (!valid || objects >= MAX_OBJECTS || bytes > maximumCacheBytes)
+            if (!valid || objects >= maximumObjects || bytes > maximumCacheBytes)
             {
                 error = "native world cache transport quota is exhausted";
                 valid = false;
@@ -1235,9 +1241,10 @@ bool AcquireExistingNativeWorldCacheLease(const SNativeWorldCacheRequestSA& requ
         error = "native-world cache lease output is already active";
         return false;
     }
-    if (!audit || request.format == 3 || !IsValidRequestIdentity(request) || !HasValidCacheRequestFiles(request) ||
-        request.manifestFileName != CACHED_MANIFEST_FILE || request.ide.name != CACHED_IDE_FILE || request.img.name != CACHED_IMG_FILE ||
-        !IsLowerSha256(request.contentId) || !IsLowerHex(ticketId, 32) || GenerateNativeWorldContentId(request) != request.contentId ||
+    const bool isV3 = request.format == 3;
+    if (!audit || !IsValidRequestIdentity(request) || !HasValidCacheRequestFiles(request) || request.manifestFileName != CACHED_MANIFEST_FILE ||
+        request.ide.name != CACHED_IDE_FILE || (!isV3 && request.img.name != CACHED_IMG_FILE) || !IsLowerSha256(request.contentId) ||
+        !IsLowerHex(ticketId, 32) || GenerateNativeWorldContentId(request) != request.contentId ||
         BuildCanonicalManifest(request).size() > request.maximumManifestBytes)
     {
         error = "existing native-world cache selection identity is invalid";

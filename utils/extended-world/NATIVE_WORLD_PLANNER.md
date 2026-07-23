@@ -7,9 +7,10 @@ request an authorization ticket.
 
 The planner binds the frozen `map_data.lua` inputs for Bullworth, Vice City,
 Liberty City and Carcer City. In canonical order it derives the same
-source-first spatial variants and short namespaces as the v3 builder, assigns
-one contiguous aggregate DFF range, checks stock and generated identities, and
-reports every capacity and budget with its authority.
+source-first spatial variants and short namespaces as the v3 builder,
+diagnoses the former contiguous aggregate DFF range, checks stock and
+generated identities, and reports every capacity and budget with its
+authority.
 
 ## Current result
 
@@ -23,16 +24,36 @@ The deterministic allocation is:
 | Carcer City | `cc` | 3,450 | 3,493 | 28,344..31,836 |
 
 The four cities require 11,837 model variants, including 919 cross-spatial
-duplicates. Only 163 IDs remain through 31,999. The documented reserve is one
-maximum-size v3 city, or 4,096 variants, so the current compact range is short
-by 3,933 IDs.
+duplicates. A permanent one-ID-per-variant assignment is invalid for two
+independent reasons: only 163 IDs remain through 31,999, and Carcer's
+30,000..31,836 tail collides with MTA's logical server-model namespace and the
+30,000..30,151 clothes pseudo-model range.
 
-The stock installation contains 5,168 IDE-free IDs below 20,000. They are
-reported but never allocated. An IDE scan does not prove that a hole is free
-from hardcoded model semantics, special ranges, MTA dynamic-model allocation
-or signed-ID consumers. Even the apparently contiguous range after the highest
-stock IDE ID, 18,631..31,999, would leave only 1,532 IDs after these four
-cities. It therefore fails the reserve policy before its safety is considered.
+Activation therefore separates logical identity from GTA residency. A model
+is identified by `(content ID, pack ID, pack-local model ID)` and is bound for
+one generation into the physical arena 20,000..29,999. The arena contains
+10,000 slots and is never exposed as MTA logical IDs. The worst current
+two-city transition is Vice City plus Carcer: 7,295 slots, leaving 2,705. The
+largest current city plus a 4,096-variant future working set needs 7,898
+slots, leaving 2,102.
+
+A same-city old/new rollover of two maximum future generations needs 8,192
+slots and leaves 1,808. The registrar admits at most two concurrent working
+sets: a city transition and a generation rollover are mutually exclusive, and
+a third set is refused before mutation.
+
+This is a residency reserve, not permission to recycle IDs by distance alone.
+An old physical slot remains owned until its IPL entities and LOD links are
+gone, streaming channels and request lists no longer reference it, its
+RenderWare/COL/TXD references are released, and a generation fence completes.
+
+The stock installation contains 5,168 IDE-free IDs below 20,000. Once the
+native arena is active, MTA's dynamic allocator is confined to that pre-arena
+space. The count is observational only: high-water tests must prove that
+resources and server-defined models retain sufficient headroom. Every
+allocator and script-facing model mutation must also consult the central
+native-slot predicate; merely changing `GetFirstFreeModelID()` is
+insufficient.
 
 The generated set contains 13,404 global identities: 11,837 DFF names, 1,325
 TXD names, 121 COL names and 121 IPL names. The frozen namespaces have no
@@ -78,7 +99,7 @@ hide a later gap or overlap. DAT, IFP, RRR and SCM keep their stock spans;
 paths/nodes, DAT expansion, streamed SCM, new IFP/RRR and population remain
 outside this checkpoint.
 
-## LOD blocker
+## LOD and generation blocker
 
 Vice City has 1,081 non-negative LOD links and Liberty City has 1,957. All
 Vice City links and 1,956 Liberty City links cross IPL groups; one Liberty City
@@ -86,9 +107,18 @@ link remains within its group. The report emits every group dependency edge.
 
 This is not an index-width limit. A standalone streamed IPL currently has
 `staticIdx = -1`, while GTA's LOD resolver expects a registrar-owned entity
-index array and a valid static IPL index. The activation checkpoint must own
-those arrays, cross-group load dependencies and their lifetimes. Until then the
-planner rejects activation instead of rewriting or discarding the 3,038 links.
+index array and a valid static IPL index. Vice City needs 1,081 anchors and
+Liberty City needs 1,957.
+
+The registrar will allocate one entity-index array for each of those cities
+once per process, then reuse its contents by generation. Anchors are loaded
+before children and removed after children; they are not permanently resident
+when their city is inactive. The current stock load uses 30 of the 40 pointer
+slots, so the runtime must prove that two more remain. The scratch loader must
+also prove `anchors + linked children <= 4,096`: Vice City needs 2,162 and
+Liberty City needs 3,914. Until the bootstrap, buffer remap, and child-first
+unload ordering exist, the planner rejects activation instead of rewriting or
+discarding the 3,038 links.
 
 ## Memory, streaming and disk budgets
 
@@ -106,13 +136,12 @@ cache transaction headroom. It emits every source city/group bound and
 pairwise gap; activation must repeat that analysis after final world
 translation.
 
-The current native-pack buffer clamp has a latent unit mismatch:
-`GetRequiredStreamingBufferSizeBlocks()` returns one even member-sized block
-count, while `SetStreamingBufferSize()` treats its argument as the total
-allocation and splits it between two channels. For the largest current Carcer
-member, each channel needs 25,060 blocks and the total must be at least 50,120
-blocks (102,645,760 bytes). The planner blocks activation until the runtime
-returns the total double-buffer floor.
+`SetStreamingBufferSize()` treats its argument as the total allocation and
+splits it between two channels. The activation work now returns both channel
+halves: for the largest current Carcer member, each channel needs 25,060
+blocks and the total floor is 50,120 blocks (102,645,760 bytes). The source
+contract test pins the unit and overflow checks; this still needs a client
+build and runtime high-water validation.
 
 RenderWare object graphs, allocator overhead and simultaneous CPU/GPU residency
 cannot be proven from serialized corpus bytes. They remain an explicit
@@ -124,11 +153,12 @@ and COL duplication, COL2 header growth and exact IPL sizes, but does not claim
 to replace canonical TXD duplicate removal or the pinned librw serialization.
 Emitted v3 manifests remain the disk and archive authority for activation.
 
-The current cache retains four v3 objects, exactly the number of planned city
-packs. That leaves no second bank for transactional replacement or rollback.
-The planner therefore requires a reviewed eight-object production target
-before activation; the 32 GiB byte cap itself has ample room for these corpus
-sizes.
+The activation work raises only the v3 cache object limit from four to eight,
+providing an active four-city bank plus a four-city replacement bank. The
+independent 32 GiB byte cap is unchanged. An aggregate manifest, if stored as
+metadata, must not silently consume a payload-object slot. Eight objects allow
+one complete rollover only: safe reclamation of an older, unlocked generation
+is still a blocker before continuous pack rotation can be claimed.
 
 ## Reproduction
 

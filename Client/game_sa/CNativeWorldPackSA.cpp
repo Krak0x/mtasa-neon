@@ -248,11 +248,26 @@ namespace
     bool                                g_authorizedRoute = false;
     SNativeWorldStartupSelection        g_authorizedSelection{};
     CNativeWorldCacheLeaseSA            g_authorizedLease;
+    std::atomic_bool                    g_nativeModelSlotsReserved{false};
+    std::atomic_uint                    g_reservedPackModelFirst{0};
+    std::atomic_uint                    g_reservedPackModelLast{0};
 
     const SNativeWorldPackDescriptorSA& Pack()
     {
         assert(g_pack);
         return *g_pack;
+    }
+
+    void PublishNativeModelSlotReservation()
+    {
+        g_reservedPackModelFirst.store(Pack().modelFirst, std::memory_order_relaxed);
+        g_reservedPackModelLast.store(Pack().modelLast, std::memory_order_relaxed);
+        g_nativeModelSlotsReserved.store(true, std::memory_order_release);
+    }
+
+    void ReleaseNativeModelSlotReservation()
+    {
+        g_nativeModelSlotsReserved.store(false, std::memory_order_release);
     }
 
     const SNativeWorldPackPolicySA* SelectEnabledPolicy()
@@ -2784,6 +2799,7 @@ namespace
         {
             RestoreTxdFindCache(ide);
             ReleaseRegistrationLease();
+            ReleaseNativeModelSlotReservation();
             g_state = EState::Refused;
             MarkRegistrationRefused();
             Log("registrar=refused reason=%s stock-world-remains-active", error.c_str());
@@ -2802,6 +2818,7 @@ namespace
         {
             RestoreTxdFindCache(ide);
             ReleaseRegistrationLease();
+            ReleaseNativeModelSlotReservation();
             g_state = EState::Refused;
             MarkRegistrationRefused();
             Log("registrar=refused reason=AddArchive-failed-before-pool-mutation stock-world-remains-active");
@@ -2812,6 +2829,7 @@ namespace
             g_streaming->RemoveArchive(archiveId);
             RestoreTxdFindCache(ide);
             ReleaseRegistrationLease();
+            ReleaseNativeModelSlotReservation();
             g_state = EState::Refused;
             MarkRegistrationRefused();
             Log("registrar=refused reason=unexpected-archive-id expected=%u actual=%u rollback=complete", Pack().expectedArchiveId, archiveId);
@@ -2851,6 +2869,7 @@ namespace
                 // this failed pre-IDE allocation indistinguishable from no run.
                 rollbackTxdAllocations();
                 ReleaseRegistrationLease();
+                ReleaseNativeModelSlotReservation();
                 g_state = EState::Refused;
                 MarkRegistrationRefused();
                 Log("registrar=refused reason=TXD-allocation-plan-mismatch name=%s expected=%u actual=%d rollback=complete restoredFirstFree=%d", name.c_str(),
@@ -2864,6 +2883,7 @@ namespace
             const int actualCursor = txdPool->m_nFirstFree;
             rollbackTxdAllocations();
             ReleaseRegistrationLease();
+            ReleaseNativeModelSlotReservation();
             g_state = EState::Refused;
             MarkRegistrationRefused();
             Log("registrar=refused reason=TXD-allocation-cursor-mismatch expected=%u actual=%d rollback=complete restoredFirstFree=%d", expectedFinalCursor,
@@ -3282,6 +3302,7 @@ void CNativeWorldPackManagerSA::HandleStartupSelection(eGameVersion gameVersion,
     g_authorizedRoute = true;
     g_authorizedSelection = selection;
     g_authorizedLease = std::move(lease);
+    PublishNativeModelSlotReservation();
     g_state = EState::Prepared;
     SharedUtil::WriteDebugEvent(
         SString("[NativeWorldAuthorization] state=checkpoint-c-prepared ticket=%s nativeWrites=yes hooks=0 archives=0 poolMutations=0 "
@@ -3350,6 +3371,7 @@ void CNativeWorldPackManagerSA::CancelAuthorizedActivation()
     if (!g_authorizedRoute || g_state == EState::Active)
         return;
     g_authorizedLease.Release();
+    ReleaseNativeModelSlotReservation();
     if (g_state != EState::Refused)
         g_state = EState::Refused;
 }
@@ -3437,6 +3459,7 @@ void CNativeWorldPackManagerSA::InstallFromEnvironment(CStreamingSA* streaming)
         g_manifest.manifestSha256.c_str(), g_activeDirectory.c_str());
 
     g_streaming = streaming;
+    PublishNativeModelSlotReservation();
     HookInstallCall(LOAD_CD_DIRECTORY_CALL, reinterpret_cast<DWORD>(&LoadCdDirectoryHook));
     g_state = EState::Hooked;
     Log("registrar=hooked call=0x%08X pack=%s manifest=%s runtimeFiles=%s,%s", LOAD_CD_DIRECTORY_CALL, Pack().directoryPath, g_policy->runtimeManifestFileName,
@@ -3657,15 +3680,31 @@ SNativeWorldTransportPublishResult CNativeWorldPackManagerSA::PublishTransportOf
     return result;
 }
 
+bool CNativeWorldPackManagerSA::IsModelIdReserved(unsigned int modelId)
+{
+    if (!g_nativeModelSlotsReserved.load(std::memory_order_acquire))
+        return false;
+
+    const bool activePackSlot =
+        modelId >= g_reservedPackModelFirst.load(std::memory_order_relaxed) && modelId <= g_reservedPackModelLast.load(std::memory_order_relaxed);
+    const bool aggregateArenaSlot = modelId >= NATIVE_WORLD_MODEL_ARENA_FIRST && modelId <= NATIVE_WORLD_MODEL_ARENA_LAST;
+    return activePackSlot || aggregateArenaSlot;
+}
+
 unsigned int CNativeWorldPackManagerSA::GetRequiredStreamingBufferSizeBlocks()
 {
     if (g_state != EState::Active)
         return 0;
 
-    // GTA splits the allocation into two equal halves. The descriptor owns the
-    // reviewed maximum entry; derive the process floor instead of duplicating
-    // an independently editable rounded constant.
-    return (Pack().largestImgEntryBlocks + 1) & ~1U;
+    // SetStreamingBufferSize interprets this value as the total allocation and
+    // then splits it into two equal channel buffers. Each half must hold the
+    // reviewed largest entry, so returning only one rounded entry here would
+    // silently halve the usable per-channel capacity.
+    const uint64_t perChannelBlocks = (static_cast<uint64_t>(Pack().largestImgEntryBlocks) + 1) & ~uint64_t{1};
+    const uint64_t totalBlocks = perChannelBlocks * 2;
+    if (totalBlocks > std::numeric_limits<unsigned int>::max())
+        Fatal("reviewed streaming-buffer floor exceeds the native block-count width");
+    return static_cast<unsigned int>(totalBlocks);
 }
 
 void CNativeWorldPackManagerSA::LogStreamingBufferClamp(unsigned int requestedBlocks, unsigned int effectiveBlocks, unsigned int requiredBlocks)

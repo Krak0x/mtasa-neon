@@ -20,12 +20,14 @@
   },
   "blocker_codes": [
     "future-model-reserve",
+    "mta-model-namespace-collision",
+    "native-model-residency-binder",
+    "mta-dynamic-model-headroom-unproved",
     "streamed-ipl-lod-bootstrap",
     "building-concurrency",
     "quad-tree-concurrency",
-    "cache-rollover-capacity",
-    "streaming-double-buffer-floor",
-    "renderware-ram-high-water-unproved"
+    "renderware-ram-high-water-unproved",
+    "cache-generation-reclamation"
   ],
   "cities": [
     {
@@ -70,7 +72,12 @@
       "lod_dependencies": {
         "cross_group_links": 0,
         "links": 0,
+        "maximum_children_per_target": 0,
+        "native_targets": 0,
         "same_group_links": 0,
+        "scratch_entries": 0,
+        "target_groups": 0,
+        "unique_target_model_variants": 0,
         "unique_targets": 0
       },
       "lod_group_edges_sha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
@@ -126,7 +133,12 @@
       "lod_dependencies": {
         "cross_group_links": 1081,
         "links": 1081,
+        "maximum_children_per_target": 1,
+        "native_targets": 0,
         "same_group_links": 0,
+        "scratch_entries": 2162,
+        "target_groups": 9,
+        "unique_target_model_variants": 1064,
         "unique_targets": 1081
       },
       "lod_group_edges_sha256": "76337f66f8f55ec49693f3f60c18a16dcdd6c4c10688df9b781e5adcd848106c",
@@ -182,7 +194,12 @@
       "lod_dependencies": {
         "cross_group_links": 1956,
         "links": 1957,
+        "maximum_children_per_target": 1,
+        "native_targets": 0,
         "same_group_links": 1,
+        "scratch_entries": 3914,
+        "target_groups": 12,
+        "unique_target_model_variants": 1259,
         "unique_targets": 1957
       },
       "lod_group_edges_sha256": "b7019e9fea1628f74b3bebbd8df165ec240aabe1dde828f66d755f0a2a686c75",
@@ -238,7 +255,12 @@
       "lod_dependencies": {
         "cross_group_links": 0,
         "links": 0,
+        "maximum_children_per_target": 0,
+        "native_targets": 0,
         "same_group_links": 0,
+        "scratch_entries": 0,
+        "target_groups": 0,
+        "unique_target_model_variants": 0,
         "unique_targets": 0
       },
       "lod_group_edges_sha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
@@ -378,7 +400,100 @@
     "total": 42341
   },
   "mode": "read-only-no-mutation",
-  "reviewed_plan_sha256": "09edb066992cd21050ae42d2c8aaefd9785f0b982b01c26268ff09b399deb19d",
+  "model_residency": {
+    "city_variant_counts": {
+      "bullworth": 1054,
+      "carcer-city": 3493,
+      "liberty-city": 3488,
+      "vice-city": 3802
+    },
+    "current_transition_pairs": [
+      {
+        "cities": [
+          "bullworth",
+          "vice-city"
+        ],
+        "required_slots": 4856
+      },
+      {
+        "cities": [
+          "bullworth",
+          "liberty-city"
+        ],
+        "required_slots": 4542
+      },
+      {
+        "cities": [
+          "bullworth",
+          "carcer-city"
+        ],
+        "required_slots": 4547
+      },
+      {
+        "cities": [
+          "vice-city",
+          "liberty-city"
+        ],
+        "required_slots": 7290
+      },
+      {
+        "cities": [
+          "vice-city",
+          "carcer-city"
+        ],
+        "required_slots": 7295
+      },
+      {
+        "cities": [
+          "liberty-city",
+          "carcer-city"
+        ],
+        "required_slots": 6981
+      }
+    ],
+    "concurrency_rule": "city-transition XOR generation-rollover; a third working set is refused",
+    "future_city_working_set": 4096,
+    "generation_fence_required": true,
+    "identity": "content-id + pack-id + pack-local-model-id",
+    "largest_current_plus_future_remaining": 2102,
+    "largest_current_plus_future_slots": 7898,
+    "lod_anchor_policy": {
+      "anchors_are_city_scoped": true,
+      "entity_index_array_capacity": 40,
+      "entity_index_arrays_process_lifetime": [
+        "vice-city",
+        "liberty-city"
+      ],
+      "global_pinned_anchor_variants_rejected": 2323,
+      "maximum_city_scratch_entries": 3914,
+      "observed_stock_arrays": 30,
+      "required_additional_arrays": 2,
+      "scratch_entity_capacity": 4096
+    },
+    "mta_dynamic_allocator_range": [
+      0,
+      19999
+    ],
+    "maximum_concurrent_working_sets": 2,
+    "observed_ide_free_slots_below_arena": 5168,
+    "permanent_global_assignment": false,
+    "physical_arena": [
+      20000,
+      29999
+    ],
+    "physical_capacity": 10000,
+    "same_city_generation_rollover_max": 8192,
+    "same_city_generation_rollover_remaining": 1808,
+    "worst_current_transition": {
+      "cities": [
+        "vice-city",
+        "carcer-city"
+      ],
+      "required_slots": 7295
+    },
+    "worst_current_transition_remaining": 2705
+  },
+  "reviewed_plan_sha256": "eeb6ee5f52b2b13fd668f1d5b3a857f1fcc6b6f6e89bfd6fcc162ce45b111d65",
   "schema": 1,
   "source_order": [
     "bullworth",

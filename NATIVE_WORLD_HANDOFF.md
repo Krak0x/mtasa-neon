@@ -958,22 +958,33 @@ The updated checkpoint sequence is:
    identity uniqueness, emits the complete cross-IPL LOD dependency graph,
    pins 31,999/32,000, 39,999/40,000 and 40,511/40,512, and calculates checked
    store/pool/CPU/RAM/VRAM/streaming/disk/cache budgets without writing packs
-   or mutating GTA. The plan correctly remains blocked: only 163 contiguous
-   DFF IDs remain against a 4,096-model future-city reserve, VC/LC need 3,038
+   or mutating GTA. The former permanent assignment is correctly blocked:
+   only 163 contiguous DFF IDs remain and Carcer's 30,000..31,836 tail
+   collides with MTA logical/server models and clothes. The activation design
+   instead uses logical `(content ID, pack ID, pack-local model ID)` keys and a
+   generation-fenced physical arena at 20,000..29,999. The worst current
+   two-city transition leaves 2,705 slots; the largest current city plus a
+   4,096-variant future working set leaves 2,102. A maximum future old/new
+   rollover leaves 1,808, and cannot overlap an inter-city transition: only two
+   working sets may coexist. VC/LC still need 3,038
    registrar-owned LOD links, all-city building residency projects to
-   43,015/32,000 unless spatial exclusion is proved, and QuadTreeNode
-   concurrency has no sound static bound. The four-object cache is also fully
-   consumed by four active city packs and needs a transactional replacement
-   bank. The planner also catches the native-pack streaming-buffer unit
-   mismatch: the current clamp supplies one channel's block count to an API
-   that splits a total allocation into two channels. RenderWare residency
-   remains a high-water requirement beyond the known fixed native-memory lower
-   bound. The 5,168 observed IDE-free IDs below 20,000 are diagnostic only and
-   are never auto-allocated.
+   43,015/32,000 unless spatial exclusion is proved, and QuadTreeNode and
+   RenderWare concurrency need runtime high-water. The v3 cache now has an
+   eight-object double bank for one rollover; safe reclamation of later
+   inactive generations is still required. The streaming-buffer floor covers
+   both channel halves in source, pending build/runtime validation. The 5,168 observed
+   IDE-free IDs below 20,000 are the remaining MTA dynamic-allocation
+   headroom, not proof of safe capacity.
 7. **Transactional multi-city activation.** Register all four imported cities
-   beside San Andreas in one process, then test repeated cross-city streaming,
-   collisions, LODs, D3D reset/minimize, memory pressure, death/respawn,
-   reconnect and resource restart.
+   as one authorized content set. Complete every cache, archive, TXD, pool,
+   entity-array, scratch-buffer and model plan before the first irreversible
+   native bind; before that barrier, roll back globally, and after it, fail
+   stop rather than continue a partial world. Remap IPL/COL model IDs before
+   their native loaders, allocate reusable VC/LC LOD entity arrays, unload
+   children before anchors, and recycle physical slots only after streaming
+   channels and entity/model references cross the generation fence. Then test
+   repeated cross-city streaming, collisions, LODs, D3D reset/minimize, memory
+   pressure, death/respawn, reconnect and resource restart.
 8. **MTA/API/network completion.** Audit logical model-ID width, remaining
    coordinate/streamer bounds, `IsOutOfBounds`, script APIs, serialization,
    protocol capabilities and legacy-client refusal. Build every affected

@@ -855,6 +855,11 @@ SNativeWorldTransportPublishResult CGameSA::PublishNativeWorldTransportOffer(con
     return CNativeWorldPackManagerSA::PublishTransportOffer(offer);
 }
 
+bool CGameSA::IsNativeWorldModelIdReserved(uint32_t modelId) const
+{
+    return CNativeWorldPackManagerSA::IsModelIdReserved(modelId);
+}
+
 eGameVersion CGameSA::FindGameVersion()
 {
     unsigned char ucA = *reinterpret_cast<unsigned char*>(0x748ADD);
