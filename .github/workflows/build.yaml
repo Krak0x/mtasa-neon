@@ -187,6 +187,7 @@ jobs:
 
   linux:
     strategy:
+      fail-fast: false
       matrix:
         include:
           - architecture: x64
@@ -213,6 +214,13 @@ jobs:
 
       - name: Run Build
         run: /docker-entrypoint.sh --arch=${{ matrix.architecture }}
+
+      - name: Prepare TLS certificates
+        run: |
+          apt-get update
+          DEBIAN_FRONTEND=noninteractive apt-get install --reinstall -y --no-install-recommends ca-certificates
+          update-ca-certificates
+          test -r /etc/ssl/certs/ca-certificates.crt
 
       - name: Install server data and resources
         run: |
