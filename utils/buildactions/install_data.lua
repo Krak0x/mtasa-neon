@@ -63,12 +63,15 @@ newaction {
 			return
 		end
 
-		-- Make sure server/x64 directory exists
-		local success, message = os.mkdir(BIN_DIR.."/server/x64")
-		if not success then
-			errormsg("ERROR: Couldn't create server/x64 directory", "\n"..message)
-			os.exit(1)
-			return
+		-- The data action downloads network modules for every supported server
+		-- architecture, including architectures that were not built in this tree.
+		for _, architecture in ipairs({"x64", "arm", "arm64"}) do
+			local success, message = os.mkdir(BIN_DIR.."/server/"..architecture)
+			if not success then
+				errormsg("ERROR: Couldn't create server/"..architecture.." directory", "\n"..message)
+				os.exit(1)
+				return
+			end
 		end
 
 		if os.host() == "windows" then
