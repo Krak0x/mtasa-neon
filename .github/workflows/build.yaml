@@ -188,7 +188,11 @@ jobs:
   linux:
     strategy:
       matrix:
-        architecture: [x64, arm64]
+        include:
+          - architecture: x64
+            launcher: mta-server64
+          - architecture: arm64
+            launcher: mta-server-arm64
     name: linux-${{ matrix.architecture }}
     runs-on: ubuntu-latest
     container:
@@ -196,5 +200,85 @@ jobs:
     steps:
       - uses: actions/checkout@v6
 
+      # Keep local clones CUSTOM, but enable the MTA network/service behavior
+      # required by the Neon server distributed to players.
+      - name: Configure public Neon server build
+        run: |
+          printf '%s\n' \
+            '#pragma once' \
+            '' \
+            '#undef MTASA_VERSION_TYPE' \
+            '#define MTASA_VERSION_TYPE VERSION_TYPE_UNSTABLE' \
+            > Shared/build_overrides.h
+
       - name: Run Build
         run: /docker-entrypoint.sh --arch=${{ matrix.architecture }}
+
+      - name: Install server data and resources
+        run: |
+          utils/premake5 install_data
+          utils/premake5 install_resources
+
+      - name: Package Neon Linux server
+        run: |
+          set -eu
+
+          package="MTA-Neon-Linux-Server-${{ matrix.architecture }}"
+          mkdir -p "$package"
+
+          cp -a "Bin/server/${{ matrix.launcher }}" "$package/"
+          cp -a "Bin/server/${{ matrix.architecture }}" "$package/${{ matrix.architecture }}"
+          cp -a "Bin/server/mods" "$package/mods"
+          cp -a Server/output/LICENSE Server/output/NOTICE Server/output/README "$package/"
+
+          required_files="
+          $package/${{ matrix.launcher }}
+          $package/${{ matrix.architecture }}/core.so
+          $package/${{ matrix.architecture }}/deathmatch.so
+          $package/${{ matrix.architecture }}/xmll.so
+          $package/${{ matrix.architecture }}/dbconmy.so
+          $package/${{ matrix.architecture }}/net.so
+          $package/mods/deathmatch/mtaserver.conf
+          $package/mods/deathmatch/acl.xml
+          "
+          for required_file in $required_files; do
+            if [ ! -f "$required_file" ]; then
+              echo "Linux server package is missing: $required_file" >&2
+              exit 1
+            fi
+          done
+
+          case "${{ matrix.architecture }}" in
+            x64) expected_machine="Advanced Micro Devices X86-64" ;;
+            arm64) expected_machine="AArch64" ;;
+          esac
+          elf_files="
+          $package/${{ matrix.launcher }}
+          $package/${{ matrix.architecture }}/core.so
+          $package/${{ matrix.architecture }}/deathmatch.so
+          $package/${{ matrix.architecture }}/xmll.so
+          $package/${{ matrix.architecture }}/dbconmy.so
+          $package/${{ matrix.architecture }}/net.so
+          "
+          for elf_file in $elf_files; do
+            if ! readelf -h "$elf_file" | grep -F "Machine:" | grep -Fq "$expected_machine"; then
+              echo "Linux server package has the wrong architecture: $elf_file" >&2
+              exit 1
+            fi
+          done
+
+          if [ ! -d "$package/mods/deathmatch/resources" ]; then
+            echo "Linux server package is missing its resources directory" >&2
+            exit 1
+          fi
+
+          chmod +x "$package/${{ matrix.launcher }}"
+          tar -czf "$package.tar.gz" -C "$package" .
+          tar -tzf "$package.tar.gz"
+          sha256sum "$package.tar.gz"
+
+      - uses: actions/upload-artifact@v6
+        with:
+          name: MTA-Neon-Linux-Server-${{ matrix.architecture }}
+          path: MTA-Neon-Linux-Server-${{ matrix.architecture }}.tar.gz
+          if-no-files-found: error
