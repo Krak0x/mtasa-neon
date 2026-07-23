@@ -10,6 +10,8 @@ local mission = {
     rangeHits = {},
     bincoEntered = false,
     bincoExited = false,
+    bincoEntryExit = nil,
+    bincoState = nil,
 }
 
 local function rememberTimer(timer)
@@ -90,11 +92,13 @@ local function restorePlayer(player, snapshot, passed)
     if passed then
         giveWeapon(player, 22, 60, false)
         setElementInterior(player, 0)
+        setCameraInterior(player, 0)
         setElementDimension(player, snapshot.dimension)
         setElementPosition(player, NINES.binco.outsideExit[1], NINES.binco.outsideExit[2], NINES.binco.outsideExit[3])
         setElementRotation(player, 0, 0, NINES.binco.outsideExit[4])
     else
         setElementInterior(player, snapshot.interior)
+        setCameraInterior(player, snapshot.interior)
         setElementDimension(player, snapshot.dimension)
         setElementPosition(player, snapshot.position[1], snapshot.position[2], snapshot.position[3])
         setElementRotation(player, 0, 0, snapshot.position[4])
@@ -122,6 +126,20 @@ local function resetMission()
     mission.rangeHits = {}
     mission.bincoEntered = false
     mission.bincoExited = false
+    mission.bincoEntryExit = nil
+    mission.bincoState = nil
+end
+
+local function releaseBincoEntryExit()
+    if not isElement(mission.bincoEntryExit) then
+        mission.bincoEntryExit = nil
+        return
+    end
+    local handle = mission.bincoEntryExit
+    mission.bincoEntryExit = nil
+    pcall(function()
+        exports["story-entry-exit-runtime"]:releaseStoryEntryExit(handle)
+    end)
 end
 
 local function cleanup(reason, restore, passed)
@@ -130,6 +148,7 @@ local function cleanup(reason, restore, passed)
     end
     local player, snapshot = mission.player, mission.snapshot
     clearTimers()
+    releaseBincoEntryExit()
     if isElement(player) then
         triggerClientEvent(player, "nines:stop", resourceRoot, reason)
     end
@@ -468,6 +487,7 @@ addEventHandler("nines:goodbyeFinished", resourceRoot, function()
         return
     end
     mission.stage = "phone"
+    mission.bincoState = "approach"
     if isElement(mission.entities.smoke) then
         destroyElement(mission.entities.smoke)
         mission.entities.smoke = nil
@@ -475,34 +495,60 @@ addEventHandler("nines:goodbyeFinished", resourceRoot, function()
     triggerClientEvent(client, "nines:phone", resourceRoot)
 end)
 
-addEvent("nines:bincoInterior", true)
-addEventHandler("nines:bincoInterior", resourceRoot, function(inside)
-    if not validClient() or mission.stage ~= "phone" then
+local function acquireBincoEntryExit()
+    if not mission.running or mission.finishing or mission.stage ~= "phone" or mission.bincoState ~= "entry_scene" or
+        not isElement(mission.player) then
         return
     end
-    if inside then
-        local x, y, z = getElementPosition(client)
-        local outside = NINES.binco.outside
-        if getElementInterior(client) ~= 0 or getDistanceBetweenPoints3D(x, y, z, outside[1], outside[2], outside[3]) > 10.0 then
-            return
-        end
+    if isElement(mission.bincoEntryExit) then
+        return
+    end
+    local handle, reason = exports["story-entry-exit-runtime"]:acquireStoryEntryExit(
+                               mission.player, NINES.binco.entryExitSite, NINES.dimension,
+                               {fadeOut = 1.0, blackHold = 0.25, fadeIn = 1.0})
+    if not handle then
+        return fail("Binco entry-exit unavailable: " .. tostring(reason), "M_FAIL")
+    end
+    mission.bincoEntryExit = handle
+    mission.bincoState = "entry_ready"
+end
+
+addEvent("nines:bincoArrival", true)
+addEventHandler("nines:bincoArrival", resourceRoot, function()
+    if not validClient() or mission.stage ~= "phone" or mission.bincoState ~= "approach" or
+        getElementInterior(client) ~= 0 or getElementDimension(client) ~= NINES.dimension then
+        return
+    end
+    local x, y, z = getElementPosition(client)
+    local outside = NINES.binco.outside
+    if math.abs(x - outside[1]) > 4.0 or math.abs(y - outside[2]) > 4.5 or math.abs(z - outside[3]) > 4.5 then
+        return fail("Invalid Binco arrival evidence", "M_FAIL")
+    end
+    mission.bincoState = "entry_scene"
+    rememberTimer(setTimer(acquireBincoEntryExit, 2500, 1))
+end)
+
+addEventHandler("onStoryEntryExitStateChange", root, function(state, data)
+    if source ~= mission.bincoEntryExit or not mission.running or mission.finishing or mission.stage ~= "phone" then
+        return
+    end
+    -- The committed notification is emitted while the client is still fading
+    -- in. Resume the mission only after the runtime has verified the final
+    -- position and released its transition freeze, like SCM resumes after the
+    -- native entry-exit transaction rather than during it.
+    if state == "entered" and type(data) == "table" and data.direction == "enter" and not mission.bincoEntered then
         mission.bincoEntered = true
-        setElementInterior(client, NINES.binco.insideSpawn[4])
-        setElementPosition(client, NINES.binco.insideSpawn[1], NINES.binco.insideSpawn[2], NINES.binco.insideSpawn[3])
-        setElementRotation(client, 0, 0, NINES.binco.insideSpawn[5])
-        triggerClientEvent(client, "nines:bincoEntered", resourceRoot)
-    else
-        local x, y, z = getElementPosition(client)
-        local exit = NINES.binco.exit
-        if not mission.bincoEntered or getElementInterior(client) ~= NINES.binco.insideSpawn[4] or
-            getDistanceBetweenPoints3D(x, y, z, exit[1], exit[2], exit[3]) > 6.0 then
-            return
-        end
+        mission.bincoState = "inside"
+        triggerClientEvent(mission.player, "nines:bincoEntered", resourceRoot)
+        outputDebugString("[nines-and-aks] Binco entry completed; starting the interior tutorial")
+    elseif state == "exited" and type(data) == "table" and data.direction == "exit" and mission.bincoEntered and
+        not mission.bincoExited then
         mission.bincoExited = true
-        setElementInterior(client, 0)
-        setElementPosition(client, NINES.binco.outsideExit[1], NINES.binco.outsideExit[2], NINES.binco.outsideExit[3])
-        setElementRotation(client, 0, 0, NINES.binco.outsideExit[4])
-        triggerClientEvent(client, "nines:bincoExited", resourceRoot)
+        mission.bincoState = "outside_return"
+        triggerClientEvent(mission.player, "nines:bincoExited", resourceRoot)
+        outputDebugString("[nines-and-aks] Binco exit completed; starting the mission-pass delay")
+    elseif state == "failed" then
+        fail("Binco entry-exit failed: " .. tostring(type(data) == "table" and data.reason or "unknown"), "M_FAIL")
     end
 end)
 
@@ -510,7 +556,8 @@ addEvent("nines:passed", true)
 addEventHandler("nines:passed", resourceRoot, function()
     local x, y, z = getElementPosition(client)
     if not validClient() or mission.stage ~= "phone" or not mission.bincoExited or getElementInterior(client) ~= 0 or
-        getDistanceBetweenPoints3D(x, y, z, NINES.binco.outsideExit[1], NINES.binco.outsideExit[2], NINES.binco.outsideExit[3]) > 10.0 then
+        getPedOccupiedVehicle(client) or math.abs(x - NINES.binco.outsideExit[1]) > 10.0 or
+        math.abs(y - NINES.binco.outsideExit[2]) > 10.0 or math.abs(z - 14.4690) > 5.0 then
         return
     end
     mission.finishing, mission.stage = true, "passed"
@@ -539,6 +586,16 @@ addEventHandler("onVehicleExplode", root, function()
     end
     if source == mission.entities.glendale and mission.stage ~= "goodbye" and mission.stage ~= "phone" and mission.stage ~= "passed" then
         fail("Smoke's Glendale was destroyed", "SWE2_C")
+    end
+end)
+
+addEventHandler("onElementDestroy", root, function()
+    if source ~= mission.bincoEntryExit then
+        return
+    end
+    mission.bincoEntryExit = nil
+    if mission.running and not mission.finishing then
+        fail("Binco entry-exit lease was destroyed", "M_FAIL")
     end
 end)
 

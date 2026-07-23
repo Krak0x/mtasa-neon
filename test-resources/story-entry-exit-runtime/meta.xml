@@ -1,0 +1,13 @@
+<meta>
+    <info author="MTA Neon" name="Story entry-exit runtime" type="script" version="0.1.0" />
+
+    <script src="definitions.lua" type="server" />
+    <script src="server.lua" type="server" />
+    <script src="client.lua" type="client" cache="false" />
+
+    <export function="acquireStoryEntryExit" type="server" />
+    <export function="releaseStoryEntryExit" type="server" />
+    <export function="getStoryEntryExitState" type="server" />
+
+    <min_mta_version client="1.6.0" server="1.6.0" />
+</meta>

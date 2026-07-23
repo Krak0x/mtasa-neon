@@ -179,6 +179,14 @@ local function playQueue(lines, finished, index, started)
     end, 50, 0)
 end
 
+local function setCurrentCamera(position, target)
+    if not state.cameraToken then
+        return false
+    end
+    return setScriptCameraFixed(state.cameraToken, Vector3(position[1], position[2], position[3]),
+                                Vector3(target[1], target[2], target[3]), Vector3(0, 0, 0), true)
+end
+
 local function acquireCamera(position, target, fadeIn)
     if state.cameraToken then
         pcall(releaseScriptCamera, state.cameraToken, true)
@@ -194,8 +202,7 @@ local function acquireCamera(position, target, fadeIn)
     state.cameraToken = token
     setScriptCameraWidescreen(token, true)
     setScriptCameraNearClip(token, 0.2)
-    if not setScriptCameraFixed(token, Vector3(position[1], position[2], position[3]),
-                                Vector3(target[1], target[2], target[3]), Vector3(0, 0, 0), true) then
+    if position and target and not setCurrentCamera(position, target) then
         releaseScriptCamera(token)
         state.cameraToken = nil
         return false
@@ -228,6 +235,15 @@ local function destroyNavigation()
         end
     end
     state.navigation = {}
+end
+
+local function keepNavigationBlipOnly()
+    if isElement(state.navigation.marker) then
+        destroyElement(state.navigation.marker)
+    end
+    state.navigation.marker = nil
+    state.navigation.destination = nil
+    state.navigation.mode = isElement(state.navigation.blip) and "blip" or nil
 end
 
 local function showDestination(destination)
@@ -1022,17 +1038,18 @@ local function beginBinco()
         end
         local p = NINES.binco.outside
         local x, y, z = getElementPosition(localPlayer)
-        if getElementInterior(localPlayer) == 0 and getDistanceBetweenPoints3D(x, y, z, p[1], p[2], p[3]) <= 4.0 then
+        if getElementInterior(localPlayer) == 0 and math.abs(x - p[1]) <= 3.5 and math.abs(y - p[2]) <= 4.0 and
+            math.abs(z - p[3]) <= 4.0 then
             state.stage = "binco_entry_scene"
             setControls(false)
-            destroyNavigation()
+            keepNavigationBlipOnly()
+            triggerServerEvent("nines:bincoArrival", resourceRoot)
             acquireCamera({2253.0986, -1644.2246, 16.6501}, {2252.7742, -1645.1615, 16.5203}, false)
-            showText("S2HELP1", 5000)
+            showText("S2HELP1", 6000)
             rememberTimer(setTimer(function()
                 releaseCamera(false)
                 setControls(true)
                 state.stage = "binco_enter_ready"
-                showHelp("HELWARD", false)
             end, 2500, 1))
         end
     end, 100, 0))
@@ -1229,57 +1246,60 @@ addEventHandler("onClientRender", root, function()
     end
     if state.navigation.mode == "destination" and state.navigation.destination and type(renderScriptImportantArea) == "function" then
         local destination = NINES.destinations[state.navigation.destination]
-        renderScriptImportantArea(Vector3(destination[1], destination[2], destination[3]), destination[4], destination[4],
+        renderScriptImportantArea(Vector3(destination[1], destination[2], destination[3]), destination[4],
+                                  destination[5] or destination[4],
                                   state.navigation.destination == "emmet" and 1 or 2)
-    end
-    if state.stage == "binco_enter_ready" then
-        local p = NINES.binco.outside
-        local x, y, z = getElementPosition(localPlayer)
-        local enterDown = getPedControlState(localPlayer, "enter_exit")
-        if enterDown and not state.enterWasDown and getElementInterior(localPlayer) == 0 and
-            getDistanceBetweenPoints3D(x, y, z, p[1], p[2], p[3]) <= 5.0 then
-            state.stage = "binco_enter_pending"
-            triggerServerEvent("nines:bincoInterior", resourceRoot, true)
-        end
-        state.enterWasDown = enterDown
-    elseif state.stage == "binco_clothes" and getElementInterior(localPlayer) == NINES.binco.insideSpawn[4] then
-        local p = NINES.binco.clothes
-        local x, y, z = getElementPosition(localPlayer)
-        if getDistanceBetweenPoints3D(x, y, z, p[1], p[2], p[3]) <= 2.0 then
-            state.stage = "binco_tutorial"
-            setControls(false)
-            acquireCamera({213.0277, -102.9124, 1006.3765}, {213.7582, -102.2797, 1006.1193}, false)
-            rememberTimer(setTimer(function()
-                showText("S2HELP2", 6000)
-                rememberTimer(setTimer(function()
-                    releaseCamera(false)
-                    setControls(true)
-                    state.stage = "binco_exit"
-                    showHelp("HELWARD", false)
-                end, 4000, 1))
-            end, 1500, 1))
-        end
-    elseif state.stage == "binco_exit" then
-        local p = NINES.binco.exit
-        local x, y, z = getElementPosition(localPlayer)
-        if getDistanceBetweenPoints3D(x, y, z, p[1], p[2], p[3]) <= 2.0 then
-            state.stage = "binco_exit_pending"
-            triggerServerEvent("nines:bincoInterior", resourceRoot, false)
-        end
     end
 end)
 
+local function beginBincoTutorial()
+    if not state.active or state.stage ~= "binco_enter_ready" then
+        return
+    end
+
+    -- The server sends this only after the entry-exit runtime has validated
+    -- the final interior destination and completed the fade. Starting from
+    -- that barrier avoids racing the streamed interior/area update.
+    state.stage = "binco_tutorial"
+    setControls(false)
+    clearText()
+    acquireCamera(nil, nil, false)
+    outputDebugString(("[nines-and-aks] Binco tutorial armed: interior=%d position=(%.3f, %.3f, %.3f)"):format(
+                          getElementInterior(localPlayer), getElementPosition(localPlayer)))
+    rememberTimer(setTimer(function()
+        if not state.active or state.stage ~= "binco_tutorial" then
+            return
+        end
+        local position = {213.0277, -102.9124, 1006.3765}
+        local target = {213.7582, -102.2797, 1006.1193}
+        if not setCurrentCamera(position, target) then
+            acquireCamera(position, target, false)
+        end
+        showText("S2HELP2", 6000)
+        rememberTimer(setTimer(function()
+            if not state.active or state.stage ~= "binco_tutorial" then
+                return
+            end
+            releaseCamera(false)
+            setControls(true)
+            state.stage = "binco_exit"
+            showHelp("HELWARD", false)
+        end, 4000, 1))
+    end, 1500, 1))
+end
+
 addEvent("nines:bincoEntered", true)
 addEventHandler("nines:bincoEntered", resourceRoot, function()
-    if source == resourceRoot and state.active and state.stage == "binco_enter_pending" then
-        state.stage = "binco_clothes"
+    if source == resourceRoot and state.active and state.stage == "binco_enter_ready" then
+        beginBincoTutorial()
     end
 end)
 
 addEvent("nines:bincoExited", true)
 addEventHandler("nines:bincoExited", resourceRoot, function()
-    if source == resourceRoot and state.active and state.stage == "binco_exit_pending" then
+    if source == resourceRoot and state.active and state.stage == "binco_exit" then
         state.stage = "binco_return"
+        destroyNavigation()
         rememberTimer(setTimer(function()
             if state.active then
                 triggerServerEvent("nines:passed", resourceRoot)

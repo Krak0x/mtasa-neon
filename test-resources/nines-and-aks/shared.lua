@@ -33,7 +33,7 @@ NINES = {
     destinations = {
         emmet = {2453.07, -2003.96, 12.56, 4.0},
         smoke = {2066.4648, -1695.4436, 12.5547, 4.0},
-        binco = {2246.9719, -1660.7789, 14.2856, 4.0},
+        binco = {2246.9719, -1660.7789, 14.2856, 3.5, 4.0},
     },
     -- CREATE_OBJECT adds DYN_WINE_BIG's centre offset; native shoot tasks keep the raw SCM Z.
     bottleCenterOffset = 0.240264,
@@ -57,10 +57,10 @@ NINES = {
     range = {center = {2448.9602, -1973.5446, 13.3074}, radius = {13.0, 13.0, 10.0}},
     binco = {
         outside = {2246.9719, -1660.7789, 14.2856, 0.0},
-        insideSpawn = {207.0, -109.0, 1005.1328, 15, 0.0},
+        entryExitSite = "cschp_ls",
+        insideSpawn = {207.738, -109.02, 1005.27, 15, 0.0},
         clothes = {208.0279, -107.9499, 1005.1328},
-        exit = {207.5, -112.0, 1005.1328},
-        outsideExit = {2244.48, -1664.0599, 14.469, 180.0},
+        outsideExit = {2244.48, -1664.06, 14.4690, 357.0},
     },
     audio = {
         driveOut = {

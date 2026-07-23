@@ -16,10 +16,11 @@ The raw bytecode was used to resolve ambiguous decompiler symbols. In particular
 
 ## Start
 
-The resource requires the Neon client runtime and `native-task-runtime`.
+The resource requires the Neon client runtime, `native-task-runtime` and `story-entry-exit-runtime`.
 
 ```text
 start native-task-runtime
+start story-entry-exit-runtime
 start nines-and-aks
 ```
 
@@ -48,12 +49,12 @@ Only one mission session may run at a time. The test owner is placed in dimensio
 | Return drive | Smoke/Glendale/all-wheels arrival gate, delayed seven-line `SWE3_H*` dialogue, return reminders |
 | Smoke goodbye | Exact actor staging and camera, `SWE3_JA`, `SWE3_JB`, then remove Smoke |
 | Phone | `MOBRING`, phone animation, all ten `MSWE07*` lines and early release to the Binco objective |
-| Binco | Outside arrival camera and `S2HELP1`, area 15 interior staging, `S2HELP2` and `HELWARD`, required return to area 0 before pass |
+| Binco | Outside arrival camera and `S2HELP1`, exact automatic `CSCHP` doorway, area 15 interior staging, `S2HELP2` and `HELWARD`, exact automatic exit and required return to area 0 before pass |
 | Pass/fail | Mission pass presentation, Colt 45 net gain, Smoke/Emmet/CJ/Glendale failures and deterministic cleanup |
 
 ## Runtime ownership
 
-The server owns the mission state, actors, vehicles, authoritative stage changes, player snapshot, pass/fail decision and cleanup. The mission client owns native cutscene/audio/camera leases, native ped tasks for the local syncer, local target bottles, their damage evidence, navigation and the Binco tutorial presentation.
+The server owns the mission state, actors, vehicles, authoritative stage changes, player snapshot, pass/fail decision and cleanup. The mission client owns native cutscene/audio/camera leases, native ped tasks for the local syncer, local target bottles, their damage evidence, navigation and the Binco tutorial presentation. The separate story entry-exit runtime owns Binco's paired IPL triggers, fade transaction and server-authoritative area transition.
 
 The resource waits for managed file-cutscene release before asking the server to create model 302. Neon maps that playable slot to `EMMET`; creating the ped before `SWEET3B` teardown would race the temporary CUTOBJ model mapping.
 
@@ -76,7 +77,7 @@ The resource waits for managed file-cutscene release before asking the server to
 | Return drive | Blip swap, reminders `SMOX_AA..AE`, `SWE2_L`, `HELP53/HOOD2D/HOOD2E`, `EMMET_G`, seven-line dialogue and arrival gates | Dialogue restarts after a vehicle reminder | Persistent global Emmet shop unlock |
 | Smoke goodbye | Exact staging, three cameras, fades, native walks and `SWE3_JA/JB` | Small wait differences remain resource-owned | None in reachable gameplay |
 | Phone | `MOBRING`, 1500 ms lead, phone animation, 1800 ms lead, ten `MSWE07*` lines, Binco objective after first line | Animation replaces native phone task | Native phone task internals |
-| Binco | Exterior camera/help, explicit entry input, area 15 tutorial coordinates, 1500+4000 ms tutorial, explicit exit, server-validated area 0 pass | Resource teleports across the entry-exit boundary | Clothing purchase UI, which vanilla does not gate |
+| Binco | Exterior camera/help, exact `CSCHP` half-extents and `+1.0` Z conversion, automatic on-foot entry/exit, headings, area 15 tutorial gate, 1500+4000 ms tutorial, retained blip and server-validated area 0 pass | Safe leased fade/teleport service replaces MTA's disabled native manager | Native door task, shop peds and clothing purchase UI, which vanilla does not gate |
 | Result | Failure reason plus big fail, big pass with respect 4, passed tune, pistol old ammo +60 | Test session restores the original player snapshot on teardown | Respect, progress, contact, save and shop-blip persistence |
 
 ### Exact or runtime-equivalent
@@ -94,7 +95,8 @@ The resource waits for managed file-cutscene release before asking the server to
 - `TASK_FOLLOW_POINT_ROUTE` is represented by the scripted Emmet-arrival transition. The current public sequence surface has native point-to-point movement, but not SCM route-buffer ownership.
 - Smoke's shooting demonstrations use native `shoot_at` sequence children, stock Colt/roll animations and progress-driven native camera/audio timing. The exact nested repeat, duck toggle, post-shot idle and achieve-heading children are not public yet.
 - `TASK_USE_MOBILE_PHONE` uses the stock phone animation while the exact native phone task is not exposed.
-- Binco uses the original area 15 coordinates and entry/exit gates without opening the GTA clothing purchase menu. Vanilla `sweet2` does not inspect a purchased clothing item, so this preserves its actual pass condition.
+- Binco leases `cschp_ls` from the generic story entry-exit runtime. The runtime applies the installed exterior/interior IPL rectangles, GTA's verified `+1.0` Z conversion, automatic on-foot contact, one-second fades and authoritative area/position changes. Vanilla `sweet2` does not inspect a purchased clothing item, so omitting the purchase interface preserves its actual pass condition.
+- The interior tutorial and final pass delay resume from the runtime's terminal `entered`/`exited` barriers, after its destination and fade checks complete; the intermediate black-screen commit is not treated as a playable mission state.
 - Local bottle damage events replace the SCM `HAS_OBJECT_BEEN_DAMAGED` polling flag.
 
 ### Known native-surface limits
@@ -103,6 +105,7 @@ The resource waits for managed file-cutscene release before asking the server to
 - `DM_PED_MISSION_EMPTY` has no public runtime lease.
 - Smoke's SCM-only `ONLY_DAMAGED_BY_PLAYER`, `CANT_BE_DRAGGED_OUT`, `STAY_IN_CAR_WHEN_JACKED`, and `GET_OUT_UPSIDE_DOWN` combination is not fully public. The resource intentionally avoids applying the broad story-protection preset because that preset prevents upside-down exits, opposite the mission script.
 - Temporary ped explosion proofs around the Tampa sequence do not have a public ped-physical-proof API.
+- MTA returns immediately from `CEntryExitManager::Update` because its legacy native transition path crashes. The safe Lua runtime reproduces the mission-visible pairing and transition, but not GTA's native door task, shop population or clothing menu.
 - Gang-zone strength bookkeeping, contact unlocks, global shop blips, persistent Emmet pickup, respect/progress counters and save-game mission statistics are solo campaign bookkeeping and remain outside Story Runtime scope.
 
 ## Failure and cleanup matrix
@@ -115,6 +118,7 @@ The resource waits for managed file-cutscene release before asking the server to
 | Emmet dies while present | Emmet failure, mission failed, session restored |
 | Tampa explodes during its objective | Advance once to the departure scene |
 | File cutscene request/load/start/release fails or times out | Mission failed instead of silently advancing |
+| Binco entry-exit acquisition or transition times out | Mission failed and the previous frozen/camera state is restored |
 | Player disconnects | Destroy session entities without attempting player restoration |
 | Resource stops | Release client leases, destroy local bottles/navigation, restore the player and destroy server entities |
 
@@ -122,7 +126,7 @@ The client rejects bottle damage unless the source is a current player-round bot
 
 ## Validation state
 
-The SCM graph, raw bottle coordinates, camera vectors, audio order, stage gates and cleanup paths are statically mapped. User testing reached the Emmet range and exposed the file-cutscene crash, area visibility and initial camera-sequencing defects. The corrected managed-cutscene path was rebuilt and the resource passes Lua syntax validation, but the latest camera timing, bottle-height, Tampa petrol-cap and departure corrections still require a fresh complete in-game run. This checkpoint does not claim full 1:1 runtime validation.
+The SCM graph, raw bottle coordinates, camera vectors, audio order, stage gates and cleanup paths are statically mapped. The Binco pass was independently checked against the installed SCM, both linked `CSCHP` IPL records and the reverse entry-exit loader and volume rules. User testing reached the Emmet range and exposed the file-cutscene crash, area visibility and initial camera-sequencing defects. The corrected managed-cutscene and story entry-exit paths pass static validation, but the latest camera timing, bottle-height, Tampa petrol-cap, departure and complete Binco transition still require a fresh in-game run. This checkpoint does not claim full 1:1 runtime validation.
 
 ## Validation checklist
 
@@ -132,6 +136,9 @@ Static validation:
 luac -p test-resources/nines-and-aks/shared.lua \
   test-resources/nines-and-aks/server.lua \
   test-resources/nines-and-aks/client.lua
+luac -p test-resources/story-entry-exit-runtime/definitions.lua \
+  test-resources/story-entry-exit-runtime/server.lua \
+  test-resources/story-entry-exit-runtime/client.lua
 git diff --check
 ```
 
@@ -144,8 +151,9 @@ In-game validation remains manual:
 5. Walk outside the range and return during every round.
 6. Shoot the Tampa petrol cap after control returns, verify the weakpoint explosion, and verify the departure scene starts exactly once.
 7. Complete and skip the Emmet departure scene.
-8. Complete the Smoke goodbye and phone dialogue, then enter and exit Binco.
-9. Kill Smoke, destroy the Glendale, kill Emmet and die as CJ in separate runs.
-10. Restart the resource during a cutscene, a bottle round, the Tampa objective, a drive and the Binco interior.
+8. Complete the Smoke goodbye and phone dialogue, reach the exterior objective in a vehicle, then verify only CJ on foot can cross the exact Binco doorway automatically.
+9. Verify both one-second fades, area 15, the interior camera after its 1500 ms wait, `S2HELP2`, `HELWARD`, the automatic exit heading and the two-second pass delay.
+10. Kill Smoke, destroy the Glendale, kill Emmet and die as CJ in separate runs.
+11. Restart both the mission and entry-exit runtime during Binco's fade-out, black hold, fade-in and interior stage.
 
 Do not commit a mission checkpoint until this in-game matrix has been validated. The commit message should record the source mission, fidelity goals, design reasoning and exact tests performed.
