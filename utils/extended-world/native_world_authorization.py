@@ -21,6 +21,7 @@ POLICY_BULLWORTH = 1
 STATIC_WORLD_WIRE_VERSION = 2
 STATIC_WORLD_PACK_FORMAT = 2
 POLICY_STATIC_WORLD_V1 = 2
+STATIC_WORLD_V3_PACK_FORMAT = 3
 RECORD_LIFETIME_SECONDS = 900
 CLOCK_ROLLBACK_TOLERANCE_SECONDS = 120
 RESTART_MINIMUM_REMAINING_SECONDS = 60
@@ -28,7 +29,8 @@ TRANSPORT_BITSTREAM_VERSION = 0x35
 AUTHORIZATION_BITSTREAM_VERSION = 0x36
 STATIC_WORLD_TRANSPORT_BITSTREAM_VERSION = 0x37
 STATIC_WORLD_AUTHORIZATION_BITSTREAM_VERSION = 0x38
-LATEST_BITSTREAM_VERSION = STATIC_WORLD_AUTHORIZATION_BITSTREAM_VERSION
+STATIC_WORLD_V3_TRANSPORT_BITSTREAM_VERSION = 0x39
+LATEST_BITSTREAM_VERSION = STATIC_WORLD_V3_TRANSPORT_BITSTREAM_VERSION
 
 
 class RecordError(ValueError):
@@ -68,13 +70,17 @@ def _canonical_manifest(value: str) -> bytes:
 def encode_descriptor(descriptor: TransportDescriptor, client_bitstream_version: int) -> bytes:
     """Model the complete N/A descriptor header before its three F chunks."""
     manifest = _canonical_manifest(descriptor.manifest_path)
-    if descriptor.format not in (PACK_FORMAT, STATIC_WORLD_PACK_FORMAT) or descriptor.file_count != 3:
+    supported_file_count = 3 <= descriptor.file_count <= 34 if descriptor.format == STATIC_WORLD_V3_PACK_FORMAT else descriptor.file_count == 3
+    if descriptor.format not in (PACK_FORMAT, STATIC_WORLD_PACK_FORMAT, STATIC_WORLD_V3_PACK_FORMAT) or not supported_file_count:
         raise RecordError("unsupported transport descriptor")
     transport_capability = (
         TRANSPORT_BITSTREAM_VERSION
         if descriptor.format == PACK_FORMAT
-        else STATIC_WORLD_TRANSPORT_BITSTREAM_VERSION
+        else STATIC_WORLD_TRANSPORT_BITSTREAM_VERSION if descriptor.format == STATIC_WORLD_PACK_FORMAT
+        else STATIC_WORLD_V3_TRANSPORT_BITSTREAM_VERSION
     )
+    if descriptor.format == STATIC_WORLD_V3_PACK_FORMAT and descriptor.authorization_requested:
+        raise RecordError("format 3 transport is publish-only")
     authorization_capability = (
         AUTHORIZATION_BITSTREAM_VERSION
         if descriptor.format == PACK_FORMAT
@@ -102,9 +108,21 @@ def decode_descriptor(data: bytes, client_bitstream_version: int) -> TransportDe
     if not isinstance(data, bytes) or len(data) < 4:
         raise RecordError("truncated transport descriptor")
     tag, format_value, file_count, manifest_length = data[:4]
-    if tag not in (ord("N"), ord("A")) or format_value not in (PACK_FORMAT, STATIC_WORLD_PACK_FORMAT) or file_count != 3 or not manifest_length:
+    supported_file_count = 3 <= file_count <= 34 if format_value == STATIC_WORLD_V3_PACK_FORMAT else file_count == 3
+    if (
+        tag not in (ord("N"), ord("A"))
+        or format_value not in (PACK_FORMAT, STATIC_WORLD_PACK_FORMAT, STATIC_WORLD_V3_PACK_FORMAT)
+        or not supported_file_count
+        or not manifest_length
+        or (format_value == STATIC_WORLD_V3_PACK_FORMAT and tag == ord("A"))
+    ):
         raise RecordError("malformed transport descriptor")
-    transport_capability = TRANSPORT_BITSTREAM_VERSION if format_value == PACK_FORMAT else STATIC_WORLD_TRANSPORT_BITSTREAM_VERSION
+    transport_capability = (
+        TRANSPORT_BITSTREAM_VERSION
+        if format_value == PACK_FORMAT
+        else STATIC_WORLD_TRANSPORT_BITSTREAM_VERSION if format_value == STATIC_WORLD_PACK_FORMAT
+        else STATIC_WORLD_V3_TRANSPORT_BITSTREAM_VERSION
+    )
     authorization_capability = AUTHORIZATION_BITSTREAM_VERSION if format_value == PACK_FORMAT else STATIC_WORLD_AUTHORIZATION_BITSTREAM_VERSION
     if client_bitstream_version < transport_capability:
         raise RecordError("transport descriptor exceeds negotiated capability")
@@ -129,17 +147,17 @@ def decode_descriptor(data: bytes, client_bitstream_version: int) -> TransportDe
             raise RecordError("unsupported startup authorization")
         return TransportDescriptor(manifest_path=manifest_path, authorization_requested=True, format=format_value,
                                    wire_version=wire_version, startup_mode=startup_mode, policy=policy)
-    return TransportDescriptor(manifest_path=manifest_path, authorization_requested=False, format=format_value)
+    return TransportDescriptor(manifest_path=manifest_path, authorization_requested=False, format=format_value, file_count=file_count)
 
 
-def validate_descriptor_placement(chunk_types: tuple[str, ...]) -> None:
-    """Model the client's closed placement rule for the N/A + exactly 3 F group."""
+def validate_descriptor_placement(chunk_types: tuple[str, ...], file_count: int = 3) -> None:
+    """Model the client's closed placement rule for one uninterrupted N/A + F group."""
     if any(chunk not in ("N", "A", "F", "E") for chunk in chunk_types):
         raise RecordError("unknown resource-start chunk type")
     descriptors = [index for index, chunk in enumerate(chunk_types) if chunk in ("N", "A")]
     if not descriptors:
         return
-    if len(descriptors) != 1 or descriptors[0] != 0 or chunk_types[1:4] != ("F", "F", "F"):
+    if len(descriptors) != 1 or descriptors[0] != 0 or not 3 <= file_count <= 34 or chunk_types[1 : 1 + file_count] != ("F",) * file_count:
         raise RecordError("interrupted, duplicate, or misplaced native-world descriptor")
 
 

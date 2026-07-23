@@ -13,9 +13,9 @@
 
 #include <memory>
 #include <map>
-#include <array>
 #include <atomic>
 #include <string>
+#include <vector>
 #include <SString.h>
 #include <core/CNativeWorldAuthorization.h>
 #include "Common.h"
@@ -143,7 +143,7 @@ struct SNativeWorldTransportOffer
     std::string                                             resourceName;
     unsigned char                                           format{};
     std::string                                             manifestRelativePath;
-    std::array<SNativeWorldTransportFile, 3>                files;
+    std::vector<SNativeWorldTransportFile>                  files;
     std::shared_ptr<std::atomic_bool>                       cancelled;
     std::shared_ptr<const SNativeWorldStartupAuthorization> startupAuthorization;
 };

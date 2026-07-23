@@ -19,7 +19,6 @@
 #include "CAclRightName.h"
 #include <unzip.h>
 #include <list>
-#include <array>
 #include <vector>
 #include <functional>
 #include "httpd/Types.h"
@@ -135,13 +134,13 @@ enum class EResourceState : unsigned char
 
 struct SNativeWorldPackTransport
 {
-    bool                          present{};
-    bool                          startupAuthorization{};
-    unsigned char                 format{};
-    unsigned char                 authorizationVersion{};
-    unsigned char                 authorizationPolicy{};
-    std::string                   manifestPath;
-    std::array<CResourceFile*, 3> files{};
+    bool                        present{};
+    bool                        startupAuthorization{};
+    unsigned char               format{};
+    unsigned char               authorizationVersion{};
+    unsigned char               authorizationPolicy{};
+    std::string                 manifestPath;
+    std::vector<CResourceFile*> files;
 };
 
 // A resource is either a directory with files or a ZIP file which contains the content of such directory.

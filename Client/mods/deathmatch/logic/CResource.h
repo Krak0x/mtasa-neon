@@ -18,11 +18,11 @@
 #include "CResourceModelStreamer.h"
 #include "CElementGroup.h"
 #include <game/CGame.h>
-#include <array>
 #include <future>
 #include <list>
 #include <memory>
 #include <unordered_map>
+#include <vector>
 
 #define MAX_RESOURCE_NAME_LENGTH 255
 #define MAX_FUNCTION_NAME_LENGTH 50
@@ -127,7 +127,7 @@ public:
     unsigned int GetStartCounter() const noexcept { return m_startCounter; }
 
     bool HasNativeWorldTransport() const noexcept { return m_nativeWorldTransport.present; }
-    bool SetNativeWorldTransport(unsigned char format, const SString& manifestPath);
+    bool SetNativeWorldTransport(unsigned char format, const SString& manifestPath, unsigned char expectedFileCount);
     bool AddNativeWorldTransportFile(CDownloadableResource* file);
     bool IsNativeWorldTransportDescriptorValid() const;
     bool IsNativeWorldTransportPublicationPending() const noexcept;
@@ -202,8 +202,8 @@ private:
         bool                                            publicationCompleted{};
         unsigned char                                   format{};
         SString                                         manifestPath;
-        std::array<CDownloadableResource*, 3>           files{};
-        size_t                                          fileCount{};
+        std::vector<CDownloadableResource*>             files;
+        size_t                                          expectedFileCount{};
         std::shared_ptr<std::atomic_bool>               cancellation;
         std::future<SNativeWorldTransportPublishResult> publication;
         bool                                            authorizationRequested{};

@@ -123,12 +123,15 @@ bool CResourceStartPacket::Write(NetBitStreamInterface& BitStream) const
     // below when that capability is absent, so an older client cannot mistake
     // a generic pack for ordinary resource content. The legacy N layout stays
     // byte-for-byte unchanged.
-    const bool canWriteNativeWorldPack = nativeWorldPack.format == 1
-                                             ? BitStream.Can(eBitStreamVersion::NativeWorldPackTransport)
-                                             : nativeWorldPack.format == 2 && BitStream.Can(eBitStreamVersion::NativeWorldStaticWorldV2Transport);
+    const bool canWriteNativeWorldPack = nativeWorldPack.format == 1 ? BitStream.Can(eBitStreamVersion::NativeWorldPackTransport)
+                                         : nativeWorldPack.format == 2
+                                             ? BitStream.Can(eBitStreamVersion::NativeWorldStaticWorldV2Transport)
+                                             : nativeWorldPack.format == 3 && BitStream.Can(eBitStreamVersion::NativeWorldStaticWorldV3Transport);
     if (nativeWorldPack.present && m_pResource->IsClientFilesOn() && canWriteNativeWorldPack)
     {
-        // A format-2 transport client predates generic startup authorization.
+        // A transport client can predate the authorization capability paired
+        // with its format. Format 3 is intentionally publish-only and never
+        // writes an authorization tuple.
         // Degrade its opted-in descriptor to the same inert N group instead of
         // exposing an A tuple that the older parser cannot safely interpret.
         const bool writeStartupAuthorization =

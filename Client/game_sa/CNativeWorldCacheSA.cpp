@@ -16,17 +16,23 @@
 #include "sha2.h"
 
 #include <array>
+#include <limits>
 #include <locale>
+#include <set>
 #include <sstream>
 
 namespace
 {
-    constexpr const char* CACHE_ROOT_DIRECTORY = "native-world-cache";
-    constexpr const char* CONTENT_ID_DOMAIN_V1 = "mta-native-world-cache-content-v1";
-    constexpr const char* CONTENT_ID_DOMAIN_V2 = "mta-native-world-cache-content-v2";
-    constexpr const char* CACHED_MANIFEST_FILE = "native-world.json";
-    constexpr const char* CACHED_IDE_FILE = "world.ide";
-    constexpr const char* CACHED_IMG_FILE = "world.img";
+    constexpr const char*   CACHE_ROOT_DIRECTORY = "native-world-cache";
+    constexpr const char*   CONTENT_ID_DOMAIN_V1 = "mta-native-world-cache-content-v1";
+    constexpr const char*   CONTENT_ID_DOMAIN_V2 = "mta-native-world-cache-content-v2";
+    constexpr const char*   CONTENT_ID_DOMAIN_V3 = "mta-native-world-cache-content-v3";
+    constexpr const char*   CACHED_MANIFEST_FILE = "native-world.json";
+    constexpr const char*   CACHED_IDE_FILE = "world.ide";
+    constexpr const char*   CACHED_IMG_FILE = "world.img";
+    constexpr std::uint64_t MAX_V3_IMG_BYTES = 256ULL * 1024ULL * 1024ULL;
+    constexpr std::uint64_t MAX_V3_TOTAL_BYTES = 8ULL * 1024ULL * 1024ULL * 1024ULL;
+    constexpr size_t        MAX_V3_IMAGES = 32;
 
     // Pending locks are explicit transaction ownership: refusal closes them,
     // while successful native activation promotes them to process lifetime.
@@ -98,17 +104,26 @@ namespace
                            });
     }
 
+    bool IsCanonicalV3ImageName(const std::string& value, size_t expectedIndex)
+    {
+        char expected[9]{};
+        _snprintf_s(expected, sizeof(expected), _TRUNCATE, "w%03u.img", static_cast<unsigned int>(expectedIndex));
+        return value == expected;
+    }
+
     bool IsValidRequestIdentity(const SNativeWorldCacheRequestSA& request)
     {
         if (request.format == 1)
             return request.policyKey == "bullworth" && request.packId == "bullworth";
-        return request.format == 2 && request.policyKey == "static-world-v1" && IsSafeLeafName(request.packId, 15) &&
+        if (request.format == 2)
+            return request.policyKey == "static-world-v1" && IsSafeLeafName(request.packId, 15) && request.packId.find('.') == std::string::npos;
+        return request.format == 3 && request.policyKey == "static-world-v3" && IsSafeLeafName(request.packId, 15) &&
                request.packId.find('.') == std::string::npos;
     }
 
     const char* CacheFormatDirectory(const SNativeWorldCacheRequestSA& request)
     {
-        return request.format == 1 ? "v1" : "v2";
+        return request.format == 1 ? "v1" : request.format == 2 ? "v2" : "v3";
     }
 
     const std::string& CachePolicyDirectory(const SNativeWorldCacheRequestSA& request)
@@ -206,7 +221,7 @@ namespace
         return true;
     }
 
-    bool LockRegularFile(const SString& path, unsigned int minimumBytes, unsigned int maximumBytes, CScopedHandles& handles, std::string& error)
+    bool LockRegularFile(const SString& path, std::uint64_t minimumBytes, std::uint64_t maximumBytes, CScopedHandles& handles, std::string& error)
     {
         if (!IsSafeLocalPath(path) || !GetPlainAttributes(path, false, error))
             return false;
@@ -219,12 +234,18 @@ namespace
         }
 
         BY_HANDLE_FILE_INFORMATION information{};
-        if (!HandleMatchesPath(handle, path, false, error) || !GetFileInformationByHandle(handle, &information) || information.nFileSizeHigh != 0 ||
-            information.nFileSizeLow < minimumBytes || information.nFileSizeLow > maximumBytes)
+        if (!HandleMatchesPath(handle, path, false, error) || !GetFileInformationByHandle(handle, &information))
         {
             CloseHandle(handle);
             if (error.empty())
                 error = "cache file byte length is invalid";
+            return false;
+        }
+        const std::uint64_t bytes = (static_cast<std::uint64_t>(information.nFileSizeHigh) << 32) | information.nFileSizeLow;
+        if (bytes < minimumBytes || bytes > maximumBytes)
+        {
+            CloseHandle(handle);
+            error = "cache file byte length is invalid";
             return false;
         }
         handles.Add(handle);
@@ -242,7 +263,7 @@ namespace
         std::ostringstream manifest;
         manifest.imbue(std::locale::classic());
         manifest << "{\n" << "  \"format\": " << request.format << ",\n";
-        if (request.format == 2)
+        if (request.format != 1)
             manifest << "  \"policy\": \"" << request.policyKey << "\",\n";
         manifest << "  \"pack_id\": \"" << request.packId << "\",\n"
                  << "  \"files\": {\n"
@@ -250,27 +271,81 @@ namespace
                  << "      \"name\": \"" << CACHED_IDE_FILE << "\",\n"
                  << "      \"bytes\": " << request.ide.bytes << ",\n"
                  << "      \"sha256\": \"" << request.ide.sha256 << "\"\n"
-                 << "    },\n"
-                 << "    \"img\": {\n"
-                 << "      \"name\": \"" << CACHED_IMG_FILE << "\",\n"
-                 << "      \"bytes\": " << request.img.bytes << ",\n"
-                 << "      \"sha256\": \"" << request.img.sha256 << "\"\n"
-                 << "    }\n"
-                 << "  }\n"
+                 << "    }";
+        if (request.format == 3)
+        {
+            manifest << ",\n"
+                     << "    \"images\": [\n";
+            for (size_t index = 0; index < request.images.size(); ++index)
+            {
+                const SNativeWorldCacheFileSA& image = request.images[index];
+                manifest << "      {\n"
+                         << "        \"name\": \"" << image.name << "\",\n"
+                         << "        \"bytes\": " << image.bytes << ",\n"
+                         << "        \"sha256\": \"" << image.sha256 << "\"\n"
+                         << "      }" << (index + 1 == request.images.size() ? "\n" : ",\n");
+            }
+            manifest << "    ]\n";
+        }
+        else
+        {
+            manifest << ",\n"
+                     << "    \"img\": {\n"
+                     << "      \"name\": \"" << CACHED_IMG_FILE << "\",\n"
+                     << "      \"bytes\": " << request.img.bytes << ",\n"
+                     << "      \"sha256\": \"" << request.img.sha256 << "\"\n"
+                     << "    }\n";
+        }
+        manifest << "  }\n"
                  << "}\n";
         return manifest.str();
     }
 
+    bool HasValidCacheRequestFiles(const SNativeWorldCacheRequestSA& request)
+    {
+        const bool isV3 = request.format == 3;
+        if (request.manifestFileName != CACHED_MANIFEST_FILE || !IsSafeLeafName(request.manifestFileName, 63) || !IsSafeLeafName(request.ide.name, 63) ||
+            request.manifestFileName == request.ide.name || !IsLowerSha256(request.sourceManifestSha256) || !IsLowerSha256(request.ide.sha256) ||
+            !request.sourceManifestBytes || !request.ide.bytes || request.sourceManifestBytes > request.maximumManifestBytes ||
+            request.maximumManifestBytes > (isV3 ? 64ULL * 1024ULL : 4096ULL) || request.ide.bytes > (isV3 ? 8ULL * 1024ULL * 1024ULL : 1024ULL * 1024ULL))
+        {
+            return false;
+        }
+
+        if (!isV3)
+        {
+            return request.images.empty() && IsSafeLeafName(request.img.name, 63) && request.manifestFileName != request.img.name &&
+                   request.ide.name != request.img.name && IsLowerSha256(request.img.sha256) && request.img.bytes && request.img.bytes <= MAX_V3_IMG_BYTES &&
+                   request.img.bytes % 2048 == 0;
+        }
+
+        if (!request.img.name.empty() || !request.img.sha256.empty() || request.img.bytes || request.images.empty() || request.images.size() > MAX_V3_IMAGES)
+            return false;
+        std::uint64_t totalBytes = request.ide.bytes;
+        for (size_t index = 0; index < request.images.size(); ++index)
+        {
+            const SNativeWorldCacheFileSA& image = request.images[index];
+            if (!IsCanonicalV3ImageName(image.name, index) || !IsLowerSha256(image.sha256) || !image.bytes || image.bytes > MAX_V3_IMG_BYTES ||
+                image.bytes % 2048 != 0 || totalBytes > MAX_V3_TOTAL_BYTES - image.bytes)
+            {
+                return false;
+            }
+            totalBytes += image.bytes;
+        }
+        return totalBytes <= MAX_V3_TOTAL_BYTES;
+    }
+
     struct SCachePaths
     {
-        SString dataRoot;
-        SString root;
-        SString format;
-        SString pack;
-        SString published;
-        SString manifest;
-        SString ide;
-        SString img;
+        SString              dataRoot;
+        SString              root;
+        SString              format;
+        SString              pack;
+        SString              published;
+        SString              manifest;
+        SString              ide;
+        SString              img;
+        std::vector<SString> images;
     };
 
     SCachePaths MakeCachePaths(const SNativeWorldCacheRequestSA& request, const SString& publishedDirectory)
@@ -284,6 +359,8 @@ namespace
         paths.manifest = JoinPath(paths.published, CACHED_MANIFEST_FILE);
         paths.ide = JoinPath(paths.published, CACHED_IDE_FILE);
         paths.img = JoinPath(paths.published, CACHED_IMG_FILE);
+        for (const SNativeWorldCacheFileSA& image : request.images)
+            paths.images.push_back(JoinPath(paths.published, image.name));
         return paths;
     }
 
@@ -291,13 +368,36 @@ namespace
     {
         const std::string canonicalManifest = BuildCanonicalManifest(request);
         const std::string canonicalManifestHash = SharedUtil::GenerateSha256HexString(canonicalManifest);
-        if (!LockRegularFile(paths.manifest, static_cast<unsigned int>(canonicalManifest.size()), static_cast<unsigned int>(canonicalManifest.size()), handles,
-                             error) ||
-            !LockRegularFile(paths.ide, request.ide.bytes, request.ide.bytes, handles, error) ||
-            !LockRegularFile(paths.img, request.img.bytes, request.img.bytes, handles, error))
+        if (!LockRegularFile(paths.manifest, canonicalManifest.size(), canonicalManifest.size(), handles, error) ||
+            !LockRegularFile(paths.ide, request.ide.bytes, request.ide.bytes, handles, error))
             return false;
-        if (!HasExactHash(paths.manifest, canonicalManifestHash) || !HasExactHash(paths.ide, request.ide.sha256) ||
-            !HasExactHash(paths.img, request.img.sha256))
+        if (request.format == 3)
+        {
+            for (size_t index = 0; index < request.images.size(); ++index)
+            {
+                if (!LockRegularFile(paths.images[index], request.images[index].bytes, request.images[index].bytes, handles, error))
+                    return false;
+            }
+        }
+        else if (!LockRegularFile(paths.img, request.img.bytes, request.img.bytes, handles, error))
+            return false;
+        if (!HasExactHash(paths.manifest, canonicalManifestHash) || !HasExactHash(paths.ide, request.ide.sha256))
+        {
+            error = "published cache SHA-256 differs from its semantic content address";
+            return false;
+        }
+        if (request.format == 3)
+        {
+            for (size_t index = 0; index < request.images.size(); ++index)
+            {
+                if (!HasExactHash(paths.images[index], request.images[index].sha256))
+                {
+                    error = "published cache IMG SHA-256 differs from its semantic content address";
+                    return false;
+                }
+            }
+        }
+        else if (!HasExactHash(paths.img, request.img.sha256))
         {
             error = "published cache SHA-256 differs from its semantic content address";
             return false;
@@ -305,7 +405,20 @@ namespace
         return true;
     }
 
-    bool ValidateClosedPublishedDirectory(const SString& directory, std::string& error)
+    std::set<std::wstring> ExpectedCachedFileNames(const SNativeWorldCacheRequestSA& request)
+    {
+        std::set<std::wstring> names{L"native-world.json", L"world.ide"};
+        if (request.format == 3)
+        {
+            for (const SNativeWorldCacheFileSA& image : request.images)
+                names.emplace(SharedUtil::FromUTF8(image.name).c_str());
+        }
+        else
+            names.emplace(L"world.img");
+        return names;
+    }
+
+    bool ValidateClosedPublishedDirectory(const SString& directory, const std::set<std::wstring>& expectedNames, std::string& error)
     {
         WIN32_FIND_DATAW data{};
         const SString    pattern = SString("%s\\*", directory.c_str());
@@ -315,21 +428,19 @@ namespace
             error = SString("cache directory enumeration failed win32=%u", GetLastError());
             return false;
         }
-        unsigned int files = 0;
-        bool         valid = true;
+        std::set<std::wstring> remaining = expectedNames;
+        bool                   valid = true;
         do
         {
             const std::wstring name = data.cFileName;
             if (name == L"." || name == L"..")
                 continue;
-            const bool known = name == L"native-world.json" || name == L"world.ide" || name == L"world.img";
-            if (!known || (data.dwFileAttributes & (FILE_ATTRIBUTE_DIRECTORY | FILE_ATTRIBUTE_REPARSE_POINT)))
+            if (remaining.erase(name) != 1 || (data.dwFileAttributes & (FILE_ATTRIBUTE_DIRECTORY | FILE_ATTRIBUTE_REPARSE_POINT)))
             {
                 valid = false;
-                error = "published cache object is not the exact closed three-file directory";
+                error = "published cache object is not the exact closed file directory";
                 break;
             }
-            ++files;
         } while (FindNextFileW(find, &data));
         const DWORD findError = GetLastError();
         FindClose(find);
@@ -338,9 +449,9 @@ namespace
             error = SString("cache directory enumeration failed win32=%u", findError);
             return false;
         }
-        if (valid && files != 3)
+        if (valid && !remaining.empty())
         {
-            error = "published cache object does not contain exactly three files";
+            error = "published cache object is missing a declared file";
             return false;
         }
         return valid;
@@ -449,8 +560,8 @@ namespace
         if (!success)
         {
             if (error.empty())
-                error = SString("cache quarantine stream identity failed file=%s bytes=%llu expected=%u win32=%u", identity.name.c_str(), total, identity.bytes,
-                                copyError);
+                error = SString("cache quarantine stream identity failed file=%s bytes=%llu expected=%llu win32=%u", identity.name.c_str(), total,
+                                identity.bytes, copyError);
             return false;
         }
         return true;
@@ -472,16 +583,52 @@ namespace
         return safe;
     }
 
-    void RemoveVerifiedDirectory(const SCachePaths& paths, CScopedHandles& directoryGuard)
+    void RemoveVerifiedDirectory(const SNativeWorldCacheRequestSA& request, const SCachePaths& paths, CScopedHandles& directoryGuard)
     {
-        // Resolve and delete each known child by its own verified handle while
-        // the parent guard prevents directory replacement. This cannot follow
-        // a raced junction or delete through an unverified child path.
-        const bool manifestRemoved = DeleteVerifiedChild(paths.manifest);
-        const bool ideRemoved = DeleteVerifiedChild(paths.ide);
-        const bool imgRemoved = DeleteVerifiedChild(paths.img);
+        // Enumerate only canonical leaf names while the verified parent handle
+        // is held. This collects interrupted format-3 publications even when a
+        // prior request used a different bounded IMG count, without traversing
+        // an unknown child.
+        WIN32_FIND_DATAW     data{};
+        const HANDLE         search = FindFirstFileW(SharedUtil::FromUTF8(JoinPath(paths.published, "*")).c_str(), &data);
+        std::vector<SString> children;
+        bool                 safe = search != INVALID_HANDLE_VALUE || GetLastError() == ERROR_FILE_NOT_FOUND;
+        if (search != INVALID_HANDLE_VALUE)
+        {
+            do
+            {
+                const std::string name = SharedUtil::ToUTF8(data.cFileName);
+                if (name == "." || name == "..")
+                    continue;
+                bool known = name == CACHED_MANIFEST_FILE || name == CACHED_IDE_FILE;
+                if (request.format == 3 && name.size() == 8 && name.front() == 'w' && name.compare(4, 4, ".img") == 0 &&
+                    std::all_of(name.begin() + 1, name.begin() + 4, [](unsigned char c) { return c >= '0' && c <= '9'; }))
+                {
+                    const unsigned int index = static_cast<unsigned int>((name[1] - '0') * 100 + (name[2] - '0') * 10 + name[3] - '0');
+                    known = index < MAX_V3_IMAGES;
+                }
+                else if (request.format != 3)
+                    known = known || name == CACHED_IMG_FILE;
+                if (!known || (data.dwFileAttributes & (FILE_ATTRIBUTE_DIRECTORY | FILE_ATTRIBUTE_REPARSE_POINT)))
+                {
+                    safe = false;
+                    break;
+                }
+                children.push_back(JoinPath(paths.published, name));
+            } while (FindNextFileW(search, &data));
+            const DWORD findError = GetLastError();
+            FindClose(search);
+            safe = safe && findError == ERROR_NO_MORE_FILES;
+        }
+
+        bool childrenRemoved = safe;
+        if (safe)
+        {
+            for (const SString& child : children)
+                childrenRemoved = DeleteVerifiedChild(child) && childrenRemoved;
+        }
         directoryGuard.Close();
-        if (manifestRemoved && ideRemoved && imgRemoved)
+        if (childrenRemoved)
             RemoveDirectoryW(SharedUtil::FromUTF8(paths.published).c_str());
     }
 
@@ -495,24 +642,52 @@ namespace
 
     bool CheckTransportCacheQuota(const SCachePaths& paths, const SNativeWorldCacheRequestSA& request, std::string& error)
     {
-        constexpr size_t   MAX_OBJECTS = 4;
-        constexpr uint64_t MAX_TOTAL_BYTES = 1024ULL * 1024ULL * 1024ULL;
-        constexpr uint32_t MAX_IDE_BYTES = 1024U * 1024U;
-        constexpr uint32_t MAX_IMG_BYTES = 256U * 1024U * 1024U;
-        constexpr uint64_t MINIMUM_FREE_MARGIN = 64ULL * 1024ULL * 1024ULL;
+        constexpr size_t        MAX_OBJECTS = 4;
+        constexpr std::uint64_t LEGACY_MAX_TOTAL_BYTES = 1024ULL * 1024ULL * 1024ULL;
+        constexpr std::uint64_t V3_MAX_CACHE_BYTES = 4ULL * (MAX_V3_TOTAL_BYTES + 64ULL * 1024ULL);
+        constexpr std::uint64_t LEGACY_MAX_IDE_BYTES = 1024ULL * 1024ULL;
+        constexpr std::uint64_t V3_MAX_IDE_BYTES = 8ULL * 1024ULL * 1024ULL;
+        constexpr std::uint64_t MINIMUM_V3_FREE_MARGIN = 512ULL * 1024ULL * 1024ULL;
+        constexpr std::uint64_t MINIMUM_LEGACY_FREE_MARGIN = 64ULL * 1024ULL * 1024ULL;
+        const bool              isV3 = request.format == 3;
+        const std::uint64_t     maximumIdeBytes = isV3 ? V3_MAX_IDE_BYTES : LEGACY_MAX_IDE_BYTES;
+        const std::uint64_t     maximumCacheBytes = isV3 ? V3_MAX_CACHE_BYTES : LEGACY_MAX_TOTAL_BYTES;
 
-        const uint64_t requestedBytes = static_cast<uint64_t>(request.maximumManifestBytes) + request.ide.bytes + request.img.bytes;
-        if (request.ide.bytes > MAX_IDE_BYTES || request.img.bytes > MAX_IMG_BYTES || requestedBytes > MAX_TOTAL_BYTES)
+        std::uint64_t payloadBytes = request.ide.bytes;
+        if (isV3)
+        {
+            for (const SNativeWorldCacheFileSA& image : request.images)
+            {
+                if (image.bytes > MAX_V3_IMG_BYTES || payloadBytes > MAX_V3_TOTAL_BYTES - image.bytes)
+                {
+                    error = "native world cache request exceeds the format-3 transport byte policy";
+                    return false;
+                }
+                payloadBytes += image.bytes;
+            }
+        }
+        else
+        {
+            if (request.maximumManifestBytes + payloadBytes > LEGACY_MAX_TOTAL_BYTES - request.img.bytes)
+            {
+                error = "native world cache request exceeds the legacy transport byte policy";
+                return false;
+            }
+            payloadBytes += request.img.bytes;
+        }
+        if (request.ide.bytes > maximumIdeBytes || payloadBytes > (isV3 ? MAX_V3_TOTAL_BYTES : LEGACY_MAX_TOTAL_BYTES))
         {
             error = "native world cache request exceeds the transport byte policy";
             return false;
         }
 
-        ULARGE_INTEGER freeBytes{};
+        const std::uint64_t requestedDiskBytes = request.maximumManifestBytes + payloadBytes;
+        const std::uint64_t freeMargin = isV3 ? std::max(MINIMUM_V3_FREE_MARGIN, requestedDiskBytes / 8) : MINIMUM_LEGACY_FREE_MARGIN;
+        ULARGE_INTEGER      freeBytes{};
         if (!GetDiskFreeSpaceExW(SharedUtil::FromUTF8(paths.pack).c_str(), &freeBytes, nullptr, nullptr) ||
-            freeBytes.QuadPart < requestedBytes + MINIMUM_FREE_MARGIN)
+            requestedDiskBytes > std::numeric_limits<std::uint64_t>::max() - freeMargin || freeBytes.QuadPart < requestedDiskBytes + freeMargin)
         {
-            error = SString("native world cache has insufficient free space required=%llu margin=%llu available=%llu", requestedBytes, MINIMUM_FREE_MARGIN,
+            error = SString("native world cache has insufficient free space required=%llu margin=%llu available=%llu", requestedDiskBytes, freeMargin,
                             freeBytes.QuadPart);
             return false;
         }
@@ -521,7 +696,14 @@ namespace
         const WString    pattern = SharedUtil::FromUTF8(JoinPath(paths.pack, "*"));
         const HANDLE     search = FindFirstFileW(pattern.c_str(), &data);
         size_t           objects = 0;
-        uint64_t         bytes = request.sourceManifestBytes + request.ide.bytes + request.img.bytes;
+        std::uint64_t    bytes = request.sourceManifestBytes + request.ide.bytes;
+        if (isV3)
+        {
+            for (const SNativeWorldCacheFileSA& image : request.images)
+                bytes += image.bytes;
+        }
+        else
+            bytes += request.img.bytes;
         if (search == INVALID_HANDLE_VALUE)
         {
             const DWORD findError = GetLastError();
@@ -554,7 +736,7 @@ namespace
                     valid = false;
                     break;
                 }
-                RemoveVerifiedDirectory(remnant, remnantGuard);
+                RemoveVerifiedDirectory(request, remnant, remnantGuard);
                 if (GetFileAttributesW(SharedUtil::FromUTF8(remnant.published).c_str()) != INVALID_FILE_ATTRIBUTES)
                 {
                     error = "native world cache private sibling could not be safely collected";
@@ -576,13 +758,95 @@ namespace
             SCachePaths    object = MakeCachePaths(request, JoinPath(paths.pack, name));
             CScopedHandles locks;
             if (!LockDirectory(object.published, locks, error) || !LockRegularFile(object.manifest, 1, request.maximumManifestBytes, locks, error) ||
-                !LockRegularFile(object.ide, 1, MAX_IDE_BYTES, locks, error) || !LockRegularFile(object.img, 1, MAX_IMG_BYTES, locks, error))
+                !LockRegularFile(object.ide, 1, maximumIdeBytes, locks, error))
             {
                 valid = false;
                 break;
             }
-            bytes += FileSize(object.manifest) + FileSize(object.ide) + FileSize(object.img);
-            if (objects >= MAX_OBJECTS || bytes > MAX_TOTAL_BYTES)
+
+            std::vector<SString> objectImages;
+            if (isV3)
+            {
+                WIN32_FIND_DATAW child{};
+                const HANDLE     children = FindFirstFileW(SharedUtil::FromUTF8(JoinPath(object.published, "*")).c_str(), &child);
+                if (children == INVALID_HANDLE_VALUE)
+                {
+                    error = "native world cache object enumeration failed";
+                    valid = false;
+                    break;
+                }
+                std::set<unsigned int> indices;
+                bool                   childrenValid = true;
+                do
+                {
+                    const std::string childName = SharedUtil::ToUTF8(child.cFileName);
+                    if (childName == "." || childName == ".." || childName == "native-world.json" || childName == "world.ide")
+                        continue;
+                    if ((child.dwFileAttributes & (FILE_ATTRIBUTE_DIRECTORY | FILE_ATTRIBUTE_REPARSE_POINT)) || childName.size() != 8 ||
+                        childName.front() != 'w' || childName.compare(4, 4, ".img") != 0 ||
+                        !std::all_of(childName.begin() + 1, childName.begin() + 4, [](unsigned char c) { return c >= '0' && c <= '9'; }))
+                    {
+                        childrenValid = false;
+                        break;
+                    }
+                    const unsigned int index = static_cast<unsigned int>((childName[1] - '0') * 100 + (childName[2] - '0') * 10 + childName[3] - '0');
+                    if (index >= MAX_V3_IMAGES || !indices.emplace(index).second)
+                    {
+                        childrenValid = false;
+                        break;
+                    }
+                    objectImages.push_back(JoinPath(object.published, childName));
+                } while (FindNextFileW(children, &child));
+                const DWORD childrenError = GetLastError();
+                FindClose(children);
+                if (!childrenValid || childrenError != ERROR_NO_MORE_FILES || objectImages.empty() || objectImages.size() != indices.size())
+                {
+                    error = "native world cache object contains an invalid format-3 file set";
+                    valid = false;
+                    break;
+                }
+                for (size_t index = 0; index < objectImages.size(); ++index)
+                {
+                    const SString imageName("w%03u.img", static_cast<unsigned int>(index));
+                    if (!indices.count(static_cast<unsigned int>(index)) ||
+                        !LockRegularFile(JoinPath(object.published, imageName.c_str()), 1, MAX_V3_IMG_BYTES, locks, error))
+                    {
+                        valid = false;
+                        break;
+                    }
+                }
+                if (!valid)
+                    break;
+            }
+            else if (!LockRegularFile(object.img, 1, MAX_V3_IMG_BYTES, locks, error))
+            {
+                valid = false;
+                break;
+            }
+
+            const auto addObjectBytes = [&bytes, maximumCacheBytes](std::uint64_t amount)
+            {
+                if (amount > maximumCacheBytes - bytes)
+                    return false;
+                bytes += amount;
+                return true;
+            };
+            if (!addObjectBytes(FileSize(object.manifest)) || !addObjectBytes(FileSize(object.ide)))
+                valid = false;
+            if (valid && isV3)
+            {
+                for (const SString& image : objectImages)
+                {
+                    if (!addObjectBytes(FileSize(image)))
+                    {
+                        valid = false;
+                        break;
+                    }
+                }
+            }
+            else if (valid && !addObjectBytes(FileSize(object.img)))
+                valid = false;
+            if (!valid || objects >= MAX_OBJECTS || bytes > maximumCacheBytes)
             {
                 error = "native world cache transport quota is exhausted";
                 valid = false;
@@ -600,15 +864,23 @@ std::string GenerateNativeWorldContentId(const SNativeWorldCacheRequestSA& reque
     // and key order while still binding compiled policy identity and payload.
     std::ostringstream identity;
     identity.imbue(std::locale::classic());
-    identity << (request.format == 1 ? CONTENT_ID_DOMAIN_V1 : CONTENT_ID_DOMAIN_V2) << '\n' << "format=" << request.format << '\n';
+    identity << (request.format == 1   ? CONTENT_ID_DOMAIN_V1
+                 : request.format == 2 ? CONTENT_ID_DOMAIN_V2
+                                       : CONTENT_ID_DOMAIN_V3)
+             << '\n'
+             << "format=" << request.format << '\n';
     if (request.format == 1)
         identity << "policy=" << request.packId << '\n';
     else
         identity << "policy=" << request.policyKey << '\n' << "pack_id=" << request.packId << '\n';
-    identity << "ide.bytes=" << request.ide.bytes << '\n'
-             << "ide.sha256=" << request.ide.sha256 << '\n'
-             << "img.bytes=" << request.img.bytes << '\n'
-             << "img.sha256=" << request.img.sha256 << '\n';
+    identity << "ide.bytes=" << request.ide.bytes << '\n' << "ide.sha256=" << request.ide.sha256 << '\n';
+    if (request.format == 3)
+    {
+        for (const SNativeWorldCacheFileSA& image : request.images)
+            identity << "img.name=" << image.name << '\n' << "img.bytes=" << image.bytes << '\n' << "img.sha256=" << image.sha256 << '\n';
+    }
+    else
+        identity << "img.bytes=" << request.img.bytes << '\n' << "img.sha256=" << request.img.sha256 << '\n';
     // SharedUtil renders digests in uppercase. Cache paths and manifests use
     // the closed lowercase SHA-256 spelling so C++ and transport tooling share
     // one canonical content ID.
@@ -632,14 +904,11 @@ namespace
         }
         if (retainLease && request.format != 1)
         {
-            error = "format-2 static-world publication cannot acquire an activation lease";
+            error = request.format == 2 ? "format-2 static-world publication cannot acquire an activation lease"
+                                        : "format-3 static-world publication is transport-only and cannot acquire an activation lease";
             return false;
         }
-        if (!IsValidRequestIdentity(request) || request.manifestFileName != CACHED_MANIFEST_FILE || !IsSafeLeafName(request.manifestFileName, 63) ||
-            !IsSafeLeafName(request.ide.name, 63) || !IsSafeLeafName(request.img.name, 63) || request.manifestFileName == request.ide.name ||
-            request.manifestFileName == request.img.name || request.ide.name == request.img.name || !IsLowerSha256(request.sourceManifestSha256) ||
-            !IsLowerSha256(request.ide.sha256) || !IsLowerSha256(request.img.sha256) || !IsLowerSha256(request.contentId) || !request.sourceManifestBytes ||
-            request.sourceManifestBytes > request.maximumManifestBytes || !request.ide.bytes || !request.img.bytes ||
+        if (!IsValidRequestIdentity(request) || !HasValidCacheRequestFiles(request) || !IsLowerSha256(request.contentId) ||
             GenerateNativeWorldContentId(request) != request.contentId)
         {
             error = "native world cache request identity is invalid";
@@ -676,7 +945,9 @@ namespace
         {
             CScopedHandles existingLocks;
             std::string    existingError;
-            if (LockDirectory(paths.published, existingLocks, existingError) && LockAndValidatePublishedFiles(request, paths, existingLocks, existingError))
+            if (LockDirectory(paths.published, existingLocks, existingError) &&
+                ValidateClosedPublishedDirectory(paths.published, ExpectedCachedFileNames(request), existingError) &&
+                LockAndValidatePublishedFiles(request, paths, existingLocks, existingError))
             {
                 if (IsCancelled(request))
                 {
@@ -728,14 +999,48 @@ namespace
         CScopedHandles sourceLocks;
         if (!IsSafeLocalPath(sourceDirectory) || !LockDirectory(sourceDirectory, sourceLocks, error) ||
             !LockRegularFile(sourcePaths.manifest, request.sourceManifestBytes, request.sourceManifestBytes, sourceLocks, error) ||
-            !LockRegularFile(sourcePaths.ide, request.ide.bytes, request.ide.bytes, sourceLocks, error) ||
-            !LockRegularFile(sourcePaths.img, request.img.bytes, request.img.bytes, sourceLocks, error) ||
-            !HasExactHash(sourcePaths.manifest, request.sourceManifestSha256) || !HasExactHash(sourcePaths.ide, request.ide.sha256) ||
-            !HasExactHash(sourcePaths.img, request.img.sha256))
+            !LockRegularFile(sourcePaths.ide, request.ide.bytes, request.ide.bytes, sourceLocks, error))
         {
             if (error.empty())
                 error = "local cache seed SHA-256 differs from its parsed manifest";
             error = "local cache seed is invalid: " + error;
+            return false;
+        }
+        if (request.format == 3)
+        {
+            for (size_t index = 0; index < request.images.size(); ++index)
+            {
+                if (!LockRegularFile(sourcePaths.images[index], request.images[index].bytes, request.images[index].bytes, sourceLocks, error))
+                {
+                    error = "local cache seed is invalid: " + error;
+                    return false;
+                }
+            }
+        }
+        else if (!LockRegularFile(sourcePaths.img, request.img.bytes, request.img.bytes, sourceLocks, error))
+        {
+            error = "local cache seed is invalid: " + error;
+            return false;
+        }
+        if (!HasExactHash(sourcePaths.manifest, request.sourceManifestSha256) || !HasExactHash(sourcePaths.ide, request.ide.sha256))
+        {
+            error = "local cache seed SHA-256 differs from its parsed manifest";
+            return false;
+        }
+        if (request.format == 3)
+        {
+            for (size_t index = 0; index < request.images.size(); ++index)
+            {
+                if (!HasExactHash(sourcePaths.images[index], request.images[index].sha256))
+                {
+                    error = "local cache seed IMG SHA-256 differs from its parsed manifest";
+                    return false;
+                }
+            }
+        }
+        else if (!HasExactHash(sourcePaths.img, request.img.sha256))
+        {
+            error = "local cache seed SHA-256 differs from its parsed manifest";
             return false;
         }
 
@@ -756,20 +1061,33 @@ namespace
             return false;
         }
         const std::string canonicalManifest = BuildCanonicalManifest(request);
-        const bool        filled = WriteAndFlushFile(quarantine.manifest, canonicalManifest, error) &&
-                            CopyHashAndFlushFile(sourcePaths.ide, quarantine.ide, request, request.ide, error) &&
-                            CopyHashAndFlushFile(sourcePaths.img, quarantine.img, request, request.img, error);
+        bool              filled = WriteAndFlushFile(quarantine.manifest, canonicalManifest, error) &&
+                      CopyHashAndFlushFile(sourcePaths.ide, quarantine.ide, request, request.ide, error);
+        if (filled && request.format == 3)
+        {
+            for (size_t index = 0; index < request.images.size(); ++index)
+            {
+                if (!CopyHashAndFlushFile(sourcePaths.images[index], quarantine.images[index], request, request.images[index], error))
+                {
+                    filled = false;
+                    break;
+                }
+            }
+        }
+        else if (filled)
+            filled = CopyHashAndFlushFile(sourcePaths.img, quarantine.img, request, request.img, error);
         if (!filled)
         {
-            RemoveVerifiedDirectory(quarantine, quarantineDirectoryGuard);
+            RemoveVerifiedDirectory(request, quarantine, quarantineDirectoryGuard);
             return false;
         }
 
         CScopedHandles publishedFileLocks;
-        if (!LockAndValidatePublishedFiles(request, quarantine, publishedFileLocks, error))
+        if (!ValidateClosedPublishedDirectory(quarantine.published, ExpectedCachedFileNames(request), error) ||
+            !LockAndValidatePublishedFiles(request, quarantine, publishedFileLocks, error))
         {
             publishedFileLocks.Close();
-            RemoveVerifiedDirectory(quarantine, quarantineDirectoryGuard);
+            RemoveVerifiedDirectory(request, quarantine, quarantineDirectoryGuard);
             error = "cache quarantine validation failed: " + error;
             return false;
         }
@@ -781,7 +1099,7 @@ namespace
             if (error.empty())
                 error = "native world cache publication was cancelled";
             publishedFileLocks.Close();
-            RemoveVerifiedDirectory(quarantine, quarantineDirectoryGuard);
+            RemoveVerifiedDirectory(request, quarantine, quarantineDirectoryGuard);
             error = "cache quarantine semantic audit failed: " + error;
             return false;
         }
@@ -792,7 +1110,7 @@ namespace
         {
             CScopedHandles cancelledGuard;
             if (LockDirectory(quarantine.published, cancelledGuard, error))
-                RemoveVerifiedDirectory(quarantine, cancelledGuard);
+                RemoveVerifiedDirectory(request, quarantine, cancelledGuard);
             error = "native world cache publication was cancelled";
             return false;
         }
@@ -812,7 +1130,9 @@ namespace
             // independently lockable and exact.
             CScopedHandles concurrentLocks;
             if ((publishError != ERROR_ALREADY_EXISTS && publishError != ERROR_FILE_EXISTS && publishError != ERROR_ACCESS_DENIED) ||
-                !LockDirectory(paths.published, concurrentLocks, error) || !LockAndValidatePublishedFiles(request, paths, concurrentLocks, error))
+                !LockDirectory(paths.published, concurrentLocks, error) ||
+                !ValidateClosedPublishedDirectory(paths.published, ExpectedCachedFileNames(request), error) ||
+                !LockAndValidatePublishedFiles(request, paths, concurrentLocks, error))
             {
                 error = SString("cache atomic publication failed win32=%u detail=%s", publishError, error.c_str());
                 return false;
@@ -828,7 +1148,9 @@ namespace
         }
 
         CScopedHandles publishedLocks;
-        if (!LockDirectory(paths.published, publishedLocks, error) || !LockAndValidatePublishedFiles(request, paths, publishedLocks, error))
+        if (!LockDirectory(paths.published, publishedLocks, error) ||
+            !ValidateClosedPublishedDirectory(paths.published, ExpectedCachedFileNames(request), error) ||
+            !LockAndValidatePublishedFiles(request, paths, publishedLocks, error))
         {
             error = "published cache object cannot be locked and revalidated: " + error;
             return false;
@@ -852,12 +1174,13 @@ struct CNativeWorldCacheLeaseSA::SImpl
             CloseHandle(handle);
     }
 
-    std::vector<HANDLE> handles;
-    unsigned int        format{};
-    std::string         policy;
-    std::string         contentId;
-    std::string         ticketId;
-    std::string         directory;
+    std::vector<HANDLE>    handles;
+    unsigned int           format{};
+    std::string            policy;
+    std::string            contentId;
+    std::string            ticketId;
+    std::string            directory;
+    std::set<std::wstring> expectedFileNames;
 };
 
 CNativeWorldCacheLeaseSA::CNativeWorldCacheLeaseSA() = default;
@@ -877,7 +1200,7 @@ bool CNativeWorldCacheLeaseSA::RevalidateClosedObject(std::string& error) const
         error = "native-world cache lease is absent or already completed";
         return false;
     }
-    return ValidateClosedPublishedDirectory(m_impl->directory.c_str(), error);
+    return ValidateClosedPublishedDirectory(m_impl->directory.c_str(), m_impl->expectedFileNames, error);
 }
 
 bool CNativeWorldCacheLeaseSA::Commit(unsigned int format, const std::string& policy, const std::string& contentId, const std::string& ticketId,
@@ -912,11 +1235,10 @@ bool AcquireExistingNativeWorldCacheLease(const SNativeWorldCacheRequestSA& requ
         error = "native-world cache lease output is already active";
         return false;
     }
-    if (!audit || !IsValidRequestIdentity(request) || request.manifestFileName != CACHED_MANIFEST_FILE || request.ide.name != CACHED_IDE_FILE ||
-        request.img.name != CACHED_IMG_FILE || !IsLowerSha256(request.sourceManifestSha256) || !IsLowerSha256(request.ide.sha256) ||
-        !IsLowerSha256(request.img.sha256) || !IsLowerSha256(request.contentId) || !IsLowerHex(ticketId, 32) || !request.sourceManifestBytes ||
-        request.sourceManifestBytes > request.maximumManifestBytes || !request.ide.bytes || !request.img.bytes ||
-        GenerateNativeWorldContentId(request) != request.contentId || BuildCanonicalManifest(request).size() > request.maximumManifestBytes)
+    if (!audit || request.format == 3 || !IsValidRequestIdentity(request) || !HasValidCacheRequestFiles(request) ||
+        request.manifestFileName != CACHED_MANIFEST_FILE || request.ide.name != CACHED_IDE_FILE || request.img.name != CACHED_IMG_FILE ||
+        !IsLowerSha256(request.contentId) || !IsLowerHex(ticketId, 32) || GenerateNativeWorldContentId(request) != request.contentId ||
+        BuildCanonicalManifest(request).size() > request.maximumManifestBytes)
     {
         error = "existing native-world cache selection identity is invalid";
         return false;
@@ -938,9 +1260,11 @@ bool AcquireExistingNativeWorldCacheLease(const SNativeWorldCacheRequestSA& requ
     CScopedHandles locks;
     if (!LockDirectory(paths.dataRoot, locks, error) || !LockDirectory(paths.root, locks, error) || !LockDirectory(paths.format, locks, error) ||
         !LockDirectory(paths.pack, locks, error) || !LockDirectory(paths.published, locks, error) ||
-        !ValidateClosedPublishedDirectory(paths.published, error) || !LockAndValidatePublishedFiles(request, paths, locks, error))
+        !ValidateClosedPublishedDirectory(paths.published, ExpectedCachedFileNames(request), error) ||
+        !LockAndValidatePublishedFiles(request, paths, locks, error))
         return false;
-    if (IsCancelled(request) || !audit(publishedDirectory, error) || IsCancelled(request) || !ValidateClosedPublishedDirectory(paths.published, error))
+    if (IsCancelled(request) || !audit(publishedDirectory, error) || IsCancelled(request) ||
+        !ValidateClosedPublishedDirectory(paths.published, ExpectedCachedFileNames(request), error))
     {
         if (error.empty())
             error = "existing native-world cache audit was cancelled";
@@ -953,6 +1277,7 @@ bool AcquireExistingNativeWorldCacheLease(const SNativeWorldCacheRequestSA& requ
     impl->contentId = request.contentId;
     impl->ticketId = ticketId;
     impl->directory = publishedDirectory;
+    impl->expectedFileNames = ExpectedCachedFileNames(request);
     locks.TransferTo(impl->handles);
     lease.m_impl = std::move(impl);
     return true;

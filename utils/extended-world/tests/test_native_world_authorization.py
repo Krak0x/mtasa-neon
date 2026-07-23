@@ -20,6 +20,8 @@ from native_world_authorization import (  # noqa: E402
     STATIC_WORLD_AUTHORIZATION_BITSTREAM_VERSION,
     STATIC_WORLD_PACK_FORMAT,
     STATIC_WORLD_TRANSPORT_BITSTREAM_VERSION,
+    STATIC_WORLD_V3_PACK_FORMAT,
+    STATIC_WORLD_V3_TRANSPORT_BITSTREAM_VERSION,
     STATIC_WORLD_WIRE_VERSION,
     POLICY_STATIC_WORLD_V1,
     TRANSPORT_BITSTREAM_VERSION,
@@ -205,6 +207,25 @@ class NativeWorldAuthorizationWireAndLifecycleTests(unittest.TestCase):
             with self.subTest(changed=changed), self.assertRaises(RecordError):
                 encode_descriptor(changed, STATIC_WORLD_AUTHORIZATION_BITSTREAM_VERSION)
 
+    def test_format_3_descriptor_is_bounded_multi_img_and_publish_only(self) -> None:
+        descriptor = TransportDescriptor(
+            "native/native-world.json",
+            authorization_requested=False,
+            format=STATIC_WORLD_V3_PACK_FORMAT,
+            file_count=6,
+        )
+        self.assertEqual(encode_descriptor(descriptor, STATIC_WORLD_V3_TRANSPORT_BITSTREAM_VERSION)[:4], b"N\x03\x06\x18")
+        self.assertEqual(
+            decode_descriptor(encode_descriptor(descriptor, STATIC_WORLD_V3_TRANSPORT_BITSTREAM_VERSION), STATIC_WORLD_V3_TRANSPORT_BITSTREAM_VERSION),
+            descriptor,
+        )
+        self.assertEqual(encode_descriptor(descriptor, STATIC_WORLD_V3_TRANSPORT_BITSTREAM_VERSION - 1), b"")
+        with self.assertRaisesRegex(RecordError, "publish-only"):
+            encode_descriptor(replace(descriptor, authorization_requested=True), STATIC_WORLD_V3_TRANSPORT_BITSTREAM_VERSION)
+        with self.assertRaises(RecordError):
+            decode_descriptor(b"A\x03\x06\x18native/native-world.json\x03\x01\x03", STATIC_WORLD_V3_TRANSPORT_BITSTREAM_VERSION)
+        validate_descriptor_placement(("N",) + ("F",) * 6 + ("E",), file_count=6)
+
     def test_descriptor_group_is_unique_first_and_uninterrupted(self) -> None:
         validate_descriptor_placement(("A", "F", "F", "F", "E"))
         validate_descriptor_placement(("F", "E"))
@@ -282,6 +303,29 @@ class NativeWorldAuthorizationSourceContractTests(unittest.TestCase):
         self.assertIn("NativeWorldStaticWorldV2StartupAuthorization", reader)
         self.assertIn("IsClosedNativeWorldStartupAuthorization", client_resource)
         self.assertIn("result.auditProfile.c_str()", client_resource)
+
+    def test_static_world_v3_transport_is_multi_img_and_publish_only(self) -> None:
+        bitstream = (REPO / "Shared/sdk/net/bitstream.h").read_text()
+        server_header = (REPO / "Server/mods/deathmatch/logic/CResource.h").read_text()
+        server_resource = (REPO / "Server/mods/deathmatch/logic/CResource.cpp").read_text()
+        writer = (REPO / "Server/mods/deathmatch/logic/packets/CResourceStartPacket.cpp").read_text()
+        reader = (REPO / "Client/mods/deathmatch/logic/CPacketHandler.cpp").read_text()
+        client_header = (REPO / "Client/mods/deathmatch/logic/CResource.h").read_text()
+        game_interface = (REPO / "Client/sdk/game/CGame.h").read_text()
+        authorization = (REPO / "Client/sdk/core/CNativeWorldAuthorization.h").read_text()
+
+        self.assertLess(bitstream.index("NativeWorldStaticWorldV2StartupAuthorization,"), bitstream.index("NativeWorldStaticWorldV3Transport,"))
+        self.assertIn("std::vector<CResourceFile*>", server_header)
+        self.assertIn('formatAttribute->GetValue() == "3"', server_resource)
+        self.assertIn('policyAttribute->GetValue() == "static-world-v3"', server_resource)
+        self.assertIn("!startupAttribute", server_resource)
+        self.assertIn("NativeWorldStaticWorldV3Transport", writer)
+        self.assertIn("NativeWorldStaticWorldV3Transport", reader)
+        self.assertIn("fileCount >= 3 && fileCount <= 34", reader)
+        self.assertIn("std::vector<CDownloadableResource*>", client_header)
+        self.assertIn("std::vector<SNativeWorldTransportFile>", game_interface)
+        self.assertIn("unsigned int declaredBytes", game_interface)
+        self.assertNotIn("NATIVE_WORLD_STATIC_V3_AUTHORIZATION", authorization)
 
     def test_store_is_dpapi_atomic_unicode_and_inert(self) -> None:
         store = (REPO / "Client/core/CNativeWorldAuthorizationStore.cpp").read_text()

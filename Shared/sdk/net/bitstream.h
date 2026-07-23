@@ -72,6 +72,10 @@ enum class eBitStreamVersion : unsigned short
     // 2026-07-18
     NativeWorldStaticWorldV2StartupAuthorization,
 
+    // Advertises bounded multi-IMG publish-only transport for version 3 static-world packs.
+    // 2026-07-23
+    NativeWorldStaticWorldV3Transport,
+
     // This allows us to automatically increment the BitStreamVersion when things are added to this enum.
     // Make sure you only add things above this comment.
     Next,

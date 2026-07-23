@@ -928,11 +928,28 @@ The updated checkpoint sequence is:
    passed with peak buildings `12128/32000`, ColModels `10932/30000` and
    QuadTreeNodes `225/2048`; no overflow, fatal diagnostic or crash appeared.
    The opt-in harness environment variable was removed after validation.
-5. **Canonical pack v3 and second-city proof.** Add deterministic multi-IMG
-   naming/remap, collision-free hashes, spatial COL/IPL and LOD policy, 64-bit
-   budgets, multi-GiB transactional cache accounting, and reviewed conversion
-   for the catalog admission queue. Prove Carcer through the generic pipeline
-   without city-specific C++.
+5. **Canonical pack v3 and second-city proof — implemented offline; live
+   transport gate pending.** The generic builder now emits deterministic
+   two-character namespaces, contiguous source-first model remaps, spatial
+   COL/IPL pairs and one through 32 canonical VER2 archives. All file sizes,
+   hashes and content identities use checked 64-bit accounting; the client
+   cache admits up to 8 GiB payload objects, retains at most four v3 objects
+   under its aggregate cap, reserves explicit transaction headroom, and
+   re-audits the locked quarantine before atomic publication. The reviewed
+   admission path converts the pinned VC RenderWare 3.4 DFF through local
+   librw, validates and converts all 57 COL2 records, parses Carcer's complete
+   D3D9 texture/mip profile, removes 73 unreachable case-insensitive TXD
+   duplicates by deterministic first-wins policy, and fail-closes two pinned
+   malformed Carcer 2DFX extensions. Full four-catalog audit and 120 tests pass.
+   Two clean Carcer builds at IDs 26,099..29,591 are byte-identical: 3,493
+   model variants, 106 TXDs, 12 spatial pairs, 12,475 placements and four IMG
+   archives for 826,749,674 payload bytes. Format 3 is intentionally
+   publish-only: its runtime envelope proves multi-IMG inventory, IDE mapping,
+   GTA uppercase keys, COL/IPL ownership and placement bounds, but cannot
+   acquire an authorization ticket or mutate GTA. The final live gate must
+   prove first publication then cache hit with `activation=no`, `lease=no` and
+   stock SA unchanged. VC/LC positive LOD links remain fail-closed until the
+   later registrar owns a safe entity-index bootstrap.
 6. **Aggregate no-mutation planner.** Plan SA plus Bullworth, Vice City,
    Liberty City and Carcer together; reject every collision/capacity error
    before mutation and pin all partition boundary cases.

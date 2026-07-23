@@ -24,7 +24,7 @@ from native_world_cache import (  # noqa: E402
     publish_local_seed,
     validate_cache_object,
 )
-from native_world_manifest import STATIC_WORLD_V1_POLICY  # noqa: E402
+from native_world_manifest import STATIC_WORLD_V1_POLICY, STATIC_WORLD_V3_POLICY  # noqa: E402
 
 
 class NativeWorldCacheTest(unittest.TestCase):
@@ -109,6 +109,37 @@ class NativeWorldCacheTest(unittest.TestCase):
         canonical = json.loads(canonical_manifest_bytes(manifest, STATIC_WORLD_V1_POLICY))
         self.assertEqual((2, STATIC_WORLD_V1_POLICY, "test-city"), (canonical["format"], canonical["policy"], canonical["pack_id"]))
 
+    def test_format_3_multi_img_identity_and_transactional_layout(self) -> None:
+        first = b"A" * 2048
+        second = b"B" * 4096
+        (self.seed / "w000.img").write_bytes(first)
+        (self.seed / "w001.img").write_bytes(second)
+        manifest = {
+            "format": 3,
+            "policy": STATIC_WORLD_V3_POLICY,
+            "pack_id": "carcer-city",
+            "files": {
+                "ide": self.manifest["files"]["ide"],
+                "images": [
+                    {"name": "w000.img", "bytes": len(first), "sha256": hashlib.sha256(first).hexdigest()},
+                    {"name": "w001.img", "bytes": len(second), "sha256": hashlib.sha256(second).hexdigest()},
+                ],
+            },
+        }
+        (self.seed / "native-world.json").write_text(json.dumps(manifest), encoding="ascii")
+
+        identity = content_id(manifest, STATIC_WORLD_V3_POLICY)
+        reordered = copy.deepcopy(manifest)
+        reordered["files"]["images"].reverse()
+        self.assertNotEqual(identity, content_id(reordered, STATIC_WORLD_V3_POLICY))
+
+        final, disposition = publish_local_seed(self.seed, self.cache, STATIC_WORLD_V3_POLICY)
+        self.assertEqual("published", disposition)
+        self.assertEqual(self.cache / "v3" / STATIC_WORLD_V3_POLICY / identity, final)
+        self.assertEqual({"native-world.json", "world.ide", "w000.img", "w001.img"}, {path.name for path in final.iterdir()})
+        self.assertEqual(final, open_existing_cache(self.cache, manifest, STATIC_WORLD_V3_POLICY, identity))
+        self.assertEqual(["w000.img", "w001.img"], [item["name"] for item in json.loads(canonical_manifest_bytes(manifest, STATIC_WORLD_V3_POLICY))["files"]["images"]])
+
     def test_corrupt_existing_object_is_quarantined_and_rebuilt(self) -> None:
         final, disposition = publish_local_seed(self.seed, self.cache, "bullworth")
         self.assertEqual("published", disposition)
@@ -149,6 +180,7 @@ class NativeWorldCacheTest(unittest.TestCase):
 
     def test_cpp_contract_uses_pending_guards_and_programdata(self) -> None:
         source = (GAME_SA / "CNativeWorldCacheSA.cpp").read_text(encoding="utf-8")
+        header = (GAME_SA / "CNativeWorldCacheSA.h").read_text(encoding="utf-8")
         self.assertIn("SharedUtil::GetMTADataPath()", source)
         self.assertIn("g_pendingLocks", source)
         self.assertIn("CommitNativeWorldCacheLease", source)
@@ -162,6 +194,14 @@ class NativeWorldCacheTest(unittest.TestCase):
         self.assertLess(validation, close)
         self.assertLess(close, rename)
         self.assertLess(rename, final_validation)
+        self.assertIn("std::uint64_t bytes", header)
+        self.assertIn("std::vector<SNativeWorldCacheFileSA> images", header)
+        self.assertIn("MAX_V3_TOTAL_BYTES", source)
+        self.assertIn("MINIMUM_V3_FREE_MARGIN", source)
+        self.assertIn("requestedDiskBytes / 8", source)
+        self.assertIn("request.format == 3", source)
+        acquire = source[source.index("bool AcquireExistingNativeWorldCacheLease") :]
+        self.assertIn("request.format == 3", acquire)
 
 
 if __name__ == "__main__":

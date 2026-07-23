@@ -10,15 +10,17 @@
 #pragma once
 
 #include <atomic>
+#include <cstdint>
 #include <functional>
 #include <memory>
 #include <string>
+#include <vector>
 
 struct SNativeWorldCacheFileSA
 {
-    std::string  name;
-    std::string  sha256;
-    unsigned int bytes{};
+    std::string   name;
+    std::string   sha256;
+    std::uint64_t bytes{};
 };
 
 struct SNativeWorldCacheRequestSA
@@ -30,12 +32,15 @@ struct SNativeWorldCacheRequestSA
     std::string                       packId;
     std::string                       manifestFileName;
     std::string                       sourceManifestSha256;
-    unsigned int                      sourceManifestBytes{};
-    unsigned int                      maximumManifestBytes{};
+    std::uint64_t                     sourceManifestBytes{};
+    std::uint64_t                     maximumManifestBytes{};
     std::string                       contentId;
     std::shared_ptr<std::atomic_bool> cancellation;
     SNativeWorldCacheFileSA           ide;
-    SNativeWorldCacheFileSA           img;
+    // Formats 1 and 2 use img. Format 3 uses images and leaves img empty,
+    // keeping the legacy request layout source-compatible for its callers.
+    SNativeWorldCacheFileSA              img;
+    std::vector<SNativeWorldCacheFileSA> images;
 };
 
 using NativeWorldCacheAuditSA = std::function<bool(const std::string& quarantineDirectory, std::string& error)>;

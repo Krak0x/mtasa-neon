@@ -12,13 +12,19 @@ from typing import Any
 
 FORMAT_1_ROOT_KEYS = {"format", "pack_id", "files"}
 FORMAT_2_ROOT_KEYS = {"format", "policy", "pack_id", "files"}
+FORMAT_3_ROOT_KEYS = {"format", "policy", "pack_id", "files"}
 STATIC_WORLD_V1_POLICY = "static-world-v1"
+STATIC_WORLD_V3_POLICY = "static-world-v3"
 LEAF = re.compile(r"^[a-z0-9_.-]+$")
 IDENTIFIER = re.compile(r"^[a-z0-9_-]{1,15}$")
 SHA256 = re.compile(r"^[0-9a-f]{64}$")
 MAX_IDE_BYTES = 1_048_576
 MAX_IMG_BYTES = 131_072 * 2048
-MAX_MANIFEST_BYTES = 4096
+MAX_V3_IDE_BYTES = 8 * 1024 * 1024
+MAX_V3_IMG_BYTES = 256 * 1024 * 1024
+MAX_V3_IMAGES = 32
+MAX_V3_TOTAL_BYTES = 8 * 1024 * 1024 * 1024
+MAX_MANIFEST_BYTES = 64 * 1024
 
 
 def _exact(value: Any, keys: set[str], context: str) -> dict[str, Any]:
@@ -54,17 +60,40 @@ def validate_runtime_manifest(value: Any) -> dict[str, Any]:
         root = _exact(value, FORMAT_2_ROOT_KEYS, "root")
         if root["policy"] != STATIC_WORLD_V1_POLICY:
             raise ValueError(f"policy must be {STATIC_WORLD_V1_POLICY}")
+    elif value["format"] == 3:
+        root = _exact(value, FORMAT_3_ROOT_KEYS, "root")
+        if root["policy"] != STATIC_WORLD_V3_POLICY:
+            raise ValueError(f"policy must be {STATIC_WORLD_V3_POLICY}")
     else:
-        raise ValueError("format must be 1 or 2")
+        raise ValueError("format must be 1, 2, or 3")
     if not isinstance(root["pack_id"], str) or not IDENTIFIER.fullmatch(root["pack_id"]):
         raise ValueError("pack_id is invalid")
     if value["format"] == 1 and root["pack_id"] != "bullworth":
         raise ValueError("format 1 pack_id must be bullworth")
-    files = _exact(root["files"], {"ide", "img"}, "files")
-    _file(files["ide"], "files.ide", MAX_IDE_BYTES)
-    img = _file(files["img"], "files.img", MAX_IMG_BYTES)
-    if img["bytes"] % 2048:
-        raise ValueError("files.img.bytes must be sector aligned")
+    if value["format"] == 3:
+        files = _exact(root["files"], {"ide", "images"}, "files")
+        ide = _file(files["ide"], "files.ide", MAX_V3_IDE_BYTES)
+        images = files["images"]
+        if not isinstance(images, list) or not 1 <= len(images) <= MAX_V3_IMAGES:
+            raise ValueError("files.images must be a bounded non-empty array")
+        names: set[str] = {ide["name"]}
+        total_bytes = ide["bytes"]
+        for index, image_value in enumerate(images):
+            image = _file(image_value, f"files.images[{index}]", MAX_V3_IMG_BYTES)
+            if image["bytes"] % 2048:
+                raise ValueError(f"files.images[{index}].bytes must be sector aligned")
+            if image["name"] in names:
+                raise ValueError("files contains duplicate filenames")
+            names.add(image["name"])
+            total_bytes += image["bytes"]
+        if total_bytes > MAX_V3_TOTAL_BYTES:
+            raise ValueError("format 3 payload exceeds the compiled total-byte policy")
+    else:
+        files = _exact(root["files"], {"ide", "img"}, "files")
+        _file(files["ide"], "files.ide", MAX_IDE_BYTES)
+        img = _file(files["img"], "files.img", MAX_IMG_BYTES)
+        if img["bytes"] % 2048:
+            raise ValueError("files.img.bytes must be sector aligned")
     return root
 
 
@@ -85,14 +114,18 @@ def parse_runtime_manifest(text: str) -> dict[str, Any]:
             result[key] = value
         return result
 
-    return validate_runtime_manifest(json.loads(text, object_pairs_hook=object_pairs))
+    result = validate_runtime_manifest(json.loads(text, object_pairs_hook=object_pairs))
+    if result["format"] in (1, 2) and len(encoded) > 4096:
+        raise ValueError("legacy manifest exceeds its closed 4096-byte policy")
+    return result
 
 
 def build_runtime_manifest(
     report: dict[str, Any],
     ide_path: Path,
-    img_path: Path,
+    img_path: Path | None = None,
     *,
+    img_paths: list[Path] | None = None,
     format_version: int = 1,
     policy: str | None = None,
     pack_id: str = "bullworth",
@@ -100,19 +133,37 @@ def build_runtime_manifest(
     """Describe only payload identity; inventories are derived from bytes at runtime."""
 
     del report  # Round-trip validation must finish before this function is called.
-    files = {
-        "ide": {
-            "name": ide_path.name,
-            "bytes": ide_path.stat().st_size,
-            "sha256": hashlib.sha256(ide_path.read_bytes()).hexdigest(),
-        },
-        "img": {
-            "name": img_path.name,
-            "bytes": img_path.stat().st_size,
-            "sha256": hashlib.sha256(img_path.read_bytes()).hexdigest(),
-        },
+    ide = {
+        "name": ide_path.name,
+        "bytes": ide_path.stat().st_size,
+        "sha256": _sha256(ide_path),
     }
-    if format_version == 2:
+    if format_version == 3:
+        if img_path is not None or not img_paths:
+            raise ValueError("format 3 requires img_paths and no single img_path")
+        files = {
+            "ide": ide,
+            "images": [
+                {
+                    "name": path.name,
+                    "bytes": path.stat().st_size,
+                    "sha256": _sha256(path),
+                }
+                for path in img_paths
+            ],
+        }
+    else:
+        if img_path is None or img_paths is not None:
+            raise ValueError("formats 1 and 2 require exactly one img_path")
+        files = {
+            "ide": ide,
+            "img": {
+                "name": img_path.name,
+                "bytes": img_path.stat().st_size,
+                "sha256": _sha256(img_path),
+            },
+        }
+    if format_version in (2, 3):
         manifest = {
             "format": format_version,
             "policy": policy,
@@ -125,9 +176,17 @@ def build_runtime_manifest(
             "pack_id": pack_id,
             "files": files,
         }
-    if format_version != 2 and policy is not None:
+    if format_version == 1 and policy is not None:
         raise ValueError("format 1 does not carry a policy field")
     return validate_runtime_manifest(manifest)
+
+
+def _sha256(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as stream:
+        while block := stream.read(1024 * 1024):
+            digest.update(block)
+    return digest.hexdigest()
 
 
 def dump_runtime_manifest(path: Path, manifest: dict[str, Any]) -> None:

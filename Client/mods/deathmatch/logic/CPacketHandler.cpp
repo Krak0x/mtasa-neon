@@ -23,6 +23,8 @@
 #include "net/SyncStructures.h"
 #include "CServerInfo.h"
 
+#include <cstdint>
+
 using std::list;
 
 class CCore;
@@ -5159,8 +5161,8 @@ void CPacketHandler::Packet_LuaEvent(NetBitStreamInterface& bitStream)
 void CPacketHandler::Packet_ResourceStart(NetBitStreamInterface& bitStream)
 {
     // Used for dummy progress when a server has over 50MB of client files to process
-    static uint         uiTotalSizeProcessed = 0;
-    static CElapsedTime totalSizeProcessedResetTimer;
+    static std::uint64_t uiTotalSizeProcessed = 0;
+    static CElapsedTime  totalSizeProcessedResetTimer;
     if (totalSizeProcessedResetTimer.Get() > 5000)
         uiTotalSizeProcessed = 0;
 
@@ -5314,13 +5316,15 @@ void CPacketHandler::Packet_ResourceStart(NetBitStreamInterface& bitStream)
                         break;
                     }
 
-                    const bool supportedTransport = format == 1
-                                                        ? g_pNet->CanServerBitStream(eBitStreamVersion::NativeWorldPackTransport)
-                                                        : format == 2 && g_pNet->CanServerBitStream(eBitStreamVersion::NativeWorldStaticWorldV2Transport);
+                    const bool supportedTransport = format == 1 ? g_pNet->CanServerBitStream(eBitStreamVersion::NativeWorldPackTransport)
+                                                    : format == 2
+                                                        ? g_pNet->CanServerBitStream(eBitStreamVersion::NativeWorldStaticWorldV2Transport)
+                                                        : format == 3 && g_pNet->CanServerBitStream(eBitStreamVersion::NativeWorldStaticWorldV3Transport);
                     const bool supportedAuthorization =
                         !startupAuthorization || (format == 1 && g_pNet->CanServerBitStream(eBitStreamVersion::NativeWorldStartupAuthorization)) ||
                         (format == 2 && g_pNet->CanServerBitStream(eBitStreamVersion::NativeWorldStaticWorldV2StartupAuthorization));
-                    if (!supportedTransport || !supportedAuthorization || fileCount != 3 || manifestLength == 0)
+                    const bool supportedFileCount = format == 3 ? fileCount >= 3 && fileCount <= 34 : fileCount == 3;
+                    if (!supportedTransport || !supportedAuthorization || !supportedFileCount || manifestLength == 0)
                     {
                         bFatalError = true;
                         AddReportLog(2081, "Malformed or unsupported native world transport descriptor");
@@ -5329,7 +5333,7 @@ void CPacketHandler::Packet_ResourceStart(NetBitStreamInterface& bitStream)
 
                     std::string manifestPath(manifestLength, '\0');
                     if (!bitStream.Read(manifestPath.data(), manifestLength) || !IsCanonicalNativeWorldTransportPath(manifestPath) ||
-                        !pResource->SetNativeWorldTransport(format, manifestPath.c_str()))
+                        !pResource->SetNativeWorldTransport(format, manifestPath.c_str(), fileCount))
                     {
                         bFatalError = true;
                         AddReportLog(2081, "Invalid native world transport manifest path");
@@ -5440,7 +5444,8 @@ void CPacketHandler::Packet_ResourceStart(NetBitStreamInterface& bitStream)
                             uint uiDownloadSize = static_cast<uint>(dChunkDataSize);
                             uiTotalSizeProcessed += uiDownloadSize;
                             if (uiTotalSizeProcessed / 1024 / 1024 > 50)
-                                g_pCore->UpdateDummyProgress(uiTotalSizeProcessed / 1024 / 1024, " MB");
+                                g_pCore->UpdateDummyProgress(
+                                    static_cast<int>(std::min<std::uint64_t>(uiTotalSizeProcessed / 1024 / 1024, std::numeric_limits<int>::max())), " MB");
 
                             // Create the resource downloadable
                             CDownloadableResource* pDownloadableResource = nullptr;
@@ -5484,7 +5489,7 @@ void CPacketHandler::Packet_ResourceStart(NetBitStreamInterface& bitStream)
                                 if (nativeWorldFilesRemaining == 0 && !pResource->IsNativeWorldTransportDescriptorValid())
                                 {
                                     bFatalError = true;
-                                    AddReportLog(2081, "Native world transport manifest is not one of its three files");
+                                    AddReportLog(2081, "Native world transport descriptor does not bind its exact file group");
                                     break;
                                 }
                             }

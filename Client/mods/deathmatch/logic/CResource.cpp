@@ -17,6 +17,7 @@
 #include "luadefs/CLuaPlayerDefs.h"
 #include "luadefs/CLuaVehicleDefs.h"
 
+#include <cstdint>
 #include <limits>
 
 using namespace std;
@@ -436,14 +437,17 @@ bool CResource::CanBeLoaded()
     return !IsWaitingForInitialDownloads() && VerifyNativeWorldTransportReady();
 }
 
-bool CResource::SetNativeWorldTransport(unsigned char format, const SString& manifestPath)
+bool CResource::SetNativeWorldTransport(unsigned char format, const SString& manifestPath, unsigned char expectedFileCount)
 {
-    if (m_nativeWorldTransport.present || (format != 1 && format != 2))
+    const bool validFileCount = format == 3 ? expectedFileCount >= 3 && expectedFileCount <= 34 : expectedFileCount == 3;
+    if (m_nativeWorldTransport.present || (format != 1 && format != 2 && format != 3) || !validFileCount)
         return false;
 
     m_nativeWorldTransport.present = true;
     m_nativeWorldTransport.format = format;
     m_nativeWorldTransport.manifestPath = manifestPath;
+    m_nativeWorldTransport.expectedFileCount = expectedFileCount;
+    m_nativeWorldTransport.files.reserve(expectedFileCount);
     return true;
 }
 
@@ -462,33 +466,43 @@ bool CResource::SetNativeWorldStartupAuthorization(unsigned char wireVersion, un
 
 bool CResource::AddNativeWorldTransportFile(CDownloadableResource* file)
 {
-    if (!m_nativeWorldTransport.present || !file || m_nativeWorldTransport.fileCount >= m_nativeWorldTransport.files.size())
+    if (!m_nativeWorldTransport.present || !file || m_nativeWorldTransport.files.size() >= m_nativeWorldTransport.expectedFileCount)
         return false;
 
-    for (size_t i = 0; i < m_nativeWorldTransport.fileCount; ++i)
+    for (CDownloadableResource* existing : m_nativeWorldTransport.files)
     {
-        if (m_nativeWorldTransport.files[i] == file || !strcmp(m_nativeWorldTransport.files[i]->GetShortName(), file->GetShortName()))
+        if (existing == file || !strcmp(existing->GetShortName(), file->GetShortName()))
             return false;
     }
 
-    m_nativeWorldTransport.files[m_nativeWorldTransport.fileCount++] = file;
+    m_nativeWorldTransport.files.push_back(file);
     file->SetNativeWorldTransportFile();
     return true;
 }
 
 bool CResource::IsNativeWorldTransportDescriptorValid() const
 {
-    if (!m_nativeWorldTransport.present || (m_nativeWorldTransport.format != 1 && m_nativeWorldTransport.format != 2) ||
-        m_nativeWorldTransport.fileCount != m_nativeWorldTransport.files.size())
+    if (!m_nativeWorldTransport.present || (m_nativeWorldTransport.format != 1 && m_nativeWorldTransport.format != 2 && m_nativeWorldTransport.format != 3) ||
+        m_nativeWorldTransport.expectedFileCount != m_nativeWorldTransport.files.size())
         return false;
 
-    constexpr uint64_t MAXIMUM_MANIFEST_BYTES = 4096;
-    constexpr uint64_t MAXIMUM_IDE_BYTES = 1024 * 1024;
-    constexpr uint64_t MAXIMUM_IMG_BYTES = 256 * 1024 * 1024;
-    uint64_t           totalBytes = 0;
-    unsigned int       manifestCount = 0;
-    unsigned int       ideCount = 0;
-    unsigned int       imgCount = 0;
+    constexpr uint64_t LEGACY_MAXIMUM_MANIFEST_BYTES = 4096;
+    constexpr uint64_t LEGACY_MAXIMUM_IDE_BYTES = 1024 * 1024;
+    constexpr uint64_t V3_MAXIMUM_MANIFEST_BYTES = 64 * 1024;
+    constexpr uint64_t V3_MAXIMUM_IDE_BYTES = 8 * 1024 * 1024;
+    constexpr uint64_t MAXIMUM_IMG_BYTES = 256ULL * 1024 * 1024;
+    constexpr uint64_t V3_MAXIMUM_TOTAL_BYTES = 8ULL * 1024 * 1024 * 1024;
+    const bool         isV3 = m_nativeWorldTransport.format == 3;
+    const uint64_t     maximumManifestBytes = isV3 ? V3_MAXIMUM_MANIFEST_BYTES : LEGACY_MAXIMUM_MANIFEST_BYTES;
+    const uint64_t     maximumIdeBytes = isV3 ? V3_MAXIMUM_IDE_BYTES : LEGACY_MAXIMUM_IDE_BYTES;
+    const uint64_t     maximumTotalBytes =
+        isV3 ? V3_MAXIMUM_MANIFEST_BYTES + V3_MAXIMUM_TOTAL_BYTES : LEGACY_MAXIMUM_MANIFEST_BYTES + LEGACY_MAXIMUM_IDE_BYTES + MAXIMUM_IMG_BYTES;
+    uint64_t      totalBytes = 0;
+    uint64_t      v3PayloadBytes = 0;
+    unsigned int  manifestCount = 0;
+    unsigned int  ideCount = 0;
+    unsigned int  imgCount = 0;
+    std::uint64_t v3ImageIndexMask = 0;
 
     for (CDownloadableResource* file : m_nativeWorldTransport.files)
     {
@@ -498,30 +512,50 @@ bool CResource::IsNativeWorldTransportDescriptorValid() const
         const std::filesystem::path relativePath(file->GetShortName());
         const std::string           leaf = relativePath.filename().generic_string();
         const uint64_t              bytes = file->GetDownloadSize();
+        if (bytes > maximumTotalBytes - totalBytes)
+            return false;
         totalBytes += bytes;
         if (m_nativeWorldTransport.manifestPath == file->GetShortName())
         {
-            if (leaf != "native-world.json" || bytes > MAXIMUM_MANIFEST_BYTES)
+            if (leaf != "native-world.json" || bytes > maximumManifestBytes)
                 return false;
             ++manifestCount;
         }
         else if (relativePath.extension() == ".ide")
         {
-            if (bytes > MAXIMUM_IDE_BYTES)
+            if ((isV3 && leaf != "world.ide") || bytes > maximumIdeBytes)
                 return false;
+            if (isV3 && bytes > V3_MAXIMUM_TOTAL_BYTES - v3PayloadBytes)
+                return false;
+            v3PayloadBytes += bytes;
             ++ideCount;
         }
         else if (relativePath.extension() == ".img")
         {
-            if (bytes > MAXIMUM_IMG_BYTES)
+            const bool canonicalV3ImageName = leaf.size() == 8 && leaf.front() == 'w' &&
+                                              std::all_of(leaf.begin() + 1, leaf.begin() + 4, [](unsigned char c) { return c >= '0' && c <= '9'; }) &&
+                                              leaf.compare(4, 4, ".img") == 0;
+            if (bytes > MAXIMUM_IMG_BYTES || (isV3 && !canonicalV3ImageName))
                 return false;
+            if (isV3)
+            {
+                const unsigned int index = static_cast<unsigned int>((leaf[1] - '0') * 100 + (leaf[2] - '0') * 10 + leaf[3] - '0');
+                if (index >= 32 || (v3ImageIndexMask & (1ULL << index)))
+                    return false;
+                v3ImageIndexMask |= 1ULL << index;
+                if (bytes > V3_MAXIMUM_TOTAL_BYTES - v3PayloadBytes)
+                    return false;
+                v3PayloadBytes += bytes;
+            }
             ++imgCount;
         }
         else
             return false;
     }
 
-    return manifestCount == 1 && ideCount == 1 && imgCount == 1 && totalBytes <= MAXIMUM_MANIFEST_BYTES + MAXIMUM_IDE_BYTES + MAXIMUM_IMG_BYTES;
+    const bool validV3Images = imgCount >= 1 && imgCount <= 32 && v3ImageIndexMask == ((1ULL << imgCount) - 1);
+    return manifestCount == 1 && ideCount == 1 && (isV3 ? validV3Images : imgCount == 1) && totalBytes <= maximumTotalBytes &&
+           (!isV3 || v3PayloadBytes <= V3_MAXIMUM_TOTAL_BYTES);
 }
 
 bool CResource::VerifyNativeWorldTransportReady()
@@ -563,10 +597,9 @@ bool CResource::VerifyNativeWorldTransportReady()
             else
                 m_nativeWorldTransport.authorizationError = captureError.c_str();
         }
-        for (size_t index = 0; index < m_nativeWorldTransport.files.size(); ++index)
+        for (CDownloadableResource* file : m_nativeWorldTransport.files)
         {
-            CDownloadableResource* file = m_nativeWorldTransport.files[index];
-            offer.files[index] = {file->GetShortName(), file->GetName(), file->GetDownloadSize()};
+            offer.files.push_back({file->GetShortName(), file->GetName(), file->GetDownloadSize()});
         }
 
         // Hashing and the closed IMG payload audit can process hundreds of MB.
@@ -589,8 +622,9 @@ bool CResource::VerifyNativeWorldTransportReady()
             WriteDebugEvent(message);
             return true;
         }
-        const SString message("[NativeWorldTransport] state=audit-started resource=%s format=%u manifest=%s files=3 activation=no lease=no", *m_strResourceName,
-                              m_nativeWorldTransport.format, *m_nativeWorldTransport.manifestPath);
+        const SString message("[NativeWorldTransport] state=audit-started resource=%s format=%u manifest=%s files=%u activation=no lease=no",
+                              *m_strResourceName, m_nativeWorldTransport.format, *m_nativeWorldTransport.manifestPath,
+                              static_cast<unsigned int>(m_nativeWorldTransport.files.size()));
         AddReportLog(7470, message);
         WriteDebugEvent(message);
         return false;
@@ -667,9 +701,10 @@ bool CResource::VerifyNativeWorldTransportReady()
             }
         }
         const SString message(
-            "[NativeWorldTransport] state=cached resource=%s format=%u manifest=%s files=3 offerId=%s contentId=%s disposition=%s directory=%s "
+            "[NativeWorldTransport] state=cached resource=%s format=%u manifest=%s files=%u offerId=%s contentId=%s disposition=%s directory=%s "
             "audit=%s publish=atomic activation=no lease=no restart-required=%s",
-            *m_strResourceName, m_nativeWorldTransport.format, *m_nativeWorldTransport.manifestPath, result.offerId.c_str(), result.contentId.c_str(),
+            *m_strResourceName, m_nativeWorldTransport.format, *m_nativeWorldTransport.manifestPath,
+            static_cast<unsigned int>(m_nativeWorldTransport.files.size()), result.offerId.c_str(), result.contentId.c_str(),
             result.cacheHit ? "hit" : "published", result.publishedDirectory.c_str(), result.auditProfile.c_str(),
             m_nativeWorldTransport.authorizationRecordPublished ? "yes" : "no");
         AddReportLog(7471, message);
@@ -681,9 +716,10 @@ bool CResource::VerifyNativeWorldTransportReady()
         const char*   activationState = result.existingActivationActive ? "active" : "no";
         const char*   leaseState = result.existingActivationActive ? "process" : "no";
         const char*   preservedState = result.existingActivationActive ? "existing-native-world=preserved" : "stock-behavior=preserved";
-        const SString message("[NativeWorldTransport] state=refused resource=%s format=%u manifest=%s files=3 reason=%s activation=%s lease=%s %s",
-                              *m_strResourceName, m_nativeWorldTransport.format, *m_nativeWorldTransport.manifestPath, result.error.c_str(), activationState,
-                              leaseState, preservedState);
+        const SString message("[NativeWorldTransport] state=refused resource=%s format=%u manifest=%s files=%u reason=%s activation=%s lease=%s %s",
+                              *m_strResourceName, m_nativeWorldTransport.format, *m_nativeWorldTransport.manifestPath,
+                              static_cast<unsigned int>(m_nativeWorldTransport.files.size()), result.error.c_str(), activationState, leaseState,
+                              preservedState);
         AddReportLog(7472, message);
         WriteDebugEvent(message);
         g_pCore->GetConsole()->Printf("%s", *message);
