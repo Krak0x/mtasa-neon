@@ -42,6 +42,7 @@ public:
     virtual void               SetDistantLightsEnabled(bool enabled) = 0;
     virtual bool               GetDistantLightsEnabled() const = 0;
     virtual bool               SetDistantLightsDrawDistance(float distance) = 0;
+    virtual bool               SetDistantLightsCoronaRadiusMultiplier(float multiplier) = 0;
     virtual void               RebuildDistantLights() = 0;
     virtual void               DoPulseDistantLights() = 0;
     virtual SDistantLightStats GetDistantLightStats() const = 0;

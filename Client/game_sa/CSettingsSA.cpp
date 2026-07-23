@@ -15,6 +15,7 @@
 #include "CCoronasSA.h"
 #include "CGameSA.h"
 #include "CHudSA.h"
+#include "CModelInfoSA.h"
 #include "CSettingsSA.h"
 #include "CCameraSA.h"
 #include "CCamSA.h"
@@ -729,6 +730,11 @@ void CSettingsSA::ResetCoronaReflectionsEnabled()
 void CSettingsSA::SetCoronaReflectionsControlledByScript(bool bViaScript)
 {
     m_bCoronaReflectionsViaScript = bViaScript;
+}
+
+void CSettingsSA::SetExtendedWorldDrawDistancePreference(bool bEnabled, float fDistance)
+{
+    CModelInfoSA::SetExtendedLodPreference(bEnabled, fDistance);
 }
 
 ////////////////////////////////////////////////

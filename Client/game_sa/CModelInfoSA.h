@@ -341,6 +341,9 @@ protected:
     RpClump*                                                                    m_pCustomClump;
     static std::map<unsigned short, int>                                        ms_RestreamTxdIDMap;
     static std::map<DWORD, float>                                               ms_ModelDefaultLodDistanceMap;
+    static std::map<DWORD, float>                                               ms_ExtendedLodBaseDistanceMap;
+    static bool                                                                 ms_ExtendedLodPreferenceEnabled;
+    static float                                                                ms_ExtendedLodPreferenceDistance;
     static std::map<DWORD, unsigned short>                                      ms_ModelDefaultFlagsMap;
     static std::map<DWORD, BYTE>                                                ms_ModelDefaultAlphaTransparencyMap;
     static std::unordered_map<std::uint32_t, std::map<VehicleDummies, CVector>> ms_ModelDefaultDummiesPosition;
@@ -402,6 +405,7 @@ public:
     float          GetLODDistance();
     float          GetOriginalLODDistance();
     void           SetLODDistance(float fDistance, bool bOverrideMaxDistance = false);
+    bool           ResetLODDistance() override;
     static void    StaticResetLodDistances();
     void           RestreamIPL();
     static void    StaticFlushPendingRestreamIPL();
@@ -490,9 +494,13 @@ public:
     bool IsDamageableAtomic() override;
 
     static bool IsVehicleModel(std::uint32_t model) noexcept;
+    static void SetExtendedLodPreference(bool bEnabled, float fDistance);
+    static void ReapplyExtendedLodPreference();
 
 private:
-    void CopyStreamingInfoFromModel(ushort usCopyFromModelID);
-    void RwSetSupportedUpgrades(RwFrame* parent, DWORD dwModel);
-    void SetModelSpecialType(eModelSpecialType eType, bool bState);
+    static void ApplyExtendedLodPreference();
+    static void RestoreExtendedLodPreference();
+    void        CopyStreamingInfoFromModel(ushort usCopyFromModelID);
+    void        RwSetSupportedUpgrades(RwFrame* parent, DWORD dwModel);
+    void        SetModelSpecialType(eModelSpecialType eType, bool bState);
 };

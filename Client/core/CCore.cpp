@@ -12,6 +12,7 @@
 #include "StdInc.h"
 #include "CNativeWorldAuthorizationStore.h"
 #include "SharedUtil.Hash.h"
+#include <game/CCoronas.h>
 #include <game/CGame.h>
 #include <game/CSettings.h>
 #include <Accctrl.h>
@@ -90,6 +91,31 @@ static HMODULE WINAPI SkipDirectPlay_LoadLibraryA(LPCSTR fileName)
 
 namespace
 {
+    constexpr int   kDistantLightsDrawDistanceMin = 300;
+    constexpr int   kDistantLightsDrawDistanceMax = 5000;
+    constexpr float kDistantLightsCoronaRadiusMultiplierMin = 0.1f;
+    constexpr float kDistantLightsCoronaRadiusMultiplierMax = 1.0f;
+    constexpr int   kExtendedWorldDrawDistanceMin = 300;
+    constexpr int   kExtendedWorldDrawDistanceMax = 5000;
+
+    void ApplyDistantLightPreferences(CGame* game, bool resetRuntimeState = false)
+    {
+        if (!game)
+            return;
+
+        const int drawDistance = std::clamp(CVARS_GET_VALUE<int>("distant_lights_draw_distance"), kDistantLightsDrawDistanceMin, kDistantLightsDrawDistanceMax);
+        const float radiusMultiplier = std::clamp(CVARS_GET_VALUE<float>("distant_lights_corona_radius_multiplier"), kDistantLightsCoronaRadiusMultiplierMin,
+                                                  kDistantLightsCoronaRadiusMultiplierMax);
+        const bool  enabled = CVARS_GET_VALUE<bool>("distant_lights_enabled");
+
+        CCoronas* coronas = game->GetCoronas();
+        if (resetRuntimeState)
+            coronas->SetDistantLightsEnabled(false);
+        coronas->SetDistantLightsDrawDistance(static_cast<float>(drawDistance));
+        coronas->SetDistantLightsCoronaRadiusMultiplier(radiusMultiplier);
+        coronas->SetDistantLightsEnabled(enabled);
+    }
+
     eBitStreamVersion RequiredNativeWorldAuthorizationCapability(unsigned char packFormat)
     {
         return packFormat == NATIVE_WORLD_BULLWORTH_FORMAT   ? eBitStreamVersion::NativeWorldStartupAuthorization
@@ -1240,6 +1266,8 @@ void CCore::ApplyGameSettings()
     pGameSettings->ResetVehiclesLODDistance();
     pGameSettings->ResetPedsLODDistance();
     pGameSettings->ResetCoronaReflectionsEnabled();
+    ApplyDistantLightPreferences(m_pGame);
+    ApplyExtendedWorldDrawDistancePreferences();
     CVARS_GET("dynamic_ped_shadows", bVal);
     pGameSettings->SetDynamicPedShadowsEnabled(bVal);
     pController->SetVerticalAimSensitivityRawValue(CVARS_GET_VALUE<float>("vertical_aim_sensitivity"));
@@ -1247,6 +1275,23 @@ void CCore::ApplyGameSettings()
     CVARS_GET("mastervolume", fVal);
     pGameSettings->SetRadioVolume(pGameSettings->GetRadioVolume() * fVal);
     pGameSettings->SetSFXVolume(pGameSettings->GetSFXVolume() * fVal);
+}
+
+void CCore::ApplyExtendedWorldDrawDistancePreferences(bool bResetRuntimeState)
+{
+    const bool enabled = CVARS_GET_VALUE<bool>("extended_draw_distance_enabled");
+    const int  distance = std::clamp(CVARS_GET_VALUE<int>("extended_draw_distance"), kExtendedWorldDrawDistanceMin, kExtendedWorldDrawDistanceMax);
+
+    // Establish the player baseline first. Runtime server/Lua overrides remain
+    // authoritative until the normal MTA reset path explicitly clears them.
+    m_pGame->GetSettings()->SetExtendedWorldDrawDistancePreference(enabled, static_cast<float>(distance));
+    m_pMultiplayer->SetExtendedFarClipPreference(enabled, static_cast<float>(distance));
+
+    if (bResetRuntimeState)
+    {
+        m_pGame->ResetModelLodDistances();
+        m_pMultiplayer->RestoreFarClipDistance();
+    }
 }
 
 void CCore::SetConnected(bool bConnected)
@@ -2011,6 +2056,10 @@ void CCore::DoPostFramePulse()
 void CCore::OnModUnload()
 {
     FailNativeWorldStartupBeforeActive("Core began returning to the menu before native-world activation");
+
+    // Reset resource-owned state before restoring the player's persistent baselines.
+    ApplyDistantLightPreferences(m_pGame, true);
+    ApplyExtendedWorldDrawDistancePreferences(true);
 
     // reattach the global event
     m_pGUI->SelectInputHandlers(INPUT_CORE);

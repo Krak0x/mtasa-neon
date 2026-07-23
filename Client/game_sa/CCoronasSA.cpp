@@ -155,6 +155,7 @@ namespace
     bool                                                       g_bDistantLightsEnabled = false;
     bool                                                       g_bDistantLightsNeedRebuild = true;
     float                                                      g_fDistantLightsDrawDistance = 2000.0f;
+    float                                                      g_fDistantLightsCoronaRadiusMultiplier = 0.25f;
     std::vector<SDistantLight>                                 g_DistantLights;
     std::unordered_map<std::size_t, CRegisteredCorona*>        g_ActiveDistantLightCoronas;
     std::unordered_set<SDistantLightKey, SDistantLightKeyHash> g_DistantLightKeys;
@@ -806,6 +807,18 @@ bool CCoronasSA::SetDistantLightsDrawDistance(float distance)
     return true;
 }
 
+bool CCoronasSA::SetDistantLightsCoronaRadiusMultiplier(float multiplier)
+{
+    if (!std::isfinite(multiplier) || multiplier < 0.1f || multiplier > 1.0f)
+        return false;
+
+    // Project2DFX exposes this multiplier because DAT entries intentionally
+    // vary widely in size. Keeping it configurable avoids flattening those
+    // authored differences while allowing Neon to use a less bloated default.
+    g_fDistantLightsCoronaRadiusMultiplier = multiplier;
+    return true;
+}
+
 void CCoronasSA::RebuildDistantLights()
 {
     ClearActiveDistantLights();
@@ -915,7 +928,7 @@ void CCoronasSA::DoPulseDistantLights()
 
         float radius = light.noDistance ? 1.75f : SolveLinear(nearDistance, 0.0f, std::max(light.objectDrawDistance, nearDistance + 1.0f), 1.75f, distance);
         radius *= std::min(SolveLinear(nearDistance, 1.0f, 1000.0f, 4.0f, distance), 4.0f);
-        const float finalRadius = radius * light.coronaSize * 0.5f;
+        const float finalRadius = radius * light.coronaSize * g_fDistantLightsCoronaRadiusMultiplier;
 
         float alphaMultiplier = light.noDistance ? 1.0f : std::clamp((distance - nearDistance) / 30.0f, 0.0f, 1.0f);
         if (distance > g_fDistantLightsDrawDistance - 100.0f)

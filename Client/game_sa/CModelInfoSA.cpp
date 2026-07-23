@@ -26,10 +26,19 @@
 extern CCoreInterface* g_pCore;
 extern CGameSA*        pGame;
 
+namespace
+{
+    constexpr DWORD kFirstExtendedWorldModel = 615;
+    constexpr DWORD kLastExtendedWorldModel = 18631;
+}
+
 CBaseModelInfoSAInterface** CModelInfoSAInterface::ms_modelInfoPtrs = nullptr;
 
 std::map<unsigned short, int>                                        CModelInfoSA::ms_RestreamTxdIDMap;
 std::map<DWORD, float>                                               CModelInfoSA::ms_ModelDefaultLodDistanceMap;
+std::map<DWORD, float>                                               CModelInfoSA::ms_ExtendedLodBaseDistanceMap;
+bool                                                                 CModelInfoSA::ms_ExtendedLodPreferenceEnabled = false;
+float                                                                CModelInfoSA::ms_ExtendedLodPreferenceDistance = 2000.0f;
 std::map<DWORD, unsigned short>                                      CModelInfoSA::ms_ModelDefaultFlagsMap;
 std::map<DWORD, BYTE>                                                CModelInfoSA::ms_ModelDefaultAlphaTransparencyMap;
 std::unordered_map<std::uint32_t, std::map<VehicleDummies, CVector>> CModelInfoSA::ms_ModelDefaultDummiesPosition;
@@ -987,9 +996,37 @@ void CModelInfoSA::SetLODDistance(float fDistance, bool bOverrideMaxDistance)
     {
         // Save default value if not done yet
         if (!MapContains(ms_ModelDefaultLodDistanceMap, m_dwModelID))
-            MapSet(ms_ModelDefaultLodDistanceMap, m_dwModelID, m_pInterface->fLodDistanceUnscaled);
+        {
+            const auto  extendedLod = ms_ExtendedLodBaseDistanceMap.find(m_dwModelID);
+            const float originalDistance = extendedLod != ms_ExtendedLodBaseDistanceMap.end() ? extendedLod->second : m_pInterface->fLodDistanceUnscaled;
+            MapSet(ms_ModelDefaultLodDistanceMap, m_dwModelID, originalDistance);
+        }
         m_pInterface->fLodDistanceUnscaled = fDistance;
     }
+}
+
+bool CModelInfoSA::ResetLODDistance()
+{
+    if (!CModelInfoSAInterface::ms_modelInfoPtrs)
+        return false;
+
+    m_pInterface = CModelInfoSAInterface::ms_modelInfoPtrs[m_dwModelID];
+    const auto runtimeOverride = ms_ModelDefaultLodDistanceMap.find(m_dwModelID);
+    if (!m_pInterface || runtimeOverride == ms_ModelDefaultLodDistanceMap.end())
+        return false;
+
+    const float baseDistance = runtimeOverride->second;
+    ms_ModelDefaultLodDistanceMap.erase(runtimeOverride);
+    ms_ExtendedLodBaseDistanceMap.erase(m_dwModelID);
+    m_pInterface->fLodDistanceUnscaled = baseDistance;
+
+    if (ms_ExtendedLodPreferenceEnabled && m_dwModelID >= kFirstExtendedWorldModel && m_dwModelID <= kLastExtendedWorldModel && baseDistance > 0.0f &&
+        baseDistance < ms_ExtendedLodPreferenceDistance)
+    {
+        MapSet(ms_ExtendedLodBaseDistanceMap, m_dwModelID, baseDistance);
+        m_pInterface->fLodDistanceUnscaled = ms_ExtendedLodPreferenceDistance;
+    }
+    return true;
 }
 
 void CModelInfoSA::StaticResetLodDistances()
@@ -1003,6 +1040,69 @@ void CModelInfoSA::StaticResetLodDistances()
     }
 
     ms_ModelDefaultLodDistanceMap.clear();
+
+    // A connection reset removes resource overrides. Rebuild the player's
+    // baseline afterwards so it remains persistent without becoming a script
+    // override itself.
+    ReapplyExtendedLodPreference();
+}
+
+void CModelInfoSA::SetExtendedLodPreference(bool bEnabled, float fDistance)
+{
+    RestoreExtendedLodPreference();
+    ms_ExtendedLodPreferenceEnabled = bEnabled;
+    ms_ExtendedLodPreferenceDistance = fDistance;
+    ApplyExtendedLodPreference();
+}
+
+void CModelInfoSA::ReapplyExtendedLodPreference()
+{
+    RestoreExtendedLodPreference();
+    ApplyExtendedLodPreference();
+}
+
+void CModelInfoSA::ApplyExtendedLodPreference()
+{
+    if (!ms_ExtendedLodPreferenceEnabled || !CModelInfoSAInterface::ms_modelInfoPtrs)
+        return;
+
+    // Match the range proven by renderer-limit-test. IDs above this range are
+    // reserved by Neon for native-world and dynamically allocated models,
+    // whose authored LOD values must remain untouched.
+    for (DWORD modelId = kFirstExtendedWorldModel; modelId <= kLastExtendedWorldModel; ++modelId)
+    {
+        CBaseModelInfoSAInterface* modelInfo = CModelInfoSAInterface::ms_modelInfoPtrs[modelId];
+        if (!modelInfo || MapContains(ms_ModelDefaultLodDistanceMap, modelId))
+            continue;
+
+        const float currentDistance = modelInfo->fLodDistanceUnscaled;
+        if (currentDistance <= 0.0f || currentDistance >= ms_ExtendedLodPreferenceDistance)
+            continue;
+
+        MapSet(ms_ExtendedLodBaseDistanceMap, modelId, currentDistance);
+        modelInfo->fLodDistanceUnscaled = ms_ExtendedLodPreferenceDistance;
+    }
+}
+
+void CModelInfoSA::RestoreExtendedLodPreference()
+{
+    if (!CModelInfoSAInterface::ms_modelInfoPtrs)
+    {
+        ms_ExtendedLodBaseDistanceMap.clear();
+        return;
+    }
+
+    for (const auto& [modelId, baseDistance] : ms_ExtendedLodBaseDistanceMap)
+    {
+        // A resource override owns the raw value until the normal MTA reset.
+        if (MapContains(ms_ModelDefaultLodDistanceMap, modelId))
+            continue;
+
+        CBaseModelInfoSAInterface* modelInfo = CModelInfoSAInterface::ms_modelInfoPtrs[modelId];
+        if (modelInfo)
+            modelInfo->fLodDistanceUnscaled = baseDistance;
+    }
+    ms_ExtendedLodBaseDistanceMap.clear();
 }
 
 void CModelInfoSA::RestreamIPL()
@@ -1967,6 +2067,7 @@ void CModelInfoSA::DeallocateModel(void)
     ms_DefaultTxdIDMap.erase(static_cast<unsigned short>(m_dwModelID));
     ms_ModelDefaultFlagsMap.erase(m_dwModelID);
     ms_ModelDefaultLodDistanceMap.erase(m_dwModelID);
+    ms_ExtendedLodBaseDistanceMap.erase(m_dwModelID);
     ms_ModelDefaultAlphaTransparencyMap.erase(m_dwModelID);
     ms_OriginalObjectPropertiesGroups.erase(m_dwModelID);
     ms_ModelDefaultDummiesPosition.erase(m_dwModelID);

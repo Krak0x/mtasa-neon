@@ -256,4 +256,8 @@ public:
     virtual unsigned int GetParentID() = 0;
     virtual bool         IsDynamic() = 0;
     virtual bool         IsDamageableAtomic() = 0;
+
+    // Releases a resource-owned LOD override and restores the active player
+    // baseline, if any.
+    virtual bool ResetLODDistance() = 0;
 };

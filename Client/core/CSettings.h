@@ -103,6 +103,7 @@ public:
     void UpdateAudioTab();
 
     void UpdateVideoTab();
+    void UpdateNeonTab();
     void UpdatePostFxTab();
     void PopulateResolutionComboBox();
     void UpdateFullScreenComboBoxEnabled();
@@ -130,6 +131,7 @@ protected:
     CGUITabPanel*    m_pTabs;
     CGUITab*         m_pTabMultiplayer;
     CGUITab*         m_pTabVideo;
+    CGUITab*         m_pTabNeon;
     CGUITab*         m_pTabInterface;
     CGUITab*         m_pTabBrowser;
     CGUITab*         m_pTabPostFX;
@@ -182,6 +184,22 @@ protected:
     CGUILabel*     m_pDrawDistanceLabel;
     CGUIScrollBar* m_pDrawDistance;
     CGUILabel*     m_pDrawDistanceValueLabel;
+    CGUILabel*     m_pNeonRenderingLabel;
+    CGUICheckBox*  m_pCheckBoxExtendedDrawDistance;
+    CGUILabel*     m_pExtendedDrawDistanceLabel;
+    CGUIScrollBar* m_pExtendedDrawDistance;
+    CGUILabel*     m_pExtendedDrawDistanceValueLabel;
+    CGUILabel*     m_pExtendedDrawDistanceDescriptionLabel;
+    CGUILabel*     m_pDistantLightsRenderingLabel;
+    CGUICheckBox*  m_pCheckBoxDistantLights;
+    CGUILabel*     m_pDistantLightsDrawDistanceLabel;
+    CGUIScrollBar* m_pDistantLightsDrawDistance;
+    CGUILabel*     m_pDistantLightsDrawDistanceValueLabel;
+    CGUILabel*     m_pDistantLightsCoronaSizeLabel;
+    CGUIScrollBar* m_pDistantLightsCoronaSize;
+    CGUILabel*     m_pDistantLightsCoronaSizeValueLabel;
+    CGUILabel*     m_pDistantLightsDescriptionLabel;
+    CGUIButton*    m_pRebuildDistantLightsButton;
     CGUILabel*     m_pBrightnessLabel;
     CGUIScrollBar* m_pBrightness;
     CGUILabel*     m_pBrightnessValueLabel;
@@ -385,6 +403,12 @@ protected:
     bool OnCancelButtonClick(CGUIElement* pElement);
     bool OnFieldOfViewChanged(CGUIElement* pElement);
     bool OnDrawDistanceChanged(CGUIElement* pElement);
+    bool OnExtendedDrawDistanceEnabledClick(CGUIElement* pElement);
+    bool OnExtendedDrawDistanceChanged(CGUIElement* pElement);
+    bool OnDistantLightsEnabledClick(CGUIElement* pElement);
+    bool OnDistantLightsDrawDistanceChanged(CGUIElement* pElement);
+    bool OnDistantLightsCoronaSizeChanged(CGUIElement* pElement);
+    bool OnRebuildDistantLightsClick(CGUIElement* pElement);
     bool OnBrightnessChanged(CGUIElement* pElement);
     bool OnBorderlessGammaChanged(CGUIElement* pElement);
     bool OnBorderlessBrightnessChanged(CGUIElement* pElement);

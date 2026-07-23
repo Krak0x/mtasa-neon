@@ -178,4 +178,8 @@ public:
     virtual void SetCoronaReflectionsControlledByScript(bool bViaScript) = 0;
 
     virtual void Save() = 0;
+
+    // Keep the player's extended world baseline separate from per-resource
+    // model LOD overrides so scripts can still take priority while connected.
+    virtual void SetExtendedWorldDrawDistancePreference(bool bEnabled, float fDistance) = 0;
 };

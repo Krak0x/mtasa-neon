@@ -687,6 +687,9 @@ CMultiplayerSA::CMultiplayerSA()
 
     m_bHeatHazeEnabled = true;
     m_bHeatHazeCustomized = false;
+    m_bExtendedFarClipEnabled = false;
+    m_bFarClipRuntimeOverride = false;
+    m_fExtendedFarClipDistance = 2000.0f;
     m_fMaddDoggPoolLevel = 1082.73f;
     m_dwLastStaticAnimGroupID = eAnimGroup::ANIM_GROUP_DEFAULT;
     m_dwLastStaticAnimID = eAnimID::ANIM_ID_WALK;
@@ -2086,6 +2089,12 @@ float CMultiplayerSA::GetFarClipDistance()
 
 void CMultiplayerSA::SetFarClipDistance(float fDistance)
 {
+    m_bFarClipRuntimeOverride = true;
+    ApplyFarClipDistance(fDistance);
+}
+
+void CMultiplayerSA::ApplyFarClipDistance(float fDistance)
+{
     BYTE newFstp[3] = {0xDD, 0xD8, 0x90};
     if (*(BYTE*)0x55FCC8 != newFstp[0])
     {
@@ -2102,6 +2111,18 @@ void CMultiplayerSA::SetFarClipDistance(float fDistance)
 
 void CMultiplayerSA::RestoreFarClipDistance()
 {
+    m_bFarClipRuntimeOverride = false;
+    if (m_bExtendedFarClipEnabled)
+    {
+        ApplyFarClipDistance(m_fExtendedFarClipDistance);
+        return;
+    }
+
+    RestoreFarClipPatch();
+}
+
+void CMultiplayerSA::RestoreFarClipPatch()
+{
     BYTE originalFstp[3] = {0xD9, 0x5E, 0x50};
     if (*(BYTE*)0x55FCC8 != originalFstp[0])
     {
@@ -2112,6 +2133,21 @@ void CMultiplayerSA::RestoreFarClipDistance()
         MemCpy((LPVOID)0x560EDD, &originalFstp, 3);
         MemCpy((LPVOID)0x560F18, &originalFstp, 3);
     }
+}
+
+void CMultiplayerSA::SetExtendedFarClipPreference(bool bEnabled, float fDistance)
+{
+    m_bExtendedFarClipEnabled = bEnabled;
+    m_fExtendedFarClipDistance = fDistance;
+
+    // Server and Lua values remain authoritative until the normal world reset.
+    if (m_bFarClipRuntimeOverride)
+        return;
+
+    if (m_bExtendedFarClipEnabled)
+        ApplyFarClipDistance(m_fExtendedFarClipDistance);
+    else
+        RestoreFarClipPatch();
 }
 
 float CMultiplayerSA::GetNearClipDistance()

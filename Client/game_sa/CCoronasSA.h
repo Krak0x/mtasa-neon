@@ -54,6 +54,7 @@ public:
     void               SetDistantLightsEnabled(bool enabled) override;
     bool               GetDistantLightsEnabled() const override;
     bool               SetDistantLightsDrawDistance(float distance) override;
+    bool               SetDistantLightsCoronaRadiusMultiplier(float multiplier) override;
     void               RebuildDistantLights() override;
     void               DoPulseDistantLights() override;
     SDistantLightStats GetDistantLightStats() const override;

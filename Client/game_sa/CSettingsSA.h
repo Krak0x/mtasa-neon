@@ -178,6 +178,7 @@ public:
 
     void ResetCoronaReflectionsEnabled();
     void SetCoronaReflectionsControlledByScript(bool bViaScript);
+    void SetExtendedWorldDrawDistancePreference(bool bEnabled, float fDistance) override;
 
     void Save();
 

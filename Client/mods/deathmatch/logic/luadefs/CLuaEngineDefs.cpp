@@ -1415,17 +1415,10 @@ int CLuaEngineDefs::EngineResetModelLODDistance(lua_State* luaVM)
         return 1;
     }
     CModelInfo* pModelInfo = g_pGame->GetModelInfo(modelId);
-    if (pModelInfo)
+    if (pModelInfo && pModelInfo->ResetLODDistance())
     {
-        float fCurrentDistance = pModelInfo->GetLODDistance();
-        float fOriginalDistance = pModelInfo->GetOriginalLODDistance();
-        // Make sure we're dealing with a valid LOD distance, and not setting the same LOD distance
-        if (fOriginalDistance > 0.0f && fOriginalDistance != fCurrentDistance)
-        {
-            pModelInfo->SetLODDistance(fOriginalDistance, true);
-            lua_pushboolean(luaVM, true);
-            return 1;
-        }
+        lua_pushboolean(luaVM, true);
+        return 1;
     }
 
     lua_pushboolean(luaVM, false);

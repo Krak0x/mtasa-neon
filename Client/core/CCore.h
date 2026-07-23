@@ -183,6 +183,7 @@ public:
     // Configuration
     void ApplyConsoleSettings();
     void ApplyGameSettings();
+    void ApplyExtendedWorldDrawDistancePreferences(bool bResetRuntimeState = false);
     void UpdateRecentlyPlayed();
 
     // Net

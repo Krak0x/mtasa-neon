@@ -259,9 +259,16 @@ load an ASI plugin or Project2DFX's bundled limit adjuster. The implementation
 uses MTA's relocated 4096-entry corona pool and the renderer capacities above,
 so corona ownership and lifetime remain under MTA.
 
-The feature is disabled by default. A client resource can enable it, select a
-draw distance from 300 to 5000 units, rebuild its world-light cache, and read
-current counts through these client Lua functions:
+The feature is disabled by default. A player can enable it from the Neon
+settings tab, select a draw distance from 300 to 5000 units, tune the global
+distant-corona radius from 10% to 100%, and rebuild the world-light cache. The
+saved radius defaults to 25%; 50% is Project2DFX current master's scalar, but
+Neon's native GTA sprite projection still differs and therefore does not
+guarantee pixel-identical output.
+
+A client resource can independently enable the feature, select its draw
+distance, rebuild the cache, and read current counts through these client Lua
+functions:
 
 ```text
 engineSetDistantLightsEnabled
@@ -309,9 +316,20 @@ Project2DFX's directional red/yellow/green clock phases so opposing colors do
 not render together. The DAT's corona rows are retained when a row also asks
 for a searchlight, but the cone itself is omitted.
 
+The same Neon settings tab also exposes an independent extended-world draw
+distance preference. It raises GTA's far clip and stock-world model LOD
+distances together, while leaving fog distance untouched. Player preferences
+are stored separately from Lua/server overrides: a connected resource remains
+authoritative until the normal MTA reset path clears its override, after which
+Neon reapplies the saved player baseline. This prevents a resource stop,
+reconnect, or individual `engineResetModelLODDistance` call from accidentally
+discarding the player's choice.
+
 ### Project2DFX phase-1 validation
 
-`Game SA.vcxproj` built successfully as `Release|Win32`. In the Parallels VM,
+`Game SA.vcxproj`, `Multiplayer SA.vcxproj`, `Client Core.vcxproj`, and
+`Client Deathmatch.vcxproj` built successfully as `Release|Win32`. In the
+Parallels VM,
 the native-effects fallback found only 17 usable lights, confirming that GTA's
 embedded effects are not a substitute for the Project2DFX data. The earlier
 pool snapshot produced only 1707 definitions and varied as additional world
@@ -323,6 +341,13 @@ confirmed the additional distant lamp coronas. Visual testing also caught
 simultaneous red and green distant traffic lights; applying Project2DFX's
 directional clock phases corrected the intersections while preserving the
 intended corona size, intensity, and color falloff.
+
+The settings checkpoint was also exercised in game with extended world draw
+distance disabled while distant lights remained enabled, confirming that the
+two preferences are independent. The fog/far-clip diagnostic resource at
+`test-resources/fog-distance-test` provides `/seefar [distance|reset]` and
+`/seefar2 [distance|reset]` so visibility clipping can be isolated from the
+Project2DFX light range during future comparisons.
 
 ## Workflow for the next limit
 

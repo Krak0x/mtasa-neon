@@ -50,7 +50,7 @@ Neon keeps MTA:SA's resource model and default gameplay behavior while lifting s
 | Custom-water block grid | 12 x 12 (144 blocks) | 40 x 40 (1,600 blocks) |
 | Custom-water XY | Approximately -3,000 to +3,000 | -10,000 to +9,999 |
 | Procedural seabed boundary | Unlimited | Server-configurable from 3,000 to 10,000, or unlimited |
-| Project2DFX distant static lights | Not integrated | Native, resource-controlled implementation with a 300-5,000 draw-distance range |
+| Project2DFX distant static lights | Not integrated | Native, player- and resource-controlled implementation with a 300-5,000 draw-distance range |
 | Local asset preview workflow | Build a resource and load the replacement | Experimental drag-and-drop DFF/TXD skin and IFP animation previews for developers |
 | Server-authoritative custom models | Client-local dynamic model allocations only | Stable resource-owned vehicle/object IDs mapped to per-client runtime slots, with synchronized lifecycle and native-parent fallback |
 | Model-native ped walking styles | No explicit synchronized model-native mode | Server/client Lua opt-in that follows skin changes and ped recreation |
@@ -59,9 +59,28 @@ Neon keeps MTA:SA's resource model and default gameplay behavior while lifting s
 | SA-MP-style fast weapon strafe | Not available as a synchronized glitch | Optional `fastweaponstrafe` glitch, server-synchronized and disabled by default |
 | Neon diagnostics and stress tests | Not included | Reproducible resources for limits, rendering, extended-world systems, radar/F11 composition, model-registry lifecycle, IMG residency, native mirrors, and dense-entity profiling |
 
-These are capacity increases, not forced visual defaults. Distant lights are disabled by default, ordinary draw distances remain unchanged, and servers or client resources decide when to use the extended features. Legacy network connections retain MTA:SA's original position formats. The CULL relocation and Lua lifecycle have been exercised in game; dedicated tunnel and mirror capacity-boundary tests remain follow-up validation.
+These are capacity increases, not forced visual defaults. Distant lights and extended world draw distance are disabled by default, so a clean Neon installation retains GTA's ordinary rendering distances. Players can opt in through the Neon settings tab, while servers and client resources can still apply temporary runtime overrides. Legacy network connections retain MTA:SA's original position formats. The CULL relocation and Lua lifecycle have been exercised in game; dedicated tunnel and mirror capacity-boundary tests remain follow-up validation.
 
 Project2DFX support currently covers distant static coronas and timed traffic lights using `SALodLights.dat`. Searchlight cones are recorded for future work; distant cars, static shadows, and the other Project2DFX modules are not included. The drag-and-drop skin and animation previews are intentionally insecure local development prototypes, not production or competitive-client features. Drop one IFP onto the game window to load its animation list; a one-animation file starts immediately, while multi-animation files can be searched and played from the in-game preview window with loop, freeze-last-frame, root-motion, speed, and blend controls. Technical design, executable address inventories, validation results, and reproducible limit-test resources are documented in [LIMIT_PATCHING.md](./LIMIT_PATCHING.md). Dense-entity profiling methodology and results are documented separately in [ENTITY_PERFORMANCE.md](./ENTITY_PERFORMANCE.md). The extended native minimap design and Lua API are documented in [EXTENDED_RADAR.md](./EXTENDED_RADAR.md). The proposed server-authoritative story runtime, reusable native task API, SCM compatibility layer, and co-op roadmap are documented in [STORY_RUNTIME.md](./STORY_RUNTIME.md).
+
+### Neon visual settings
+
+The in-game settings window includes a Neon tab for persistent, local rendering
+preferences:
+
+- **Extended world draw distance** raises both GTA's far clip and the authored
+  LOD distances of stock-world models from 300 to 5,000 units. Fog distance
+  remains independent and can still hide distant geometry.
+- **Project2DFX distant lights** enables the static-light catalogue, selects a
+  300-to-5,000-unit light range, adjusts Neon's global distant-corona radius,
+  and can rebuild the cached catalogue on demand.
+
+Both features remain off on a clean installation. Resource or server overrides
+take priority while connected; the player's saved baseline is restored when
+those runtime overrides are reset or the mod unloads. The corona-radius control
+scales every Neon Project2DFX distant corona, but does not resize GTA's ordinary
+nearby coronas. It is a tuning control for the current native GTA sprite path,
+not a claim of renderer-level visual parity with Project2DFX.
 
 ### Extended-world validation examples
 

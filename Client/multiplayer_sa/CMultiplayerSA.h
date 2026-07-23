@@ -188,6 +188,7 @@ public:
     float GetFarClipDistance();
     void  SetFarClipDistance(float fDistance);
     void  RestoreFarClipDistance();
+    void  SetExtendedFarClipPreference(bool bEnabled, float fDistance) override;
     float GetNearClipDistance();
     void  SetNearClipDistance(float fDistance);
     void  RestoreNearClipDistance();
@@ -267,17 +268,17 @@ public:
 
     CShotSyncData* GetLocalShotSyncData();
 
-    void SetPreContextSwitchHandler(PreContextSwitchHandler* pHandler);
-    void SetPostContextSwitchHandler(PostContextSwitchHandler* pHandler);
-    void SetPreWeaponFireHandler(PreWeaponFireHandler* pHandler);
-    void SetPostWeaponFireHandler(PostWeaponFireHandler* pHandler);
-    void SetBulletImpactHandler(BulletImpactHandler* pHandler);
-    void SetBulletFireHandler(BulletFireHandler* pHandler);
-    void SetDrawRadarAreasHandler(DrawRadarAreasHandler* pRadarAreasHandler);
-    void SetRender3DStuffHandler(Render3DStuffHandler* pHandler);
-    void SetPreRenderSkyHandler(PreRenderSkyHandler* pHandler);
-    void SetRenderHeliLightHandler(RenderHeliLightHandler* pHandler);
-    void SetRenderEverythingBarRoadsHandler(RenderEverythingBarRoadsHandler* pHandler) override;
+    void           SetPreContextSwitchHandler(PreContextSwitchHandler* pHandler);
+    void           SetPostContextSwitchHandler(PostContextSwitchHandler* pHandler);
+    void           SetPreWeaponFireHandler(PreWeaponFireHandler* pHandler);
+    void           SetPostWeaponFireHandler(PostWeaponFireHandler* pHandler);
+    void           SetBulletImpactHandler(BulletImpactHandler* pHandler);
+    void           SetBulletFireHandler(BulletFireHandler* pHandler);
+    void           SetDrawRadarAreasHandler(DrawRadarAreasHandler* pRadarAreasHandler);
+    void           SetRender3DStuffHandler(Render3DStuffHandler* pHandler);
+    void           SetPreRenderSkyHandler(PreRenderSkyHandler* pHandler);
+    void           SetRenderHeliLightHandler(RenderHeliLightHandler* pHandler);
+    void           SetRenderEverythingBarRoadsHandler(RenderEverythingBarRoadsHandler* pHandler) override;
     SRendererStats GetRendererStats() override;
     void           ResetRendererStats() override;
 
@@ -391,6 +392,9 @@ private:
     float               m_fAircraftMaxVelocity_Sq;
     bool                m_bHeatHazeEnabled;
     bool                m_bHeatHazeCustomized;
+    bool                m_bExtendedFarClipEnabled;
+    bool                m_bFarClipRuntimeOverride;
+    float               m_fExtendedFarClipDistance;
     float               m_fNearClipDistance;
     float               m_fMaddDoggPoolLevel;
     eAnimGroup          m_dwLastStaticAnimGroupID;
@@ -399,6 +403,9 @@ private:
     float               m_fShadowsOffset;
 
     bool m_isRapidVehicleStopFixEnabled{false};
+
+    void ApplyFarClipDistance(float fDistance);
+    void RestoreFarClipPatch();
 
     /*  VOID                        SetPlayerShotVectors(CPlayerPed* player, Vector3D * vecTarget, Vector3D * vecStart);
         VOID                        SetPlayerCameraVectors(CPlayerPed* player, Vector3D * vecSource, Vector3D * vecFront);

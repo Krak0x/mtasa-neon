@@ -492,4 +492,5 @@ public:
     virtual void           SetFastWeaponStrafeEnabled(bool bEnabled) = 0;
     virtual void           SetGangTagSprayHandler(GangTagSprayHandler* pHandler) = 0;
     virtual bool           SetGangTagSprayEnabled(CObjectSAInterface* pObject, bool bEnabled) = 0;
+    virtual void           SetExtendedFarClipPreference(bool bEnabled, float fDistance) = 0;
 };

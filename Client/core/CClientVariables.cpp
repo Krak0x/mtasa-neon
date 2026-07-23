@@ -268,6 +268,11 @@ void CClientVariables::ValidateValues()
     ClampValue("borderless_brightness_scale", 0.5f, 2.0f);
     ClampValue("borderless_contrast_scale", 0.5f, 2.0f);
     ClampValue("borderless_saturation_scale", 0.5f, 2.0f);
+    ClampValue("distant_lights_enabled", false, true);
+    ClampValue("distant_lights_draw_distance", 300, 5000);
+    ClampValue("distant_lights_corona_radius_multiplier", 0.1f, 1.0f);
+    ClampValue("extended_draw_distance_enabled", false, true);
+    ClampValue("extended_draw_distance", 300, 5000);
     ClampValue("borderless_gamma_enabled", false, true);
     ClampValue("borderless_brightness_enabled", false, true);
     ClampValue("borderless_contrast_enabled", false, true);
@@ -351,6 +356,11 @@ void CClientVariables::LoadDefaults()
     DEFAULT("high_detail_peds", 0);                                         // Disable rendering high detail peds all the time
     DEFAULT("blur", 1);                                                     // Enable blur
     DEFAULT("corona_reflections", 0);                                       // Disable corona rain reflections
+    DEFAULT("distant_lights_enabled", 0);                                   // Disable Neon Project2DFX distant lights
+    DEFAULT("distant_lights_draw_distance", 2000);                          // Project2DFX distant light range in world units
+    DEFAULT("distant_lights_corona_radius_multiplier", 0.25f);              // Less bloated distant coronas; Project2DFX master uses 0.5
+    DEFAULT("extended_draw_distance_enabled", 0);                           // Keep vanilla far clip and model LOD distances
+    DEFAULT("extended_draw_distance", 2000);                                // Extended far clip and stock-world model LOD range
     DEFAULT("dynamic_ped_shadows", 0);                                      // Disable dynamic ped shadows
     DEFAULT("fast_clothes_loading", 1);                                     // 0-off 1-auto 2-on
     DEFAULT("allow_screen_upload", 1);                                      // 0-off 1-on
