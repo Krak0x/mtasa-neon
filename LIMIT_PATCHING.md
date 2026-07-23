@@ -290,11 +290,16 @@ runs a single stage, and `/project2dfxbenchcancel` safely stops either test.
 
 Project2DFX's `SALodLights.dat` is installed as
 `MTA/data/SALodLights.dat`. MTA resolves each model-name section against GTA's
-model table, scans the native building and dummy pools, transforms the local
-light offsets into world coordinates, and registers the closest eligible
-coronas every frame. The data and the adapted behavior retain Project2DFX's MIT
-license in `MTA/data/Project2DFX-LICENSE.txt`. If the DAT is absent, the code
-falls back to GTA's embedded model 2DFX effects so the feature fails soft.
+model table and captures static IPL instances while GTA performs its startup
+world-bounds pass. Neon already neutralizes `CINFO.BIN` because its relocated
+IPL and collision stores cannot consume GTA's fixed-size cache, so that native
+pass visits every binary IPL sequentially before distant sectors are streamed
+out. Text IPL instances and the current building and dummy pools supplement the
+same deduplicated catalogue. MTA transforms local light offsets into world
+coordinates and registers the closest eligible coronas every frame. The data
+and the adapted behavior retain Project2DFX's MIT license in
+`MTA/data/Project2DFX-LICENSE.txt`. If the DAT is absent, the code falls back to
+GTA's embedded model 2DFX effects so the feature fails soft.
 
 Phase 1 intentionally covers night-time static coronas only. Project2DFX
 searchlight cones, distant cars, static shadows, live GTA traffic-controller
@@ -308,15 +313,16 @@ for a searchlight, but the cone itself is omitted.
 
 `Game SA.vcxproj` built successfully as `Release|Win32`. In the Parallels VM,
 the native-effects fallback found only 17 usable lights, confirming that GTA's
-embedded effects are not a substitute for the Project2DFX data. With the DAT
-installed, the same world scan produced 1843 instantiated definitions and 1317
-active coronas at night with a 2000-unit distance. The client remained running
-and no crash artifact newer than the earlier quadtree failure was produced. An
-off/on lifecycle test released every active corona, then rebuilt 2083
-definitions with 1533 active at 3000 units as additional world objects streamed
-in. Visual testing caught simultaneous red and green distant traffic lights;
-applying Project2DFX's directional clock phases corrected the intersections
-while preserving the intended corona size, intensity, and color falloff.
+embedded effects are not a substitute for the Project2DFX data. The earlier
+pool snapshot produced only 1707 definitions and varied as additional world
+objects streamed in. Capturing the startup-wide IPL pass produced 20363 unique
+definitions from the same DAT, matching the approximately 20362 exterior,
+height-valid lights counted independently from the stock map data. The client
+connected successfully, produced no new crash artifact, and a flight test
+confirmed the additional distant lamp coronas. Visual testing also caught
+simultaneous red and green distant traffic lights; applying Project2DFX's
+directional clock phases corrected the intersections while preserving the
+intended corona size, intensity, and color falloff.
 
 ## Workflow for the next limit
 

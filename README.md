@@ -114,7 +114,7 @@ Logical IDs start at 30,000, are never reused during the server process, and rem
 | `engineResetRendererStats()` | Client | Resets the renderer high-water measurement window without changing renderer capacities. |
 | `engineSetDistantLightsEnabled(enabled)` | Client | Enables or disables Neon's native Project2DFX distant static lights. The feature is disabled by default. |
 | `engineSetDistantLightsDrawDistance(distance)` | Client | Sets the distant-light draw distance from 300 to 5,000 world units. |
-| `engineRebuildDistantLights()` | Client | Rebuilds the distant-light cache from the currently streamed world. |
+| `engineRebuildDistantLights()` | Client | Refreshes the distant-light cache from the startup-wide IPL catalogue and currently streamed additions. |
 | `engineGetDistantLightStats()` | Client | Returns enabled state, definition count, active corona count, corona capacity, and draw distance. |
 
 ### Native CULL zones

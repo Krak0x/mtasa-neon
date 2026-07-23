@@ -17,6 +17,7 @@
 class CRegisteredCorona;
 class CRegisteredCoronaSA;
 class CRegisteredCoronaSAInterface;
+class CEntitySAInterface;
 struct RwTexture;
 
 #define FUNC_DoSunAndMoon 0x6FC5A0
@@ -56,4 +57,10 @@ public:
     void               RebuildDistantLights() override;
     void               DoPulseDistantLights() override;
     SDistantLightStats GetDistantLightStats() const override;
+
+    // GTA creates every static IPL entity once while calculating the world
+    // bounds, before streaming most of them back out. Capture lights during
+    // that pass so the distant-light catalogue is independent of player
+    // position and of which sectors happen to be resident later.
+    void CaptureDistantLight(CEntitySAInterface* entity);
 };

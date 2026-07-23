@@ -152,16 +152,23 @@ namespace
         std::size_t index;
     };
 
-    bool                                                g_bDistantLightsEnabled = false;
-    bool                                                g_bDistantLightsNeedRebuild = true;
-    float                                               g_fDistantLightsDrawDistance = 2000.0f;
-    std::vector<SDistantLight>                          g_DistantLights;
-    std::unordered_map<std::size_t, CRegisteredCorona*> g_ActiveDistantLightCoronas;
-    DWORD                                               g_dwDistantLightEntitiesScanned = 0;
-    DWORD                                               g_dwDistantLightEffectsScanned = 0;
-    DWORD                                               g_dwDistantLightEffectsFound = 0;
+    bool                                                       g_bDistantLightsEnabled = false;
+    bool                                                       g_bDistantLightsNeedRebuild = true;
+    float                                                      g_fDistantLightsDrawDistance = 2000.0f;
+    std::vector<SDistantLight>                                 g_DistantLights;
+    std::unordered_map<std::size_t, CRegisteredCorona*>        g_ActiveDistantLightCoronas;
+    std::unordered_set<SDistantLightKey, SDistantLightKeyHash> g_DistantLightKeys;
+    DWORD                                                      g_dwDistantLightEntitiesScanned = 0;
+    DWORD                                                      g_dwDistantLightEffectsScanned = 0;
+    DWORD                                                      g_dwDistantLightEffectsFound = 0;
 
     using SDistantLightDefinitions = std::unordered_map<WORD, std::vector<SDistantLightDefinition>>;
+
+    SDistantLightDefinitions             g_DistantLightDefinitions;
+    std::vector<SDistantLightDefinition> g_AdditionalDistantLightDefinitions;
+    bool                                 g_bDistantLightDefinitionsLoaded = false;
+    bool                                 g_bDistantLightDefinitionsLoadAttempted = false;
+    bool                                 g_bAdditionalDistantLightsRegistered = false;
 
     CBaseModelInfoSAInterface* GetModelInfoByName(const char* name, int* index)
     {
@@ -403,6 +410,23 @@ namespace
         return true;
     }
 
+    bool EnsureDistantLightDefinitionsLoaded()
+    {
+        if (!g_bDistantLightDefinitionsLoadAttempted)
+        {
+            g_bDistantLightDefinitionsLoadAttempted = true;
+            g_bDistantLightDefinitionsLoaded = LoadDistantLightDefinitions(g_DistantLightDefinitions, g_AdditionalDistantLightDefinitions);
+        }
+
+        if (g_bDistantLightDefinitionsLoaded && !g_bAdditionalDistantLightsRegistered)
+        {
+            g_bAdditionalDistantLightsRegistered = true;
+            for (const SDistantLightDefinition& definition : g_AdditionalDistantLightDefinitions)
+                AddDistantLight(definition.localPosition, definition, definition.drawDistance, false, g_DistantLightKeys);
+        }
+        return g_bDistantLightDefinitionsLoaded;
+    }
+
     void AddDatDistantLightsForEntity(CEntitySAInterface* entity, const SDistantLightDefinitions& modelDefinitions,
                                       std::unordered_set<SDistantLightKey, SDistantLightKeyHash>& seen)
     {
@@ -603,6 +627,7 @@ void CCoronasSA::RelocateCoronaArray()
 CCoronasSA::CCoronasSA()
 {
     RelocateCoronaArray();
+    g_DistantLightKeys.reserve(24000);
 
     for (int i = 0; i < MAX_CORONAS; i++)
     {
@@ -616,6 +641,15 @@ CCoronasSA::~CCoronasSA()
     // before deleting them so reconnecting cannot retain dangling wrappers.
     ClearActiveDistantLights();
     g_DistantLights.clear();
+    g_DistantLightKeys.clear();
+    g_DistantLightDefinitions.clear();
+    g_AdditionalDistantLightDefinitions.clear();
+    g_bDistantLightDefinitionsLoaded = false;
+    g_bDistantLightDefinitionsLoadAttempted = false;
+    g_bAdditionalDistantLightsRegistered = false;
+    g_dwDistantLightEntitiesScanned = 0;
+    g_dwDistantLightEffectsScanned = 0;
+    g_dwDistantLightEffectsFound = 0;
     g_bDistantLightsEnabled = false;
     g_bDistantLightsNeedRebuild = true;
 
@@ -775,31 +809,19 @@ bool CCoronasSA::SetDistantLightsDrawDistance(float distance)
 void CCoronasSA::RebuildDistantLights()
 {
     ClearActiveDistantLights();
-    g_DistantLights.clear();
-    g_dwDistantLightEntitiesScanned = 0;
-    g_dwDistantLightEffectsScanned = 0;
-    g_dwDistantLightEffectsFound = 0;
-
-    std::unordered_set<SDistantLightKey, SDistantLightKeyHash> seen;
-    seen.reserve(16000);
-
-    SDistantLightDefinitions             modelDefinitions;
-    std::vector<SDistantLightDefinition> additionalDefinitions;
-    const bool                           loadedDat = LoadDistantLightDefinitions(modelDefinitions, additionalDefinitions);
+    const bool loadedDat = EnsureDistantLightDefinitionsLoaded();
 
     bool buildingPoolReady = false;
     bool dummyPoolReady = false;
     if (loadedDat)
     {
-        buildingPoolReady = AddDatDistantLightsFromPool<CBuildingSAInterface>(CLASS_CBuildingPool, modelDefinitions, seen);
-        dummyPoolReady = AddDatDistantLightsFromPool<CEntitySAInterface>(CLASS_CDummyPool, modelDefinitions, seen);
-        for (const SDistantLightDefinition& definition : additionalDefinitions)
-            AddDistantLight(definition.localPosition, definition, definition.drawDistance, false, seen);
+        buildingPoolReady = AddDatDistantLightsFromPool<CBuildingSAInterface>(CLASS_CBuildingPool, g_DistantLightDefinitions, g_DistantLightKeys);
+        dummyPoolReady = AddDatDistantLightsFromPool<CEntitySAInterface>(CLASS_CDummyPool, g_DistantLightDefinitions, g_DistantLightKeys);
     }
     else
     {
-        buildingPoolReady = AddNativeDistantLightsFromPool<CBuildingSAInterface>(CLASS_CBuildingPool, seen);
-        dummyPoolReady = AddNativeDistantLightsFromPool<CEntitySAInterface>(CLASS_CDummyPool, seen);
+        buildingPoolReady = AddNativeDistantLightsFromPool<CBuildingSAInterface>(CLASS_CBuildingPool, g_DistantLightKeys);
+        dummyPoolReady = AddNativeDistantLightsFromPool<CEntitySAInterface>(CLASS_CDummyPool, g_DistantLightKeys);
     }
     g_bDistantLightsNeedRebuild = !(buildingPoolReady && dummyPoolReady);
 
@@ -808,6 +830,17 @@ void CCoronasSA::RebuildDistantLights()
     OutputReleaseLine(message);
     if (g_pCore)
         g_pCore->ChatEcho(message, false);
+}
+
+void CCoronasSA::CaptureDistantLight(CEntitySAInterface* entity)
+{
+    if (!entity)
+        return;
+
+    if (EnsureDistantLightDefinitionsLoaded())
+        AddDatDistantLightsForEntity(entity, g_DistantLightDefinitions, g_DistantLightKeys);
+    else
+        AddNativeDistantLightsForEntity(entity, g_DistantLightKeys);
 }
 
 void CCoronasSA::DoPulseDistantLights()

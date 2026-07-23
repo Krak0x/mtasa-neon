@@ -11,7 +11,31 @@
 #include "StdInc.h"
 #include "gamesa_renderware.h"
 #include "CFileLoaderSA.h"
+#include "CCoronasSA.h"
+#include "CGameSA.h"
 #include "CModelInfoSA.h"
+
+extern CGameSA* pGame;
+
+namespace
+{
+    constexpr DWORD CALL_LoadIplBoundingBoxBinaryInstance = 0x405C99;
+    constexpr DWORD FUNC_LoadObjectInstanceBinary = 0x538090;
+
+    void CaptureDistantLight(CEntitySAInterface* entity)
+    {
+        if (entity && pGame && pGame->GetCoronas())
+            static_cast<CCoronasSA*>(pGame->GetCoronas())->CaptureDistantLight(entity);
+    }
+
+    CEntitySAInterface* __cdecl LoadIplBoundingBoxBinaryInstance(SFileObjectInstance* instance, const char* modelName)
+    {
+        auto loadObjectInstance = reinterpret_cast<CEntitySAInterface*(__cdecl*)(SFileObjectInstance*, const char*)>(FUNC_LoadObjectInstanceBinary);
+        CEntitySAInterface* entity = loadObjectInstance(instance, modelName);
+        CaptureDistantLight(entity);
+        return entity;
+    }
+}  // namespace
 
 CFileLoaderSA::CFileLoaderSA()
 {
@@ -26,6 +50,13 @@ void CFileLoaderSA::StaticSetHooks()
     HookInstall(0x5371F0, (DWORD)CFileLoader_LoadAtomicFile, 5);
     HookInstall(0x537150, (DWORD)CFileLoader_SetRelatedModelInfoCB, 5);
     HookInstall(0x538690, (DWORD)CFileLoader_LoadObjectInstance, 5);
+
+    // Neon already invalidates CINFO.BIN because its relocated IPL/COL stores
+    // cannot use GTA's fixed-size cache. LoadAllRemainingIpls consequently
+    // visits every binary IPL once to calculate its bounds. Observe that
+    // existing pass here instead of forcing extra world streaming or relying
+    // on whichever sectors remain loaded after startup.
+    HookInstallCall(CALL_LoadIplBoundingBoxBinaryInstance, reinterpret_cast<DWORD>(&LoadIplBoundingBoxBinaryInstance));
 
     // Preserve m_pLod for buildings sharing one LOD entity at scene-load time.
     // Vanilla _LinkLods (0x5B51E0) walks the IPL instance list and, when several
@@ -278,5 +309,7 @@ CEntitySAInterface* CFileLoader_LoadObjectInstance(const char* szLine)
         inst.rotation.fW = 1.0f;
     }
 
-    return ((CEntitySAInterface * (__cdecl*)(SFileObjectInstance*))0x538090)(&inst);
+    CEntitySAInterface* entity = ((CEntitySAInterface * (__cdecl*)(SFileObjectInstance*))0x538090)(&inst);
+    CaptureDistantLight(entity);
+    return entity;
 }
