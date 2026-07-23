@@ -1,0 +1,404 @@
+{
+  "aggregate": {
+    "archives": 7,
+    "building": 33849,
+    "col": 121,
+    "col_model": 11835,
+    "cross_spatial_variants": 919,
+    "generated_identities": 13404,
+    "ipl": 121,
+    "model_store_atomic": 11217,
+    "model_store_damage_atomic": 136,
+    "model_store_timed": 484,
+    "model_variants": 11837,
+    "payload_bytes": 1373481382,
+    "placements": 33849,
+    "positive_lod_links": 3038,
+    "source_models": 10918,
+    "spatial_groups": 121,
+    "txd": 1325
+  },
+  "blocker_codes": [
+    "future-model-reserve",
+    "streamed-ipl-lod-bootstrap",
+    "building-concurrency",
+    "quad-tree-concurrency",
+    "cache-rollover-capacity",
+    "streaming-double-buffer-floor",
+    "renderware-ram-high-water-unproved"
+  ],
+  "cities": [
+    {
+      "asset_fingerprint": {
+        "bytes": 169381156,
+        "files": 2070,
+        "sha256": "f830f5fa5713ab375d011f71df96e893e95f70fc26ec73707c2f85336f9821ba"
+      },
+      "archive_assignment_sha256": "4fc602a22e998fd0ff175ff61c48238f082a3f410845afe93da994fdd4fafe8d",
+      "bounds": {
+        "x": [
+          -9040.3,
+          -7462.8
+        ],
+        "y": [
+          7044.4,
+          8409.1
+        ],
+        "z": [
+          -20.0,
+          58.2159
+        ]
+      },
+      "counts": {
+        "col_groups": 7,
+        "col_models": 1054,
+        "cross_spatial_variants": 102,
+        "model_types": {
+          "object": 927,
+          "object-damageable": 112,
+          "timed-object": 15
+        },
+        "model_variants": 1054,
+        "native_placements": 0,
+        "placements": 2962,
+        "positive_lod_links": 0,
+        "source_models": 952,
+        "spatial_groups": 7,
+        "timed_model_repairs": 0,
+        "txds": 166
+      },
+      "lod_dependencies": {
+        "cross_group_links": 0,
+        "links": 0,
+        "same_group_links": 0,
+        "unique_targets": 0
+      },
+      "lod_group_edges_sha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+      "map_sha256": "b5fe44847754d24060fc809cac2acc451ff6019d2d4ebd3c432eab76616070ad",
+      "model_id_range": [
+        20000,
+        21053
+      ],
+      "namespace": "bw",
+      "pack_id": "bullworth",
+      "remap_sha256": "4d1515b1e52eebad559628226e86f5cf7da74afb909d43dcf2f1f7d8ec6d190f",
+      "spatial_group_bounds_sha256": "8a5f06dd1040acd219dbe9663bc98b912c26e9acb784143ba61f91332bfd519e"
+    },
+    {
+      "asset_fingerprint": {
+        "bytes": 238625320,
+        "files": 7646,
+        "sha256": "99a3c7654c7739f34f2ff8201036ed53cbdb266383e518c7addd1b86fe0d384e"
+      },
+      "archive_assignment_sha256": "13c46288ee28ba264c785358c8010adef67ce4424a3b33b3c7891963eb8f7fbb",
+      "bounds": {
+        "x": [
+          5671.47021,
+          8462.94043
+        ],
+        "y": [
+          -9466.80957,
+          -5924.25977
+        ],
+        "z": [
+          -28.3142,
+          449.118011
+        ]
+      },
+      "counts": {
+        "col_groups": 56,
+        "col_models": 3800,
+        "cross_spatial_variants": 305,
+        "model_types": {
+          "object": 3405,
+          "object-damageable": 2,
+          "timed-object": 395
+        },
+        "model_variants": 3802,
+        "native_placements": 31,
+        "placements": 8588,
+        "positive_lod_links": 1081,
+        "source_models": 3497,
+        "spatial_groups": 56,
+        "timed_model_repairs": 5,
+        "txds": 654
+      },
+      "lod_dependencies": {
+        "cross_group_links": 1081,
+        "links": 1081,
+        "same_group_links": 0,
+        "unique_targets": 1081
+      },
+      "lod_group_edges_sha256": "76337f66f8f55ec49693f3f60c18a16dcdd6c4c10688df9b781e5adcd848106c",
+      "map_sha256": "677b91a08730b6e503cfa9ae0a4ae6bded252f4f3112a49505ae852c18eaca4f",
+      "model_id_range": [
+        21054,
+        24855
+      ],
+      "namespace": "vc",
+      "pack_id": "vice-city",
+      "remap_sha256": "b18217962f7ddff23a4bd767e2701377cbd7bf3ca869753b0043acb748c73c4d",
+      "spatial_group_bounds_sha256": "777b7cdf31362983fd7aaccbdae8ccecdd813b90acdc8681992a49cd94768bad"
+    },
+    {
+      "asset_fingerprint": {
+        "bytes": 124593269,
+        "files": 6436,
+        "sha256": "b3af590cd1253c3536ae5dd26633ed1056bd3c3637bb3429252a0893a55b8e03"
+      },
+      "archive_assignment_sha256": "e1ca15474ab9454a984533f870eb942e95821ae046a764060548fc85b5310842",
+      "bounds": {
+        "x": [
+          5975.04004,
+          9701.5
+        ],
+        "y": [
+          6300.19971,
+          9362.42969
+        ],
+        "z": [
+          -224.184006,
+          464.05899
+        ]
+      },
+      "counts": {
+        "col_groups": 46,
+        "col_models": 3488,
+        "cross_spatial_variants": 469,
+        "model_types": {
+          "object": 3444,
+          "object-damageable": 18,
+          "timed-object": 26
+        },
+        "model_variants": 3488,
+        "native_placements": 17,
+        "placements": 9824,
+        "positive_lod_links": 1957,
+        "source_models": 3019,
+        "spatial_groups": 46,
+        "timed_model_repairs": 0,
+        "txds": 399
+      },
+      "lod_dependencies": {
+        "cross_group_links": 1956,
+        "links": 1957,
+        "same_group_links": 1,
+        "unique_targets": 1957
+      },
+      "lod_group_edges_sha256": "b7019e9fea1628f74b3bebbd8df165ec240aabe1dde828f66d755f0a2a686c75",
+      "map_sha256": "1597f9c3026fc8641202b03ccb03f019292e29a270d0c00052ac2c81c684feab",
+      "model_id_range": [
+        24856,
+        28343
+      ],
+      "namespace": "lc",
+      "pack_id": "liberty-city",
+      "remap_sha256": "97716cf5955fd7262c5c464e55b6c27b6537e9c8d5926874f730a2c4d167f6df",
+      "spatial_group_bounds_sha256": "5ce64aa072dd28a461de373baee93730a018b8dd8cf10bd7b7ee144d2ed982f8"
+    },
+    {
+      "asset_fingerprint": {
+        "bytes": 823626638,
+        "files": 7006,
+        "sha256": "ab1ee6b0a8e9bcc92fa1c1911d2878cf67a537a7fbb46ca00f63d5b1c6ed968b"
+      },
+      "archive_assignment_sha256": "723a68d671c44c2a08ed9a02c32812e58c3c186282b446ae59fd158a40381662",
+      "bounds": {
+        "x": [
+          4022.67456,
+          7390.98254
+        ],
+        "y": [
+          -1756.92358,
+          2040.72083
+        ],
+        "z": [
+          -42.083561,
+          204.288712
+        ]
+      },
+      "counts": {
+        "col_groups": 12,
+        "col_models": 3493,
+        "cross_spatial_variants": 43,
+        "model_types": {
+          "object": 3441,
+          "object-damageable": 4,
+          "timed-object": 48
+        },
+        "model_variants": 3493,
+        "native_placements": 56,
+        "placements": 12475,
+        "positive_lod_links": 0,
+        "source_models": 3450,
+        "spatial_groups": 12,
+        "timed_model_repairs": 0,
+        "txds": 106
+      },
+      "lod_dependencies": {
+        "cross_group_links": 0,
+        "links": 0,
+        "same_group_links": 0,
+        "unique_targets": 0
+      },
+      "lod_group_edges_sha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+      "map_sha256": "702b33ef689e28fe22c2d782d5a288fb83481c5f033007786e52584501dd6ed1",
+      "model_id_range": [
+        28344,
+        31836
+      ],
+      "namespace": "cc",
+      "pack_id": "carcer-city",
+      "remap_sha256": "f0701d0517230781c0a0124ea11e8571754ce271187884d89bf4911a541d4221",
+      "spatial_group_bounds_sha256": "0e2c3803da02350c174475707a70268d9ad3ffbc004217b39fb32b002974bad7"
+    }
+  ],
+  "file_ids": {
+    "boundaries": [
+      {
+        "file_id": 31999,
+        "owner_count": 1,
+        "partition": "dff"
+      },
+      {
+        "file_id": 32000,
+        "owner_count": 1,
+        "partition": "txd"
+      },
+      {
+        "file_id": 39999,
+        "owner_count": 1,
+        "partition": "txd"
+      },
+      {
+        "file_id": 40000,
+        "owner_count": 1,
+        "partition": "col"
+      },
+      {
+        "file_id": 40511,
+        "owner_count": 1,
+        "partition": "col"
+      },
+      {
+        "file_id": 40512,
+        "owner_count": 1,
+        "partition": "ipl"
+      }
+    ],
+    "custom_model_range": [
+      20000,
+      31836
+    ],
+    "dispersed_ids_policy": "observe-only-never-auto-allocate",
+    "full_layout_proof": {
+      "adjacency": [
+        {
+          "adjacent": true,
+          "left": "dff",
+          "left_last": 31999,
+          "right": "txd",
+          "right_first": 32000
+        },
+        {
+          "adjacent": true,
+          "left": "txd",
+          "left_last": 39999,
+          "right": "col",
+          "right_first": 40000
+        },
+        {
+          "adjacent": true,
+          "left": "col",
+          "left_last": 40511,
+          "right": "ipl",
+          "right_first": 40512
+        },
+        {
+          "adjacent": true,
+          "left": "ipl",
+          "left_last": 41535,
+          "right": "dat",
+          "right_first": 41536
+        },
+        {
+          "adjacent": true,
+          "left": "dat",
+          "left_last": 41599,
+          "right": "ifp",
+          "right_first": 41600
+        },
+        {
+          "adjacent": true,
+          "left": "ifp",
+          "left_last": 41779,
+          "right": "rrr",
+          "right_first": 41780
+        },
+        {
+          "adjacent": true,
+          "left": "rrr",
+          "left_last": 42254,
+          "right": "scm",
+          "right_first": 42255
+        },
+        {
+          "adjacent": true,
+          "left": "scm",
+          "left_last": 42336,
+          "right": "loaded_list",
+          "right_first": 42337
+        },
+        {
+          "adjacent": true,
+          "left": "loaded_list",
+          "left_last": 42338,
+          "right": "requested_list",
+          "right_first": 42339
+        }
+      ],
+      "exclusive_end": 42341,
+      "starts_at_zero": true,
+      "terminal_file_id": 42340,
+      "terminal_matches_total": true,
+      "valid": true
+    },
+    "future_city_reserve_required": 4096,
+    "observed_post_stock_scenario": {
+      "activation_authority": false,
+      "future_city_reserve_fits": false,
+      "range": [
+        18631,
+        30467
+      ],
+      "reason": "IDE occupancy does not prove runtime-reserved and hardcoded semantics below 20000",
+      "remaining_contiguous_ids": 1532
+    },
+    "remaining_custom_model_ids": 163,
+    "total": 42341
+  },
+  "mode": "read-only-no-mutation",
+  "reviewed_plan_sha256": "09edb066992cd21050ae42d2c8aaefd9785f0b982b01c26268ff09b399deb19d",
+  "schema": 1,
+  "source_order": [
+    "bullworth",
+    "vice-city",
+    "liberty-city",
+    "carcer-city"
+  ],
+  "status": "blocked",
+  "stock_identity": {
+    "col_name_count": 254,
+    "collision_authority": true,
+    "highest_model_id": 18630,
+    "identity_sha256": "fa8703bae116ad458378e29c1edf91d4b8b5ce4b5d7cd636fdc0ec86af1794ad",
+    "ipl_name_count": 243,
+    "model_name_count": 15389,
+    "note": "IDE-free IDs below 20000 are observations, not allocatable slots; runtime reservations and every signed-ID consumer remain unproved.",
+    "observed_free_ids_below_20000": 5168,
+    "occupied_model_ids": 14832,
+    "runtime_occupancy_authority": false,
+    "status": "ok",
+    "txd_name_count": 4050
+  }
+}

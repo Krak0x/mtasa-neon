@@ -191,3 +191,23 @@ directory. A successful client gate must report:
 The game must remain stock because v3 activation is intentionally unavailable
 at this checkpoint. Seeing Carcer in GTA would indicate an architectural
 violation, not success.
+
+## Aggregate planning handoff
+
+The next read-only gate is documented in
+`utils/extended-world/NATIVE_WORLD_PLANNER.md`.
+`plan_native_world_v3.py` derives all four city remaps together, scans stock
+IDs/names/GTA uppercase keys, proves FileID boundaries, calculates
+store/pool/memory/streaming/cache budgets and emits the complete VC/LC LOD
+dependency graph. It never builds or publishes a pack and never mutates GTA.
+
+The current plan is intentionally blocked: the four cities occupy
+20,000..31,836 and leave only 163 IDs rather than the documented 4,096-model
+future-city reserve; 3,038 streamed-IPL LOD links need registrar-owned entity
+indices; all-city building residency exceeds 32,000; and QuadTreeNode
+concurrency is not statically proved. Four city objects would also consume all
+four current cache object slots, leaving no transactional replacement bank.
+The current native-pack streaming clamp also supplies only one channel's IMG
+block floor to an API that divides a total buffer between two channels, and
+RenderWare residency still needs runtime high-water proof. These are activation
+requirements, not reasons to inflate constants inside the planner.

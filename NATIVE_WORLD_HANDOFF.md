@@ -928,8 +928,8 @@ The updated checkpoint sequence is:
    passed with peak buildings `12128/32000`, ColModels `10932/30000` and
    QuadTreeNodes `225/2048`; no overflow, fatal diagnostic or crash appeared.
    The opt-in harness environment variable was removed after validation.
-5. **Canonical pack v3 and second-city proof — implemented offline; live
-   transport gate pending.** The generic builder now emits deterministic
+5. **Canonical pack v3 and second-city proof — complete; live transport
+   validated 2026-07-23.** The generic builder now emits deterministic
    two-character namespaces, contiguous source-first model remaps, spatial
    COL/IPL pairs and one through 32 canonical VER2 archives. All file sizes,
    hashes and content identities use checked 64-bit accounting; the client
@@ -946,13 +946,30 @@ The updated checkpoint sequence is:
    archives for 826,749,674 payload bytes. Format 3 is intentionally
    publish-only: its runtime envelope proves multi-IMG inventory, IDE mapping,
    GTA uppercase keys, COL/IPL ownership and placement bounds, but cannot
-   acquire an authorization ticket or mutate GTA. The final live gate must
-   prove first publication then cache hit with `activation=no`, `lease=no` and
-   stock SA unchanged. VC/LC positive LOD links remain fail-closed until the
-   later registrar owns a safe entity-index bootstrap.
-6. **Aggregate no-mutation planner.** Plan SA plus Bullworth, Vice City,
-   Liberty City and Carcer together; reject every collision/capacity error
-   before mutation and pin all partition boundary cases.
+   acquire an authorization ticket or mutate GTA. The live gate proved first
+   publication then cache hit with `activation=no`, `lease=no` and stock SA
+   unchanged. VC/LC positive LOD links remain fail-closed until the later
+   registrar owns a safe entity-index bootstrap.
+6. **Aggregate no-mutation planner — implemented offline.**
+   `plan_native_world_v3.py` derives the same source-first variants as the v3
+   builder and assigns Bullworth, VC, LC and Carcer the deterministic aggregate
+   ranges 20,000..21,053, 21,054..24,855, 24,856..28,343 and
+   28,344..31,836. It binds the stock inventory, proves literal and GTA-key
+   identity uniqueness, emits the complete cross-IPL LOD dependency graph,
+   pins 31,999/32,000, 39,999/40,000 and 40,511/40,512, and calculates checked
+   store/pool/CPU/RAM/VRAM/streaming/disk/cache budgets without writing packs
+   or mutating GTA. The plan correctly remains blocked: only 163 contiguous
+   DFF IDs remain against a 4,096-model future-city reserve, VC/LC need 3,038
+   registrar-owned LOD links, all-city building residency projects to
+   43,015/32,000 unless spatial exclusion is proved, and QuadTreeNode
+   concurrency has no sound static bound. The four-object cache is also fully
+   consumed by four active city packs and needs a transactional replacement
+   bank. The planner also catches the native-pack streaming-buffer unit
+   mismatch: the current clamp supplies one channel's block count to an API
+   that splits a total allocation into two channels. RenderWare residency
+   remains a high-water requirement beyond the known fixed native-memory lower
+   bound. The 5,168 observed IDE-free IDs below 20,000 are diagnostic only and
+   are never auto-allocated.
 7. **Transactional multi-city activation.** Register all four imported cities
    beside San Andreas in one process, then test repeated cross-city streaming,
    collisions, LODs, D3D reset/minimize, memory pressure, death/respawn,
