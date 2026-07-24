@@ -17,23 +17,24 @@
 #include <array>
 #include <cmath>
 #include <cstring>
+#include <iterator>
 #include <limits>
 #include <vector>
 
 #if 1
 namespace
 {
-    constexpr int WORLD_MAP_SIZE = 20000;
-    constexpr int WORLD_SECTOR_SIZE = 50;
-    constexpr int WORLD_LOD_SECTOR_SIZE = 200;
-    constexpr int WORLD_SECTORS_PER_DIMENSION = WORLD_MAP_SIZE / WORLD_SECTOR_SIZE;
-    constexpr int WORLD_LOD_SECTORS_PER_DIMENSION = WORLD_MAP_SIZE / WORLD_LOD_SECTOR_SIZE;
-    constexpr int TOTAL_WORLD_SECTORS = WORLD_SECTORS_PER_DIMENSION * WORLD_SECTORS_PER_DIMENSION;
-    constexpr int TOTAL_WORLD_LOD_SECTORS = WORLD_LOD_SECTORS_PER_DIMENSION * WORLD_LOD_SECTORS_PER_DIMENSION;
-    constexpr int TOTAL_REPEAT_SECTORS = 16 * 16;
+    constexpr int         WORLD_MAP_SIZE = 20000;
+    constexpr int         WORLD_SECTOR_SIZE = 50;
+    constexpr int         WORLD_LOD_SECTOR_SIZE = 200;
+    constexpr int         WORLD_SECTORS_PER_DIMENSION = WORLD_MAP_SIZE / WORLD_SECTOR_SIZE;
+    constexpr int         WORLD_LOD_SECTORS_PER_DIMENSION = WORLD_MAP_SIZE / WORLD_LOD_SECTOR_SIZE;
+    constexpr int         TOTAL_WORLD_SECTORS = WORLD_SECTORS_PER_DIMENSION * WORLD_SECTORS_PER_DIMENSION;
+    constexpr int         TOTAL_WORLD_LOD_SECTORS = WORLD_LOD_SECTORS_PER_DIMENSION * WORLD_LOD_SECTORS_PER_DIMENSION;
+    constexpr int         TOTAL_REPEAT_SECTORS = 16 * 16;
     constexpr std::size_t MOVED_CODE_CAPACITY = 150000;
-    constexpr bool EXTENDED_WORLD_PATCH_DRY_RUN = false;
-    constexpr bool EXTENDED_WORLD_PATCH_DISABLED = false;
+    constexpr bool        EXTENDED_WORLD_PATCH_DRY_RUN = false;
+    constexpr bool        EXTENDED_WORLD_PATCH_DISABLED = false;
 
     struct SWorldSector
     {
@@ -66,11 +67,11 @@ namespace
     float g_worldLodSectorCountHalf = 50.0f;
     int   g_worldSectorCountHalfInteger = 200;
 
-    SWorldSector*  g_worldSectors{};
-    void**         g_worldLodSectors{};
-    std::uint8_t*  g_movedCode{};
-    bool           g_extendedWorldSectorsInstalled{};
-    bool           g_vanillaWorldSectorsMigrated{};
+    SWorldSector*        g_worldSectors{};
+    void**               g_worldLodSectors{};
+    std::uint8_t*        g_movedCode{};
+    bool                 g_extendedWorldSectorsInstalled{};
+    bool                 g_vanillaWorldSectorsMigrated{};
     SRepeatSector* const g_repeatSectors = reinterpret_cast<SRepeatSector*>(0xB992B8);
 
     void MigrateVanillaSectorLists()
@@ -85,7 +86,7 @@ namespace
         {
             for (int x = 0; x < VANILLA_WORLD_SECTORS_PER_DIMENSION; ++x)
             {
-                SWorldSector& destination = g_worldSectors[(y + worldOffset) * WORLD_SECTORS_PER_DIMENSION + x + worldOffset];
+                SWorldSector&       destination = g_worldSectors[(y + worldOffset) * WORLD_SECTORS_PER_DIMENSION + x + worldOffset];
                 const SWorldSector& source = vanillaWorldSectors[y * VANILLA_WORLD_SECTORS_PER_DIMENSION + x];
                 if (!destination.buildingList)
                     destination.buildingList = source.buildingList;
@@ -282,32 +283,54 @@ namespace
 
     struct SWorldSectorDirectPatchEntry
     {
-        std::uintptr_t               address;
+        std::uintptr_t              address;
         EWorldSectorDirectPatchKind kind;
         EWorldSectorPatchValue      value;
     };
 
     // The generated enum is stored as uint8_t in the entry to keep this struct
     // independent of its declaration order.
-#include "CWorldSectorDirectPatchManifest.inc"
+    #include "CWorldSectorDirectPatchManifest.inc"
 
     struct SWorldSectorManifestEntry
     {
-        std::uintptr_t     address;
-        std::size_t        originalSize;
+        std::uintptr_t      address;
+        std::size_t         originalSize;
         const std::uint8_t* bytecode;
-        std::size_t        bytecodeSize;
-        std::uintptr_t     continueAt;
+        std::size_t         bytecodeSize;
+        std::uintptr_t      continueAt;
     };
 
-#include "CWorldSectorManifest.inc"
+    #include "CWorldSectorManifest.inc"
 
     struct SDirectPatch
     {
-        std::uintptr_t          address;
+        std::uintptr_t            address;
         std::vector<std::uint8_t> expected;
         std::vector<std::uint8_t> replacement;
     };
+
+    struct SMultiplayerOwnedSource
+    {
+        std::uintptr_t address;
+        std::size_t    size;
+    };
+
+    // Multiplayer SA applies the corresponding melee and helicopter boundary
+    // workarounds after Game SA has initialized. Relocating these instructions
+    // would let those later NOP writes remove or corrupt the relocation jump.
+    // The remaining WorldSectors patches still clamp main-sector indices to
+    // the extended grid, so leaving these four sources to their existing owner
+    // preserves both MTA's outside-world behavior and the 400x400 sector limit.
+    constexpr SMultiplayerOwnedSource MULTIPLAYER_OWNED_SOURCES[] = {
+        {0x005FFBA2, 5},
+        {0x005FFC00, 5},
+        {0x006E3072, 5},
+        {0x006E30D3, 5},
+    };
+
+    constexpr std::uintptr_t CAMERA_EDITOR_REDIRECT_START = 0x0050F720;
+    constexpr std::uintptr_t CAMERA_EDITOR_REDIRECT_END = 0x0050F847;
 
     std::uint32_t FloatBits(float value)
     {
@@ -320,50 +343,94 @@ namespace
     {
         switch (value)
         {
-            case EWorldSectorPatchValue::VALUE_0: return reinterpret_cast<std::uint32_t>(&g_worldMapMinCoord);
-            case EWorldSectorPatchValue::VALUE_1: return reinterpret_cast<std::uint32_t>(&g_worldMapMaxCoord);
-            case EWorldSectorPatchValue::VALUE_2: return FloatBits(g_worldMapMinCoord);
-            case EWorldSectorPatchValue::VALUE_3: return FloatBits(g_worldMapMaxCoord);
-            case EWorldSectorPatchValue::VALUE_4: return FloatBits(g_worldMapMaxCoordMinusOne);
-            case EWorldSectorPatchValue::VALUE_5: return reinterpret_cast<std::uint32_t>(g_worldSectors);
-            case EWorldSectorPatchValue::VALUE_6: return reinterpret_cast<std::uint32_t>(&g_worldSectors->dummyList);
-            case EWorldSectorPatchValue::VALUE_7: return reinterpret_cast<std::uint32_t>(g_worldSectors + TOTAL_WORLD_SECTORS);
-            case EWorldSectorPatchValue::VALUE_8: return TOTAL_WORLD_SECTORS;
-            case EWorldSectorPatchValue::VALUE_9: return reinterpret_cast<std::uint32_t>(&g_worldSectorSize);
-            case EWorldSectorPatchValue::VALUE_10: return reinterpret_cast<std::uint32_t>(&g_worldSectorSizeHalf);
-            case EWorldSectorPatchValue::VALUE_11: return reinterpret_cast<std::uint32_t>(&g_worldSectorSizeDoubledThenSquared);
-            case EWorldSectorPatchValue::VALUE_12: return reinterpret_cast<std::uint32_t>(&g_worldSectorSizeInversed);
-            case EWorldSectorPatchValue::VALUE_13: return reinterpret_cast<std::uint32_t>(&g_worldSectorCountHalf);
-            case EWorldSectorPatchValue::VALUE_14: return reinterpret_cast<std::uint32_t>(&PatchLosClearStartX);
-            case EWorldSectorPatchValue::VALUE_15: return reinterpret_cast<std::uint32_t>(&PatchLosClearEndX);
-            case EWorldSectorPatchValue::VALUE_16: return reinterpret_cast<std::uint32_t>(&PatchLosClearStartY);
-            case EWorldSectorPatchValue::VALUE_17: return reinterpret_cast<std::uint32_t>(&PatchLosClearEndY);
-            case EWorldSectorPatchValue::VALUE_18: return reinterpret_cast<std::uint32_t>(&PatchProcessLosStartX);
-            case EWorldSectorPatchValue::VALUE_19: return reinterpret_cast<std::uint32_t>(&PatchProcessLosEndX);
-            case EWorldSectorPatchValue::VALUE_20: return reinterpret_cast<std::uint32_t>(&PatchProcessLosStartY);
-            case EWorldSectorPatchValue::VALUE_21: return reinterpret_cast<std::uint32_t>(&PatchProcessLosEndY);
-            case EWorldSectorPatchValue::VALUE_22: return reinterpret_cast<std::uint32_t>(&PatchRendererStart);
-            case EWorldSectorPatchValue::VALUE_23: return reinterpret_cast<std::uint32_t>(&PatchRendererEnd);
-            case EWorldSectorPatchValue::VALUE_24: return WORLD_SECTORS_PER_DIMENSION - 1;
-            case EWorldSectorPatchValue::VALUE_25: return WORLD_SECTORS_PER_DIMENSION;
-            case EWorldSectorPatchValue::VALUE_26: return FloatBits(g_worldSectorSizeInversed);
-            case EWorldSectorPatchValue::VALUE_27: return FloatBits(g_worldSectorCountHalf);
-            case EWorldSectorPatchValue::VALUE_28: return reinterpret_cast<std::uint32_t>(g_repeatSectors);
-            case EWorldSectorPatchValue::VALUE_29: return reinterpret_cast<std::uint32_t>(&g_repeatSectors->objectList);
-            case EWorldSectorPatchValue::VALUE_30: return reinterpret_cast<std::uint32_t>(&g_repeatSectors->pedList);
-            case EWorldSectorPatchValue::VALUE_31: return reinterpret_cast<std::uint32_t>(g_repeatSectors + TOTAL_REPEAT_SECTORS);
-            case EWorldSectorPatchValue::VALUE_32: return reinterpret_cast<std::uint32_t>(&g_repeatSectors[TOTAL_REPEAT_SECTORS].objectList);
-            case EWorldSectorPatchValue::VALUE_33: return TOTAL_REPEAT_SECTORS;
-            case EWorldSectorPatchValue::VALUE_34: return reinterpret_cast<std::uint32_t>(g_worldLodSectors);
-            case EWorldSectorPatchValue::VALUE_35: return reinterpret_cast<std::uint32_t>(g_worldLodSectors + TOTAL_WORLD_LOD_SECTORS);
-            case EWorldSectorPatchValue::VALUE_36: return TOTAL_WORLD_LOD_SECTORS;
-            case EWorldSectorPatchValue::VALUE_37: return reinterpret_cast<std::uint32_t>(&g_worldLodSectorSize);
-            case EWorldSectorPatchValue::VALUE_38: return reinterpret_cast<std::uint32_t>(&g_worldLodSectorSizeHalf);
-            case EWorldSectorPatchValue::VALUE_39: return reinterpret_cast<std::uint32_t>(&g_worldLodSectorSizeTimesSqrtTwoSquared);
-            case EWorldSectorPatchValue::VALUE_40: return reinterpret_cast<std::uint32_t>(&g_worldLodSectorCountHalf);
-            case EWorldSectorPatchValue::VALUE_41: return reinterpret_cast<std::uint32_t>(&g_worldLodSectorSizeInversed);
-            case EWorldSectorPatchValue::VALUE_42: return reinterpret_cast<std::uint32_t>(&PatchCameraEditor);
-            case EWorldSectorPatchValue::VALUE_43: return reinterpret_cast<std::uint32_t>(&GetExtendedWorldSector);
+            case EWorldSectorPatchValue::VALUE_0:
+                return reinterpret_cast<std::uint32_t>(&g_worldMapMinCoord);
+            case EWorldSectorPatchValue::VALUE_1:
+                return reinterpret_cast<std::uint32_t>(&g_worldMapMaxCoord);
+            case EWorldSectorPatchValue::VALUE_2:
+                return FloatBits(g_worldMapMinCoord);
+            case EWorldSectorPatchValue::VALUE_3:
+                return FloatBits(g_worldMapMaxCoord);
+            case EWorldSectorPatchValue::VALUE_4:
+                return FloatBits(g_worldMapMaxCoordMinusOne);
+            case EWorldSectorPatchValue::VALUE_5:
+                return reinterpret_cast<std::uint32_t>(g_worldSectors);
+            case EWorldSectorPatchValue::VALUE_6:
+                return reinterpret_cast<std::uint32_t>(&g_worldSectors->dummyList);
+            case EWorldSectorPatchValue::VALUE_7:
+                return reinterpret_cast<std::uint32_t>(g_worldSectors + TOTAL_WORLD_SECTORS);
+            case EWorldSectorPatchValue::VALUE_8:
+                return TOTAL_WORLD_SECTORS;
+            case EWorldSectorPatchValue::VALUE_9:
+                return reinterpret_cast<std::uint32_t>(&g_worldSectorSize);
+            case EWorldSectorPatchValue::VALUE_10:
+                return reinterpret_cast<std::uint32_t>(&g_worldSectorSizeHalf);
+            case EWorldSectorPatchValue::VALUE_11:
+                return reinterpret_cast<std::uint32_t>(&g_worldSectorSizeDoubledThenSquared);
+            case EWorldSectorPatchValue::VALUE_12:
+                return reinterpret_cast<std::uint32_t>(&g_worldSectorSizeInversed);
+            case EWorldSectorPatchValue::VALUE_13:
+                return reinterpret_cast<std::uint32_t>(&g_worldSectorCountHalf);
+            case EWorldSectorPatchValue::VALUE_14:
+                return reinterpret_cast<std::uint32_t>(&PatchLosClearStartX);
+            case EWorldSectorPatchValue::VALUE_15:
+                return reinterpret_cast<std::uint32_t>(&PatchLosClearEndX);
+            case EWorldSectorPatchValue::VALUE_16:
+                return reinterpret_cast<std::uint32_t>(&PatchLosClearStartY);
+            case EWorldSectorPatchValue::VALUE_17:
+                return reinterpret_cast<std::uint32_t>(&PatchLosClearEndY);
+            case EWorldSectorPatchValue::VALUE_18:
+                return reinterpret_cast<std::uint32_t>(&PatchProcessLosStartX);
+            case EWorldSectorPatchValue::VALUE_19:
+                return reinterpret_cast<std::uint32_t>(&PatchProcessLosEndX);
+            case EWorldSectorPatchValue::VALUE_20:
+                return reinterpret_cast<std::uint32_t>(&PatchProcessLosStartY);
+            case EWorldSectorPatchValue::VALUE_21:
+                return reinterpret_cast<std::uint32_t>(&PatchProcessLosEndY);
+            case EWorldSectorPatchValue::VALUE_22:
+                return reinterpret_cast<std::uint32_t>(&PatchRendererStart);
+            case EWorldSectorPatchValue::VALUE_23:
+                return reinterpret_cast<std::uint32_t>(&PatchRendererEnd);
+            case EWorldSectorPatchValue::VALUE_24:
+                return WORLD_SECTORS_PER_DIMENSION - 1;
+            case EWorldSectorPatchValue::VALUE_25:
+                return WORLD_SECTORS_PER_DIMENSION;
+            case EWorldSectorPatchValue::VALUE_26:
+                return FloatBits(g_worldSectorSizeInversed);
+            case EWorldSectorPatchValue::VALUE_27:
+                return FloatBits(g_worldSectorCountHalf);
+            case EWorldSectorPatchValue::VALUE_28:
+                return reinterpret_cast<std::uint32_t>(g_repeatSectors);
+            case EWorldSectorPatchValue::VALUE_29:
+                return reinterpret_cast<std::uint32_t>(&g_repeatSectors->objectList);
+            case EWorldSectorPatchValue::VALUE_30:
+                return reinterpret_cast<std::uint32_t>(&g_repeatSectors->pedList);
+            case EWorldSectorPatchValue::VALUE_31:
+                return reinterpret_cast<std::uint32_t>(g_repeatSectors + TOTAL_REPEAT_SECTORS);
+            case EWorldSectorPatchValue::VALUE_32:
+                return reinterpret_cast<std::uint32_t>(&g_repeatSectors[TOTAL_REPEAT_SECTORS].objectList);
+            case EWorldSectorPatchValue::VALUE_33:
+                return TOTAL_REPEAT_SECTORS;
+            case EWorldSectorPatchValue::VALUE_34:
+                return reinterpret_cast<std::uint32_t>(g_worldLodSectors);
+            case EWorldSectorPatchValue::VALUE_35:
+                return reinterpret_cast<std::uint32_t>(g_worldLodSectors + TOTAL_WORLD_LOD_SECTORS);
+            case EWorldSectorPatchValue::VALUE_36:
+                return TOTAL_WORLD_LOD_SECTORS;
+            case EWorldSectorPatchValue::VALUE_37:
+                return reinterpret_cast<std::uint32_t>(&g_worldLodSectorSize);
+            case EWorldSectorPatchValue::VALUE_38:
+                return reinterpret_cast<std::uint32_t>(&g_worldLodSectorSizeHalf);
+            case EWorldSectorPatchValue::VALUE_39:
+                return reinterpret_cast<std::uint32_t>(&g_worldLodSectorSizeTimesSqrtTwoSquared);
+            case EWorldSectorPatchValue::VALUE_40:
+                return reinterpret_cast<std::uint32_t>(&g_worldLodSectorCountHalf);
+            case EWorldSectorPatchValue::VALUE_41:
+                return reinterpret_cast<std::uint32_t>(&g_worldLodSectorSizeInversed);
+            case EWorldSectorPatchValue::VALUE_42:
+                return reinterpret_cast<std::uint32_t>(&PatchCameraEditor);
+            case EWorldSectorPatchValue::VALUE_43:
+                return reinterpret_cast<std::uint32_t>(&GetExtendedWorldSector);
         }
         return 0;
     }
@@ -391,15 +458,34 @@ namespace
         return VirtualProtect(reinterpret_cast<void*>(address), size, oldProtection, &ignored) != FALSE;
     }
 
+    bool RangesOverlap(std::uintptr_t firstAddress, std::size_t firstSize, std::uintptr_t secondAddress, std::size_t secondSize)
+    {
+        return firstAddress < secondAddress + secondSize && secondAddress < firstAddress + firstSize;
+    }
+
+    bool IsSupersededByCameraEditorRedirect(const SWorldSectorDirectPatchEntry& entry, std::size_t size)
+    {
+        if (entry.address == CAMERA_EDITOR_REDIRECT_START && entry.kind == EWorldSectorDirectPatchKind::REDIRECT)
+            return false;
+
+        // PatchCameraEditor replaces this complete GTA block and resumes at its
+        // end. Applying the generated operand patches inside that dead block is
+        // unnecessary, and the first operand overlaps the redirect itself.
+        return entry.address >= CAMERA_EDITOR_REDIRECT_START && entry.address + size <= CAMERA_EDITOR_REDIRECT_END;
+    }
+
     bool PrepareDirectPatches(std::vector<SDirectPatch>& patches)
     {
         patches.reserve(std::size(WORLD_SECTOR_DIRECT_PATCHES));
         for (const SWorldSectorDirectPatchEntry& entry : WORLD_SECTOR_DIRECT_PATCHES)
         {
-            const auto value = entry.value;
+            const auto        value = entry.value;
+            const std::size_t size = entry.kind == EWorldSectorDirectPatchKind::REDIRECT ? 5 : 4;
+            if (IsSupersededByCameraEditorRedirect(entry, size))
+                continue;
+
             SDirectPatch patch;
             patch.address = entry.address;
-            const std::size_t size = entry.kind == EWorldSectorDirectPatchKind::REDIRECT ? 5 : 4;
             patch.expected.resize(size);
             patch.replacement.resize(size);
             if (!ReadMemory(entry.address, patch.expected.data(), size))
@@ -419,7 +505,70 @@ namespace
             {
                 std::memcpy(patch.replacement.data(), &resolved, sizeof(resolved));
             }
+
+            const auto duplicate = std::find_if(patches.begin(), patches.end(), [&patch](const SDirectPatch& existing)
+                                                { return existing.address == patch.address && existing.expected.size() == patch.expected.size(); });
+            if (duplicate != patches.end())
+            {
+                if (duplicate->expected != patch.expected || duplicate->replacement != patch.replacement)
+                    return false;
+                continue;
+            }
+
             patches.push_back(std::move(patch));
+        }
+        return true;
+    }
+
+    bool ValidateMultiplayerOwnedSources()
+    {
+        for (const SMultiplayerOwnedSource& owned : MULTIPLAYER_OWNED_SOURCES)
+        {
+            const auto matching =
+                std::count_if(std::begin(WORLD_SECTOR_MANIFEST), std::end(WORLD_SECTOR_MANIFEST),
+                              [&owned](const SWorldSectorManifestEntry& entry) { return entry.address == owned.address && entry.originalSize == owned.size; });
+            if (matching != 1)
+                return false;
+        }
+        return true;
+    }
+
+    bool IsMultiplayerOwnedSource(const SWorldSectorManifestEntry& entry)
+    {
+        return std::any_of(std::begin(MULTIPLAYER_OWNED_SOURCES), std::end(MULTIPLAYER_OWNED_SOURCES),
+                           [&entry](const SMultiplayerOwnedSource& owned) { return entry.address == owned.address && entry.originalSize == owned.size; });
+    }
+
+    bool ValidatePatchLayout(const std::vector<SDirectPatch>& directPatches, const std::vector<CWorldSectorCodeMover::SRelocation>& relocations)
+    {
+        for (std::size_t first = 0; first < directPatches.size(); ++first)
+        {
+            for (std::size_t second = first + 1; second < directPatches.size(); ++second)
+            {
+                if (RangesOverlap(directPatches[first].address, directPatches[first].replacement.size(), directPatches[second].address,
+                                  directPatches[second].replacement.size()))
+                {
+                    return false;
+                }
+            }
+        }
+
+        for (std::size_t first = 0; first < relocations.size(); ++first)
+        {
+            for (std::size_t second = first + 1; second < relocations.size(); ++second)
+            {
+                if (RangesOverlap(relocations[first].sourceAddress, relocations[first].sourceJump.size(), relocations[second].sourceAddress,
+                                  relocations[second].sourceJump.size()))
+                {
+                    return false;
+                }
+            }
+
+            for (const SDirectPatch& patch : directPatches)
+            {
+                if (RangesOverlap(relocations[first].sourceAddress, relocations[first].sourceJump.size(), patch.address, patch.replacement.size()))
+                    return false;
+            }
         }
         return true;
     }
@@ -452,11 +601,19 @@ bool InstallExtendedWorldSectorPatch()
     mover.SetVariable("SIZE_OF_WORLD_LOD_SECTORS_FOR_ONE_DIMENSION", WORLD_LOD_SECTORS_PER_DIMENSION * sizeof(void*));
     mover.SetVariable("MINUS_NUMBER_OF_WORLD_LOD_SECTORS_PER_DIMENSION_HALF", -WORLD_LOD_SECTORS_PER_DIMENSION / 2);
 
+    if (!ValidateMultiplayerOwnedSources())
+        return false;
+
     for (const SWorldSectorManifestEntry& entry : WORLD_SECTOR_MANIFEST)
     {
+        if (IsMultiplayerOwnedSource(entry))
+            continue;
         if (!mover.Prepare(entry.address, entry.originalSize, entry.bytecode, entry.bytecodeSize, entry.continueAt))
             return false;
     }
+
+    if (!ValidatePatchLayout(directPatches, mover.GetRelocations()))
+        return false;
 
     // Validate every direct patch before the code mover performs its first write.
     for (const SDirectPatch& patch : directPatches)
