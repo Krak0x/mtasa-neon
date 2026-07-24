@@ -683,10 +683,10 @@ local function applyGangTagState(object)
         return
     end
     local alpha = tonumber(getElementData(object, TAG_PAINT_ALPHA_DATA))
-    if type(acquireObjectGangTag) ~= "function" or type(setObjectGangTagProgress) ~= "function" then
+    if type(acquireObjectGangTag) ~= "function" then
         return
     end
-    if not alpha or not shouldEnableGangTag(object, alpha) then
+    if not alpha or not state.active then
         if type(releaseObjectGangTag) == "function" then
             releaseObjectGangTag(object)
         end
@@ -694,13 +694,14 @@ local function applyGangTagState(object)
     end
 
     alpha = math.max(0, math.min(255, math.floor(alpha + 0.5)))
+    local sprayEnabled = shouldEnableGangTag(object, alpha)
     local predictedAlpha = type(getObjectGangTagProgress) == "function" and getObjectGangTagProgress(object) or false
     if type(predictedAlpha) == "number" and alpha < predictedAlpha then
         return
     end
-    if not setObjectGangTagProgress(object, alpha) then
-        acquireObjectGangTag(object, alpha)
-    end
+    -- Future SCM objectives can be visible in a cutscene. Preserve their
+    -- unpainted material without accepting native spray hits before the stage.
+    acquireObjectGangTag(object, alpha, sprayEnabled)
 end
 
 local function refreshGangTagStates()
@@ -754,7 +755,7 @@ addEventHandler("onClientElementDataChange", root, function(dataName)
 end)
 
 addEventHandler("onClientResourceStart", resourceRoot, function()
-    if type(acquireObjectGangTag) ~= "function" or type(setObjectGangTagProgress) ~= "function" then
+    if type(acquireObjectGangTag) ~= "function" then
         outputDebugString("[tagging-up-turf] native gang-tag API is unavailable", 1)
     else
         refreshGangTagStates()

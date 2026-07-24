@@ -764,7 +764,8 @@ bool CLuaObjectDefs::SetObjectGangTagAlpha(CClientObject* const pObject, std::va
     return pGameObject->SetGangTagAlpha(static_cast<unsigned char>(uiAlpha));
 }
 
-bool CLuaObjectDefs::AcquireObjectGangTag(lua_State* luaVM, CClientObject* const pObject, std::optional<unsigned int> progress)
+bool CLuaObjectDefs::AcquireObjectGangTag(lua_State* luaVM, CClientObject* const pObject, std::optional<unsigned int> progress,
+                                          std::optional<bool> sprayEnabled)
 {
     const unsigned int uiProgress = progress.value_or(0);
     if (!pObject || uiProgress > 255)
@@ -772,7 +773,7 @@ bool CLuaObjectDefs::AcquireObjectGangTag(lua_State* luaVM, CClientObject* const
 
     CLuaMain*  pLuaMain = m_pLuaManager->GetVirtualMachine(luaVM);
     CResource* pResource = pLuaMain ? pLuaMain->GetResource() : nullptr;
-    return pResource && pObject->AcquireGangTag(pResource, static_cast<unsigned char>(uiProgress));
+    return pResource && pObject->AcquireGangTag(pResource, static_cast<unsigned char>(uiProgress), sprayEnabled.value_or(true));
 }
 
 bool CLuaObjectDefs::SetObjectGangTagProgress(lua_State* luaVM, CClientObject* const pObject, unsigned int progress)

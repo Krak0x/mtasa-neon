@@ -125,7 +125,7 @@ public:
     bool IsOnFire() override { return m_pObject ? m_pObject->IsOnFire() : false; }
     bool SetOnFire(bool onFire) override { return m_pObject ? m_pObject->SetOnFire(onFire) : false; };
 
-    bool          AcquireGangTag(CResource* pOwner, unsigned char ucProgress);
+    bool          AcquireGangTag(CResource* pOwner, unsigned char ucProgress, bool bSprayEnabled);
     bool          SetGangTagProgress(CResource* pOwner, unsigned char ucProgress);
     unsigned char GetGangTagProgress() const { return m_ucGangTagProgress; }
     bool          HasGangTagOwner() const { return m_pGangTagOwner != nullptr; }
@@ -172,6 +172,7 @@ protected:
     bool          m_bVisibleInAllDimensions = false;
     CResource*    m_pGangTagOwner = nullptr;
     unsigned char m_ucGangTagProgress = 0;
+    bool          m_bGangTagSprayEnabled = false;
 
     CVector m_vecMoveSpeed;
     CVector m_vecTurnSpeed;

@@ -432,7 +432,7 @@ void CClientObject::SetCollisionEnabled(bool bCollisionEnabled)
     m_bUsesCollision = bCollisionEnabled;
 }
 
-bool CClientObject::AcquireGangTag(CResource* pOwner, unsigned char ucProgress)
+bool CClientObject::AcquireGangTag(CResource* pOwner, unsigned char ucProgress, bool bSprayEnabled)
 {
     if (!pOwner || (m_pGangTagOwner && m_pGangTagOwner != pOwner))
         return false;
@@ -449,6 +449,7 @@ bool CClientObject::AcquireGangTag(CResource* pOwner, unsigned char ucProgress)
 
     m_pGangTagOwner = pOwner;
     m_ucGangTagProgress = ucProgress;
+    m_bGangTagSprayEnabled = bSprayEnabled;
     return ApplyGangTagState();
 }
 
@@ -473,6 +474,7 @@ bool CClientObject::ReleaseGangTag(CResource* pOwner)
     }
     m_pGangTagOwner = nullptr;
     m_ucGangTagProgress = 0;
+    m_bGangTagSprayEnabled = false;
     return true;
 }
 
@@ -488,9 +490,10 @@ bool CClientObject::ApplyGangTagState()
         return true;
     }
 
-    // The visual byte and spray registration are applied together so a tag
-    // cannot accept native hits while rendering unrelated material state.
-    return m_pObject->SetGangTagAlpha(m_ucGangTagProgress) && g_pMultiplayer->SetGangTagSprayEnabled(m_pObject->GetObjectInterface(), true);
+    // Story cutscenes can expose a future tag before it becomes an objective.
+    // Keep its authoritative material alpha without registering it for native
+    // spray hits until the owning resource advances to that objective.
+    return m_pObject->SetGangTagAlpha(m_ucGangTagProgress) && g_pMultiplayer->SetGangTagSprayEnabled(m_pObject->GetObjectInterface(), m_bGangTagSprayEnabled);
 }
 
 float CClientObject::GetHealth()
