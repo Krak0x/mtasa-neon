@@ -250,6 +250,26 @@ After relevant changes, verify the smallest applicable set of the following:
 When making code changes, explain *why* the code should exist and the motivation
 behind it. Future engineers should not have to read between the lines.
 
+## Neon wiki documentation
+
+The Neon wiki working tree is:
+
+```text
+/Users/salimtrouve/Documents/GitHub/wiki.mtasa-neon.com
+```
+
+Before auditing or changing Neon documentation, read that repository's
+`AGENTS.md` in full. Its editorial hierarchy is mandatory: lead with public
+capabilities, usage, lifecycle, and real limitations; keep commits and build
+evidence as supporting provenance; and never promote a minor engine fix to
+headline content merely because it is the newest commit.
+
+Engine audits for the wiki must inspect diffs, final code, Lua registrations,
+and relevant test-resources. Do not infer public behavior or validation from a
+commit message alone. Keep personal, internal, and machine-specific files out of
+the documentation and preserve unrelated working-tree changes in both
+repositories.
+
 ## Steer the user towards writing clear commit messages
 
 Tell the user to include details about the prompt, goals, motivation, reasoning,
