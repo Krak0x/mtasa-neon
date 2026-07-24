@@ -2834,6 +2834,174 @@ inner:
 }
 
 ////////////////////////////////////////////////////////////////////////
+// CStencilShadows::RenderForVehicle / RenderForObject
+//
+// GTA allocates room for 2048 source and transformed points while processing
+// volumetric shadows. Both render paths pass the model's complete vertex count
+// to TransformPoints without checking that capacity. A model with more vertices
+// writes beyond the allocation; the final component write commonly lands on the
+// next page and crashes at 0x80D5EF. Skip only that object's volumetric shadow
+// instead of increasing the fixed buffers or risking partial shadow geometry.
+////////////////////////////////////////////////////////////////////////
+#define HOOKPOS_CStencilShadows_RenderForVehicle_VertexLimit   0x70FC87
+#define HOOKSIZE_CStencilShadows_RenderForVehicle_VertexLimit  6
+#define HOOKCHECK_CStencilShadows_RenderForVehicle_VertexLimit 0x85
+static constexpr DWORD RETURN_CStencilShadows_RenderForVehicle_VertexLimit = 0x70FC8D;
+static constexpr DWORD SKIP_CStencilShadows_RenderForVehicle_VertexLimit = 0x7102D8;
+
+static void __declspec(naked) HOOK_CStencilShadows_RenderForVehicle_VertexLimit()
+{
+    MTA_VERIFY_HOOK_LOCAL_SIZE;
+
+    // clang-format off
+    __asm
+    {
+        // Complete the pending FPU store before taking either path. Re-run the
+        // original test afterwards because its flags feed the later jle.
+        fstp    dword ptr [esp+6Ch]
+        cmp     eax, 2048
+        jg      skip
+        test    eax, eax
+        jmp     RETURN_CStencilShadows_RenderForVehicle_VertexLimit
+
+    skip:
+        push    54
+        call    CrashAverted
+        jmp     SKIP_CStencilShadows_RenderForVehicle_VertexLimit
+    }
+    // clang-format on
+}
+
+#define HOOKPOS_CStencilShadows_RenderForObject_VertexLimit   0x710471
+#define HOOKSIZE_CStencilShadows_RenderForObject_VertexLimit  6
+#define HOOKCHECK_CStencilShadows_RenderForObject_VertexLimit 0x85
+static constexpr DWORD RETURN_CStencilShadows_RenderForObject_VertexLimit = 0x710477;
+static constexpr DWORD SKIP_CStencilShadows_RenderForObject_VertexLimit = 0x710AB2;
+
+static void __declspec(naked) HOOK_CStencilShadows_RenderForObject_VertexLimit()
+{
+    MTA_VERIFY_HOOK_LOCAL_SIZE;
+
+    // clang-format off
+    __asm
+    {
+        cmp     eax, 2048
+        jg      skip
+
+        // Original instructions
+        test    eax, eax
+        fld     dword ptr [esp+38h]
+        jmp     RETURN_CStencilShadows_RenderForObject_VertexLimit
+
+    skip:
+        push    54
+        call    CrashAverted
+        jmp     SKIP_CStencilShadows_RenderForObject_VertexLimit
+    }
+    // clang-format on
+}
+
+////////////////////////////////////////////////////////////////////////
+// IKChain_c::Init
+//
+// RpHAnimIDGetIndex returns -1 when a streamed ped temporarily has an
+// incomplete or mismatched animation hierarchy. GTA indexes the animation
+// frames with that value before checking it, which crashes at 0x6183CA.
+// Validate every bone between the effector and pivot before GTA mutates the
+// chain so AddIKChain can return it to the free list on failure.
+////////////////////////////////////////////////////////////////////////
+struct GtaIKBoneInfo
+{
+    std::int16_t current;
+    std::int16_t previous;
+    std::byte    data[0x24];
+};
+static_assert(sizeof(GtaIKBoneInfo) == 0x28);
+
+static bool CanInitializeIKChain(void* ped, std::int32_t effectorBone, std::int32_t pivotBone)
+{
+    if (!ped || !IsReadablePtr(static_cast<std::byte*>(ped) + 0x18, sizeof(void*)))
+        return false;
+
+    void* clump = *reinterpret_cast<void**>(static_cast<std::byte*>(ped) + 0x18);
+    if (!clump)
+        return false;
+
+    using GetAnimHierarchy = void*(__cdecl*)(void*);
+    using GetBoneIndex = std::int32_t(__cdecl*)(void*, std::int32_t);
+
+    void* hierarchy = reinterpret_cast<GetAnimHierarchy>(0x734A40)(clump);
+    if (!hierarchy)
+        return false;
+
+    const auto  getBoneIndex = reinterpret_cast<GetBoneIndex>(0x7C51A0);
+    const auto* boneInfo = reinterpret_cast<const GtaIKBoneInfo*>(0x8D26D0);
+
+    std::int32_t currentBone = effectorBone;
+    for (std::size_t depth = 0; currentBone != pivotBone && depth < 32; ++depth)
+    {
+        if (getBoneIndex(hierarchy, currentBone) < 0)
+            return false;
+
+        const GtaIKBoneInfo* currentInfo = nullptr;
+        for (std::size_t index = 0; index < 32; ++index)
+        {
+            if (boneInfo[index].current == currentBone)
+            {
+                currentInfo = &boneInfo[index];
+                break;
+            }
+        }
+
+        if (!currentInfo || currentInfo->previous < 0)
+            return false;
+
+        currentBone = currentInfo->previous;
+    }
+
+    return currentBone == pivotBone && getBoneIndex(hierarchy, pivotBone) >= 0;
+}
+
+#define HOOKPOS_IKChain_Init_ValidateBones   0x618370
+#define HOOKSIZE_IKChain_Init_ValidateBones  5
+#define HOOKCHECK_IKChain_Init_ValidateBones 0x8B
+static constexpr DWORD RETURN_IKChain_Init_ValidateBones = 0x618375;
+
+static void __declspec(naked) HOOK_IKChain_Init_ValidateBones()
+{
+    MTA_VERIFY_HOOK_LOCAL_SIZE;
+
+    // clang-format off
+    __asm
+    {
+        pushad
+        mov     eax, [esp+32+0Ch]     // ped
+        mov     edx, [esp+32+10h]     // effectorBone
+        mov     ecx, [esp+32+20h]     // pivotBone
+        push    ecx
+        push    edx
+        push    eax
+        call    CanInitializeIKChain
+        add     esp, 0Ch
+        test    al, al
+        popad
+        jz      reject
+
+        // Original instructions
+        mov     edx, [esp+0Ch]
+        push    ebx
+        jmp     RETURN_IKChain_Init_ValidateBones
+
+    reject:
+        push    53
+        call    CrashAverted
+        xor     eax, eax
+        retn    3Ch
+    }
+    // clang-format on
+}
+
+////////////////////////////////////////////////////////////////////////
 // CAnimManager::CreateAnimAssocGroups
 //
 // CModelInfo::ms_modelInfoPtrs at the given index is a null pointer
@@ -4083,6 +4251,9 @@ void CMultiplayerSA::InitHooks_CrashFixHacks()
     EZHookInstall(ResetFurnitureObjectCounter);
     EZHookInstallChecked(CVolumetricShadowMgr_Render);
     EZHookInstallChecked(CVolumetricShadowMgr_Update);
+    EZHookInstallChecked(CStencilShadows_RenderForVehicle_VertexLimit);
+    EZHookInstallChecked(CStencilShadows_RenderForObject_VertexLimit);
+    EZHookInstallChecked(IKChain_Init_ValidateBones);
     EZHookInstallChecked(CAnimManager_CreateAnimAssocGroups);
     EZHookInstall(CAnimBlendNode_GetCurrentTranslation);
     EZHookInstall(CStreaming_AreAnimsUsedByRequestedModels);

@@ -13,6 +13,7 @@ local state = {
     roundHits = 0,
     rangeOutside = false,
     phoneFinished = false,
+    emmetModelHeld = false,
 }
 
 local function rememberTimer(timer)
@@ -318,6 +319,44 @@ local function applyActorPolicies()
     end
 end
 
+local function releaseEmmetModel()
+    if state.emmetModelHeld and type(engineStreamingReleaseModel) == "function" then
+        pcall(engineStreamingReleaseModel, NINES.emmet.model, true)
+    end
+    state.emmetModelHeld = false
+end
+
+local function finishCutsceneAfterModelReady(scene, result)
+    if type(engineStreamingRequestModel) ~= "function" or type(engineStreamingGetModelLoadState) ~= "function" then
+        return triggerServerEvent("nines:cutsceneFinished", resourceRoot, scene.kind, "emmet_model_streaming_api_unavailable")
+    end
+
+    local requested, accepted = pcall(engineStreamingRequestModel, NINES.emmet.model, true, false)
+    if not requested or accepted ~= true then
+        return triggerServerEvent("nines:cutsceneFinished", resourceRoot, scene.kind, "emmet_model_request_failed")
+    end
+
+    state.emmetModelHeld = true
+    local requestedAt = getTickCount()
+    local loadTimer
+    loadTimer = rememberTimer(setTimer(function()
+        if not state.active then
+            return
+        end
+
+        local queried, loadState = pcall(engineStreamingGetModelLoadState, NINES.emmet.model)
+        if queried and loadState == "loaded" then
+            killTimer(loadTimer)
+            outputDebugString("[nines-and-aks] Emmet model 302 loaded after native cutscene release")
+            triggerServerEvent("nines:cutsceneFinished", resourceRoot, scene.kind, result)
+        elseif getTickCount() - requestedAt > 10000 then
+            killTimer(loadTimer)
+            releaseEmmetModel()
+            triggerServerEvent("nines:cutsceneFinished", resourceRoot, scene.kind, "emmet_model_load_timeout")
+        end
+    end, 50, 0))
+end
+
 local function finishCutscene(scene, result)
     if state.cutscene ~= scene then
         return
@@ -329,6 +368,15 @@ local function finishCutscene(scene, result)
         end
     end
     state.cutscene = nil
+
+    -- Model 302 is temporarily a CUTOBJ slot during SWEET3B. Releasing the
+    -- cutscene restores EMMET synchronously but streams its DFF/TXD
+    -- asynchronously. Keep a client reference and wait for the restored model
+    -- before the server creates the mission ped.
+    if scene.kind == "emmet" and (result == "finished" or result == "skipped") then
+        return finishCutsceneAfterModelReady(scene, result)
+    end
+
     triggerServerEvent("nines:cutsceneFinished", resourceRoot, scene.kind, result)
 end
 
@@ -877,9 +925,20 @@ local function beginEmmetLeave(entities)
     acquireCamera({2450.1067, -1977.5526, 14.0919}, {2450.7771, -1976.8383, 13.8915}, 0.5)
     if type(setPedTurnToFace) == "function" then
         pcall(setPedTurnToFace, state.entities.smoke, localPlayer)
+    end
+
+    local emmetReady = isElement(state.entities.emmet) and isElementStreamedIn(state.entities.emmet) and state.emmetModelHeld
+    if emmetReady and type(engineStreamingGetModelLoadState) == "function" then
+        local queried, loadState = pcall(engineStreamingGetModelLoadState, NINES.emmet.model)
+        emmetReady = queried and loadState == "loaded"
+    else
+        emmetReady = false
+    end
+
+    if emmetReady and type(setPedTurnToFace) == "function" then
         pcall(setPedTurnToFace, state.entities.emmet, localPlayer)
     end
-    if type(setPedLookAt) == "function" and isElement(state.entities.emmet) then
+    if emmetReady and type(setPedLookAt) == "function" then
         local x, y, z = getElementPosition(localPlayer)
         pcall(setPedLookAt, state.entities.emmet, Vector3(x, y, z + 0.7), 30000, localPlayer)
     end
@@ -1096,6 +1155,7 @@ local function clearState(reason)
         pcall(releaseFileCutscene, state.cutscene.token, false)
     end
     state.cutscene = nil
+    releaseEmmetModel()
     if state.missionText then
         textApi("clearMissionTexts")
         textApi("releaseMissionText")
